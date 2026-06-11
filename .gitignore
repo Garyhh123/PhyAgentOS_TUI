@@ -20,11 +20,6 @@ poetry.lock
 .pytest_cache/
 botpy.log
 nano.*.save
-docs/html
 SECURITY.md
-docs/dev_plans
 .kilo
-plan/
 test
-tests/
-old_docs
