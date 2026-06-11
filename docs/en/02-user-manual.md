@@ -1,42 +1,38 @@
-# PhyAgentOS User Manual
+# PhyAgentOS-G User Manual
 
-> An operations manual for users, integrators, and demo operators. Covers single-machine mode, Fleet multi-robot mode, scenario configuration, and troubleshooting.
+> Operations guide for users: installation, Game Agent setup, simulation validation, troubleshooting.
 
 ---
 
 ## Table of Contents
 
-- [2.1 About This Manual](#21-about-this-manual)
+- [2.1 Manual Scope](#21-manual-scope)
 - [2.2 How the System Works](#22-how-the-system-works)
 - [2.3 Installation & Environment Setup](#23-installation--environment-setup)
 - [2.4 5-Minute Quick Start](#24-5-minute-quick-start)
 - [2.5 Configuration Details](#25-configuration-details)
 - [2.6 Scenario Usage Guide](#26-scenario-usage-guide)
-  - [2.6.1 Simulation](#261-simulation)
-  - [2.6.2 Real Robot Arm (Franka Research 3)](#262-real-robot-arm-franka-research-3)
-  - [2.6.3 Mobile Robot (Go2)](#263-mobile-robot-go2)
-  - [2.6.4 Remote Chassis (XLeRobot)](#264-remote-chassis-xlerobot)
-  - [2.6.5 ReKep Real-Robot Plugin](#265-rekep-real-robot-plugin)
-  - [2.6.6 Fleet Multi-Robot Coordination](#266-fleet-multi-robot-coordination)
-  - [2.6.7 Minecraft Game Agent](#267-minecraft-game-agent)
+  - [2.6.1 DummySimTarget Smoke Test](#261-dummysimtarget-smoke-test)
+  - [2.6.2 Minecraft Game Agent](#262-minecraft-game-agent)
+  - [2.6.3 LIBERO Benchmark Validation](#263-libero-benchmark-validation)
 - [2.7 Runtime File Reference](#27-runtime-file-reference)
 - [2.8 Common Interaction Examples](#28-common-interaction-examples)
 - [2.9 Troubleshooting](#29-troubleshooting)
 
 ---
 
-## 2.1 About This Manual
+## 2.1 Manual Scope
 
 ### Who This Is For
 
-- First-time users wanting to get PhyAgentOS running
-- Integrators needing command-line or gateway-based Agent interaction
-- Demo operators starting simulation, Go2, remote chassis, or real-robot plugins
-- Debuggers needing to understand runtime workspace file changes
+- First-time users wanting to get PhyAgentOS-G running quickly
+- Researchers deploying Minecraft Game Agent
+- Researchers running simulation benchmarks
+- Debuggers needing to understand workspace file changes
 
 ### Who This Is NOT For
 
-If you need secondary development, driver authoring, plugin development, or internal architecture research, read [Part 3: API Developer Manual](../03-developer-manual.md).
+For secondary development, adding new Game Targets, or writing Adapters, see [Part 3: Developer Manual](03-developer-manual.md).
 
 ---
 
@@ -44,30 +40,22 @@ If you need secondary development, driver authoring, plugin development, or inte
 
 ### 2.2.1 Dual-Track Structure
 
-PhyAgentOS is an explicitly decoupled dual-track runtime architecture:
+PhyAgentOS-G is an explicitly decoupled dual-track runtime architecture:
 
-- **Track A (Agent / Brain)**: Handles user input understanding, action planning, tool invocation, and Critic validation. Started via `paos agent` or `paos gateway`.
-- **Track B (Runtime / Execution Layer)**: Handles instruction reading, hardware driving, action execution, and state writeback. Started via `python -m PhyAgentOS.runtime.watchdog`.
+- **Track A (Agent / Brain)**: Understands user input, plans actions, calls tools, performs Critic validation. Launched via `paos agent`.
+- **Track B (Runtime / Execution)**: Session-level execution supervision, target/policy invocation, state writeback. Runtime watchdog auto-launches with Agent; remote target/policy servers deployed separately.
 
-Shared state between the two is expressed through Markdown files in the workspace, not through cross-layer Python function calls.
+Shared state is expressed through Markdown files in the workspace, not cross-layer Python calls.
 
-### 2.2.2 Single Mode vs Fleet Mode
-
-| Mode | Workspace | Use Case |
-|------|-----------|----------|
-| **Single** | `~/.PhyAgentOS/workspace` | Single robot or simulation quick validation |
-| **Fleet** | Shared + per-robot workspaces | Heterogeneous multi-robot coordination |
-
-### 2.2.3 A Typical Run Cycle
+### 2.2.2 A Complete Run Cycle
 
 1. Run `paos onboard` to initialize config and workspace
-2. Start `paos agent` or `paos gateway`
-3. When runtime is enabled, PhyAgentOS provisions the runtime workspace and starts the session watchdog
-4. User inputs a natural language task
-5. Agent reads agent context files plus runtime state such as `TARGETS.md`, `SKILLRUNTIME.md`, and `ENVIRONMENT.md`
-6. Agent appends executable work to `SESSIONS.md`
-7. Watchdog claims a pending session, runs preflight, executes the target/skill runtime, and writes results and artifacts
-8. Runtime/perception writers refresh `ENVIRONMENT.md` as state changes
+2. Start `paos agent`
+3. User enters a natural language task
+4. Agent reads `TARGETS.md`, `SKILLRUNTIME.md`, `ENVIRONMENT.md` to plan
+5. Agent appends executable task to `SESSIONS.md`
+6. WatchdogSupervisor claims pending session, runs preflight, executes target/skill
+7. Results written back to `SESSIONS.md`, `ENVIRONMENT.md`, `LESSONS.md`, and artifacts directory
 
 ---
 
@@ -77,27 +65,25 @@ Shared state between the two is expressed through Markdown files in the workspac
 
 - Python 3.11 or higher
 - Git
-- Accessible LLM provider API or compatible service
-- Optional for simulation: `pybullet`, Isaac Sim
-- Optional for bridge/frontend: Node.js 18+
+- Accessible LLM provider API key or compatible service
+- Minecraft scenario additionally requires: Windows 11 + Minecraft Java 1.20.4 + Node.js + ngrok
 
 ### Clone & Install
 
 ```bash
 git clone https://github.com/PhyAgentOS/PhyAgentOS.git
 cd PhyAgentOS
-pip install -e .             # Python ≥ 3.11
-pip install -e ".[dev]"      # Dev dependencies
+pip install -e .
 ```
 
-### What You Get After Installation
+### CLI Entry Points
 
-The CLI entry point `paos` comes from the project's Python package:
+After installation, the `paos` command is available:
 
 - `paos onboard` — Initialize workspace
-- `paos agent` — Start interactive Agent CLI
+- `paos agent` — Start interactive Agent
 - `paos agent -m "..."` — Single-turn message call
-- `paos gateway` — Start long-running gateway service
+- `paos minecraft` — Minecraft game control commands
 
 ---
 
@@ -116,45 +102,11 @@ pip install -e .
 paos onboard
 ```
 
-This command: creates/refreshes `~/.PhyAgentOS/config.json`, prepares default workspace, syncs template files.
+This creates `~/.PhyAgentOS/config.json`, prepares the default workspace, and syncs template files.
 
-### Step 3: Start Runtime (Track B)
+### Step 3: Configure API Key
 
-Open Terminal A:
-
-```bash
-python -m PhyAgentOS.runtime.watchdog
-```
-
-Uses the built-in simulation driver by default — zero hardware needed for full pipeline validation.
-
-### Step 4: Start Agent (Track A)
-
-Open Terminal B:
-
-```bash
-paos agent
-```
-
-Enter interactive mode and type natural language tasks, for example:
-
-```text
-Look around the room and tell me what objects you see.
-```
-
-### Verify Pipeline Without Hardware
-
-```bash
-python scripts/init_runtime_workspace.py --workspace /tmp/paos_runtime_smoke
-python scripts/run_runtime_watchdog.py --workspace /tmp/paos_runtime_smoke --once
-# → session marked succeeded, results in artifacts/
-```
-
----
-
-## 2.5 Configuration Details
-
-### Minimal Configuration
+Edit `~/.PhyAgentOS/config.json`:
 
 ```json
 {
@@ -171,355 +123,208 @@ python scripts/run_runtime_watchdog.py --workspace /tmp/paos_runtime_smoke --onc
 }
 ```
 
-Location: `~/.PhyAgentOS/config.json`
+### Step 4: Start Agent
 
-### Key Configuration Domains
+```bash
+paos agent
+```
 
-| Domain | Purpose |
-|--------|---------|
-| `agents.defaults` | Default model, workspace path |
-| `providers` | LLM provider API keys and addresses |
-| `gateway` | Gateway service configuration |
-| `tools` | Tool enable/disable |
-| `embodiments` | Embodiment config (single / fleet mode) |
+In interactive mode, enter natural language tasks. For one-shot:
 
-### Fleet Mode Minimum Configuration
+```bash
+paos agent -m "run a smoke test using the dummy_sim target"
+```
+
+---
+
+## 2.5 Configuration Details
+
+### Runtime Configuration
 
 ```json
 {
-  "embodiments": {
-    "mode": "fleet",
-    "shared_workspace": "~/.PhyAgentOS/workspaces/shared",
-    "instances": [
-      {
-        "robot_id": "go2_edu_001",
-        "driver": "go2_edu",
-        "workspace": "~/.PhyAgentOS/workspaces/go2_edu_001"
-      }
-    ]
+  "runtime": {
+    "enabled": true,
+    "workspace": "~/.PhyAgentOS/runtime_workspace"
   }
 }
 ```
 
-### Workspace Paths
-
-| Mode | Path |
-|------|------|
-| Single mode | `~/.PhyAgentOS/workspace` |
-| Fleet shared workspace | `~/.PhyAgentOS/workspaces/shared` |
-| Fleet robot workspace | `~/.PhyAgentOS/workspaces/<robot_id>` |
-
-> After each config change, re-run `paos onboard` to refresh templates and add new fields.
+When `runtime.enabled` is `true`, the Agent will:
+1. Create/refresh the runtime workspace
+2. Sync `TARGETS.md`, `SKILLRUNTIME.md`, `SESSIONS.md` templates
+3. Start the Session Watchdog
 
 ---
 
 ## 2.6 Scenario Usage Guide
 
-### 2.6.1 Simulation
+### 2.6.1 DummySimTarget Smoke Test
 
-The built-in `simulation` driver is the fastest way to validate the full pipeline.
-
-```bash
-# Terminal 1: Start simulation Watchdog
-python -m PhyAgentOS.runtime.watchdog
-
-# Terminal 2: Start Agent
-paos agent
-```
-
-**Isaac Sim High-Fidelity Simulation (PIPER + Go2 Composite)**:
+The fastest validation — zero external dependencies:
 
 ```bash
-# GUI mode (requires local X display)
-python hal/hal_watchdog.py --gui --interval 0.05 \
-  --driver pipergo2_manipulation \
-  --driver-config examples/pipergo2_manipulation_driver.json
-
-# VNC mode (remote server/container, browser access)
-python hal/hal_watchdog.py --vnc --interval 0.05 \
-  --driver pipergo2_manipulation \
-  --driver-config examples/pipergo2_manipulation_driver.json
-# Open http://<host>:31315/vnc.html in browser
+paos agent -m "run a smoke test using the dummy_sim target"
 ```
 
-Then send Agent commands:
+DummySimTarget is a fully mocked local target. It returns numpy zero arrays as observations and auto-succeeds after 5 steps. Ideal for verifying the Agent → Runtime pipeline.
 
-```bash
-paos agent -m "open simulation"
-paos agent -m "go to desk"
-paos agent -m "pick up the red cube and return to the starting position"
-```
+### 2.6.2 Minecraft Game Agent
 
-> `--gui` and `--vnc` are mutually exclusive. Without either flag, runs headless.
+PhyAgentOS-G's first Game Target, with a fully verified end-to-end pipeline.
 
----
-
-### 2.6.2 Real Robot Arm (Franka Research 3)
-
-#### Network Architecture
+#### Architecture
 
 ```
-WorkStation PC → Control Box (Shop Floor: 172.16.0.x) → Robot Arm
+[Windows 11]                              [Linux Cloud]
+  Minecraft ← mineflayer bridge           PhyAgentOS-G Agent
+       ↑           ↑                            ↑
+  localhost:25565  localhost:3001               │
+                   ngrok → HTTPS → MinecraftTarget (HTTP client)
+                                           ↑
+                                   WatchdogSupervisor
 ```
 
-#### First-Time Setup
+**Key design**: MinecraftTarget contains zero Minecraft protocol code — it communicates with the external mineflayer bridge via HTTP only.
 
-1. Ethernet cable: PC ↔ Control Box (Shop Floor port)
-2. Set PC wired network IP to `172.16.0.x` (e.g., `172.16.0.1`)
-3. Activate FCI in Control Box Desk interface
-4. Install backend drivers
+#### Windows Deployment
 
-#### Backend Installation
+Full deployment guide: [Minecraft Deployment Docs](../../scenarios/game/minecraft/en/deployment.md)
 
-```bash
-# pylibfranka (official Python bindings)
-pip install pylibfranka
+Quick start:
 
-# franky-control (alternative high-level library, looser compatibility)
-pip install git+https://github.com/TimSchneider42/franky.git
-```
-
-#### Driver Selection
-
-| Driver Name | Description | Use Case |
-|:------------|:------------|:---------|
-| `franka_research3` | Raw pylibfranka driver | Precise control or real-time 1kHz |
-| `franka_multi` | Multi-backend negotiation driver | Auto-selects available backend |
-
-#### Launch
-
-```bash
-# Multi-backend auto-negotiation (recommended)
-python hal/hal_watchdog.py --driver franka_multi
-
-# Raw pylibfranka driver
-python hal/hal_watchdog.py --driver franka_research3
-
-# Custom configuration
-python hal/hal_watchdog.py \
-  --driver franka_multi \
-  --driver-config examples/franka_research3.driver.json
-```
-
-#### Supported Actions
-
-`move_to` (Cartesian position), `move_joints` (joint positions), `grasp`, `move_gripper`, `stop`, etc.
-
-#### Real-Time Control Mode
-
-Set `realtime_mode: true` to enable 1 kHz real-time control (requires real-time kernel).
-
-> Before installation, verify library version compatibility with your robot system version.
-
----
-
-### 2.6.3 Mobile Robot (Go2)
-
-```bash
-python hal/hal_watchdog.py \
-  --driver go2_edu \
-  --driver-config examples/go2_driver_config.json
-```
-
-The driver config JSON is passed through to the Go2 driver for remote ROS2, video, state streaming, and motion backend initialization.
-
----
-
-### 2.6.4 Remote Chassis (XLeRobot)
-
-```bash
-python hal/hal_watchdog.py \
-  --driver xlerobot_2wheels_remote \
-  --driver-config examples/xlerobot_2wheels_remote.driver.json
-```
-
-Configuration includes ZMQ communication parameters, remote host address, etc.
-
----
-
-### 2.6.5 ReKep Real-Robot Plugin
-
-`rekep_real` is integrated via an external plugin repository:
-
-```bash
-# Deploy plugin
-python scripts/deploy_rekep_real_plugin.py \
-  --repo-url https://github.com/baiyu858/PhyAgentOS-rekep-real-plugin.git
-
-# Start
-python hal/hal_watchdog.py --driver rekep_real
-```
-
----
-
-### 2.6.6 Fleet Multi-Robot Coordination
-
-#### When to Use
-
-- One Agent coordinates multiple robot instances
-- Separate shared environment, target registry, and session queue
-- Manage execution through `TARGETS.md`, `SKILLRUNTIME.md`, and `SESSIONS.md`
-
-#### Startup Sequence
-
-1. Set `embodiments.mode = "fleet"`
-2. Run `paos onboard`
-3. Start `paos agent` or `paos gateway`
-4. Runtime workspace provisioning and the session watchdog start automatically when runtime is enabled
-
-```bash
-paos agent
-```
-
-#### Fleet Mode File Layout
-
-| File | Location | Purpose |
-|------|----------|---------|
-| `ENVIRONMENT.md` | shared/ | Global environment state |
-| `TARGETS.md` | runtime/shared | Target registry |
-| `SKILLRUNTIME.md` | runtime/shared | Skill runtime registry |
-| `SESSIONS.md` | runtime/shared | Session queue and results |
-| `TASK.md` | shared/ | Multi-step task state |
-| `ORCHESTRATOR.md` | shared/ | Global orchestration state |
-
----
-
-### 2.6.7 Minecraft Game Agent
-
-PhyAgentOS remotely controls a local Minecraft Java Edition (1.20.4) via an HTTP bridge, enabling cloud-based Agent control of an in-game bot. Full deployment guides, usage manuals, configuration examples, and troubleshooting are maintained in dedicated scenario documents.
-
-#### Three-Layer Document Index
-
-| Reading Path | Document | Content |
-|-------------|----------|---------|
-| Understand architecture | [scenario overview](https://github.com/PhyAgentOS/PhyAgentOS/tree/main/docs/scenarios/game/minecraft) | File structure, bridge_server.js source |
-| Get running quickly | [Deployment Guide](../../scenarios/game/minecraft/en/deployment.md) | Zero-to-deploy: Windows ngrok + bridge → Linux connection |
-| Daily usage | [Usage Guide](../../scenarios/game/minecraft/en/usage.md) | CLI control, chat listener, bot teleport, script reference |
-
-#### Quick Start
-
-**Windows side** (see [Deployment Guide](../../scenarios/game/minecraft/en/deployment.md)):
 ```powershell
-cd E:\mc_bridge
+cd mc_bridge
 $env:MC_HOST="localhost"; $env:MC_PORT="25565"; $env:BOT_NAME="paos"
 $env:MC_VERSION="1.20.4"; $env:API_PORT="3001"
 node bridge_server.js
-# Another terminal: ngrok http 3001 --region=ap
+
+# In another terminal
+ngrok http 3001 --region=ap
 ```
 
-**Linux cloud**:
-```python
-from PhyAgentOS.runtime.targets.game.minecraft_target import MinecraftTarget
-t = MinecraftTarget({"bridge_url": "https://xxx.ngrok-free.app"})
-t.build(); t.reset({})
-t.step({"type": "chat", "params": {"message": "Hello"}})
-t.close()
+Record the ngrok HTTPS URL (e.g., `https://xxxx.ngrok-free.app`).
+
+#### Linux Configuration
+
+Edit `TARGETS.md` in the runtime workspace to add the Minecraft target:
+
+```yaml
+version: targets_v1
+targets:
+  - id: target://minecraft
+    kind: game
+    enabled: true
+    adapter: target_adapter://minecraft/v1
+    config:
+      bridge_url: "https://xxxx.ngrok-free.app"
+      verify_ssl: false
+    supported_skillruntimes:
+      - skillruntime://minecraft_game/v1
 ```
 
-Or via CLI:
+Edit `SKILLRUNTIME.md` to register the Minecraft skill runtime:
+
+```yaml
+version: skillruntimes_v1
+skillruntimes:
+  - id: skillruntime://minecraft_game/v1
+    kind: builtin
+    module: PhyAgentOS.runtime.skillruntime.game.minecraft_skill_runtime
+    class: MinecraftSkillRuntime
+```
+
+#### Usage
+
 ```bash
-paos minecraft say "mine 5 oak logs and come over"
+# Direct CLI control
+paos minecraft say "Mine 5 oak logs and come to me"
+
+# Via Agent
+paos agent -m "tell the Minecraft bot to mine 10 oak logs and craft a crafting table"
 ```
 
-#### Full Content Location
+#### Action Space
 
-| Content | Location |
-|---------|----------|
-| Windows 9-step deployment | [deployment.md](../../scenarios/game/minecraft/en/deployment.md) |
-| Observation space schema | [deployment.md §3.3](../../scenarios/game/minecraft/en/deployment.md#33-observation-space) |
-| 16 action types | [deployment.md §4](../../scenarios/game/minecraft/en/deployment.md#4-action-space-16-types) |
-| TARGETS.md / SKILLRUNTIME.md config | [deployment.md §5-6](../../scenarios/game/minecraft/en/deployment.md#5-targetsmd-configuration) |
-| Agent → SESSIONS.md pipeline | [deployment.md §7](../../scenarios/game/minecraft/en/deployment.md#7-full-pipeline-agent-task-dispatch) |
-| CLI & chat control | [usage.md](../../scenarios/game/minecraft/en/usage.md) |
-| Bot teleporting | [usage.md §3](../../scenarios/game/minecraft/en/usage.md#3-bot-teleporting) |
-| 9 troubleshooting entries | [usage.md §5](../../scenarios/game/minecraft/en/usage.md#5-troubleshooting) |
-| Code change reference | [usage.md §6](../../scenarios/game/minecraft/en/usage.md#6-code-change-reference) |
+16 action types: `move`, `look`, `jump`, `sneak`, `sprint`, `attack`, `interact`, `place`, `dig`, `use`, `select_slot`, `drop`, `chat`, `collect`, `equip`, `craft`.
+
+### 2.6.3 LIBERO Benchmark Validation
+
+LIBERO is a standard robot manipulation benchmark. PhyAgentOS-G supports it through the TargetWS remote protocol.
+
+#### Start Services
+
+```bash
+# TargetWS machine (requires LIBERO environment)
+MUJOCO_GL=egl PYTHONWARNINGS=ignore \
+python PhyAgentOS/runtime/targets/remote/libero/server.py \
+  --host 0.0.0.0 --port 9002
+
+# Policy machine (requires pi0.5 checkpoint)
+python -m PhyAgentOS.runtime.policy.openpi.lerobot_pi0_server \
+  --model-dir /path/to/pi05/checkpoint --host 0.0.0.0 --port 8000
+```
+
+#### Run E2E Validation
+
+```bash
+python scripts/run_pi05_libero_real_e2e.py \
+  --policy-endpoint openpi://127.0.0.1:8000 \
+  --target-endpoint targetws://127.0.0.1:9002 \
+  --benchmark-name libero_spatial --task-id 0
+```
+
+Or via Agent:
+```bash
+paos agent -m "run the configured LIBERO benchmark task"
+```
 
 ---
 
-## 2.7 Protocol File Reference
+## 2.7 Runtime File Reference
 
-| Context Loading | File | Location | Purpose |
-|------|------|----------|---------|
-| Always loaded into the agent system prompt | `AGENTS.md` | Agent workspace | Project-level operating rules |
-| Always loaded into the agent system prompt | `SOUL.md` | Agent workspace | Identity and assistant behavior |
-| Always loaded into the agent system prompt | `USER.md` | Agent workspace | User preferences and durable profile notes |
-| Always loaded into the agent system prompt | `TOOLS.md` | Agent workspace | Tool usage policy |
-| Always loaded into the agent system prompt | `SKILLS.md` | Agent workspace | Agent skill discovery and loading rules |
-| Loaded when present; filtered by enabled runtime targets where applicable | `EMBODIED.md` | Agent workspace | Human-readable target capability descriptions |
-| Loaded when present as state | `ENVIRONMENT.md` | Agent/runtime workspace | Current target, scene, object, and environment state |
-| Loaded when present as memory/state | `LESSONS.md` | Agent workspace | Operational lessons and failure notes |
-| Loaded when present as task state | `TASK.md` | Agent workspace | Multi-step task decomposition state |
-| Runtime protocol; read before scheduling sessions | `RUNTIME.md` | Runtime workspace | Instructions for writing valid runtime sessions |
-| Runtime protocol; read before scheduling sessions | `TARGETS.md` | Runtime workspace | Target registry, endpoints, adapters, configs, supported skill runtimes |
-| Runtime protocol; read before scheduling sessions | `SKILLRUNTIME.md` | Runtime workspace | Policy/builtin skill runtime registry and execution contracts |
-| Runtime queue/state | `SESSIONS.md` | Runtime workspace | Execution session queue and results |
+| File | Owner | Purpose |
+|------|------|------|
+| `AGENTS.md` | Agent workspace | Project-level operating rules |
+| `SOUL.md` | Agent workspace | Identity and assistant behavior |
+| `USER.md` | Agent workspace | User preferences and profile |
+| `SKILLS.md` | Agent workspace | Skill discovery and loading rules |
+| `EMBODIED.md` | Agent workspace | Human-readable target capability descriptions |
+| `ENVIRONMENT.md` | Agent/runtime workspace | Current target, scene, and environment state |
+| `LESSONS.md` | Agent workspace | Operational lessons and failure notes |
+| `TASK.md` | Agent workspace | Multi-step task decomposition state |
+| `TARGETS.md` | Runtime workspace | Target registry, endpoint, adapter, config |
+| `SKILLRUNTIME.md` | Runtime workspace | Skill runtime registry and execution contracts |
+| `SESSIONS.md` | Runtime workspace | Session queue and execution results |
 
 ---
 
 ## 2.8 Common Interaction Examples
 
-### Environment Query
-
-```text
-Look around and tell me what objects are present.
-```
-
-Verify: Agent can read `ENVIRONMENT.md`, environment state has been correctly written back by Watchdog.
-
-### Robot Arm Manipulation Task
-
-```text
-Pick up the red apple on the table and place it on the tray.
-```
-
-Verify: Target object exists in environment state, robot profile declares corresponding actions, Watchdog successfully executes and clears the action queue.
-
-### Mobile Robot Navigation
-
-```text
-Move near the refrigerator and stop.
-```
-
-Verify: Target semantic location exists in scene graph, current mobile robot supports navigation actions.
-
-### Fleet Multi-Robot Coordination
-
-```text
-Send Go2 to patrol the doorway first, then have the robot arm grab the package on the table for handoff.
-```
-
-Verify: Agent recognizes the intended target, the session uses the correct `target_ref`, and `SESSIONS.md` / `ENVIRONMENT.md` update correctly.
-
-### Isaac Sim Environment Manipulation
+### DummySimTarget Smoke Test
 
 ```bash
-paos agent -m "open simulation"
-paos agent -m "go to desk"
-paos agent -m "pick up the red cube and return to the starting position"
+paos agent -m "run a smoke test using the dummy_sim target"
 ```
 
 ### Minecraft Natural Language Control
 
 ```bash
-paos minecraft say "mine 5 oak logs and come over"
+paos minecraft say "Mine 5 oak logs and come to me"
 ```
 
-The LLM auto-converts natural language into Minecraft action sequences.
+### Minecraft In-Game Chat Control
 
-You can also command the bot through in-game chat:
+Type in game chat:
+```text
+paos mine 5 oak logs
+```
+
+### LIBERO Benchmark Evaluation
+
 ```bash
-python test/chat_listener.py
-# In Minecraft chat say: paos mine 5 oak logs
+python scripts/run_pi05_libero_sweep.py --benchmark-name libero_spatial
 ```
-
-### VLA Model Grasping
-
-```bash
-paos agent -m "deploy a VLA to pick up the red cube"
-```
-
-Customize your VLA checkpoint by editing the `vla` block in `examples/pipergo2_manipulation_driver.json`.
 
 ---
 
@@ -527,91 +332,54 @@ Customize your VLA checkpoint by editing the `vla` block in `examples/pipergo2_m
 
 ### No API Key
 
-**Symptom**: Agent starts but reports missing API key.
-
-**Resolution**:
 1. Check `~/.PhyAgentOS/config.json` for `providers.<name>.api_key`
-2. Verify `agents.defaults.model` matches the provider
-3. Ensure API key format is correct with no extra whitespace
+2. Ensure `agents.defaults.model` matches the provider
+3. Verify API key format and no extra spaces
 
-### Runtime Protocol Files Missing
+### Missing Runtime Protocol Files
 
-**Symptom**: `TARGETS.md`, `SKILLRUNTIME.md`, or `SESSIONS.md` is missing.
+1. Ensure `runtime.enabled` is `true` in config
+2. Check `runtime.workspace` path
+3. Start `paos agent`, or manually initialize:
+   ```bash
+   python scripts/init_runtime_workspace.py --workspace <path>
+   ```
 
-**Resolution**:
-1. Confirm `runtime.enabled` is true in config
-2. Check whether `runtime.workspace` points to a separate directory
-3. Start `paos agent` / `paos gateway`, or initialize manually with `python scripts/init_runtime_workspace.py --workspace <path>`
-4. In Fleet mode, verify you're inspecting the shared/runtime workspace
+### SESSIONS.md Has Pending But Not Executing
 
-### SESSIONS.md Has Pending Work But No Execution
-
-**Resolution**:
-1. Confirm the session watchdog is running
-2. Check that `target_ref` and `skillruntime_ref` exist
-3. Check that the target is `enabled: true` in `TARGETS.md`
-4. Check Watchdog output for preflight or runtime errors
+1. Confirm WatchdogSupervisor is running (auto-launched with Agent)
+2. Check session's `target_ref` and `skillruntime_ref` exist in TARGETS.md/SKILLRUNTIME.md
+3. Check target is `enabled: true`
+4. Check Agent logs for preflight errors
 
 ### Session Rejected by Preflight
 
-**Resolution**:
-1. Check the session result/error in `SESSIONS.md`
-2. Verify the target supports the requested `skillruntime_ref`
-3. Check that `SKILLRUNTIME.md` observation/action contracts match the target runtime contract
-4. Check `ENVIRONMENT.md` for required object, map, or connection state
+1. View the session's result/error in SESSIONS.md
+2. Check target supports the `skillruntime_ref`
+3. Check SKILLRUNTIME.md observation/action contract compatibility with target runtime contract
 
-### Fleet Mode Task Not Dispatched to Correct Robot
+### Minecraft Bridge Connection Failed (SSL Error)
 
-**Resolution**:
-1. Verify `robot_id`, `driver`, `workspace` in config match
-2. Check target id, workspace, and enabled state in `TARGETS.md`
-3. Check the session `target_ref` in `SESSIONS.md`
-4. Confirm task semantics explicitly identify target robot
-
-### rekep_real Driver Not Found
-
-**Resolution**:
-1. Confirm plugin deployment script was executed: `python scripts/deploy_rekep_real_plugin.py`
-2. Confirm plugin repo is registered in `~/.PhyAgentOS/plugins/`
-3. Restart Watchdog for plugin to take effect
-
-### Isaac Sim Startup Failure
-
-**Resolution**:
-1. Confirm Isaac Sim is correctly installed
-2. Check path config in `pipergo2_manipulation_driver.json` `isaac_env` block
-3. In `--vnc` mode, inspect first-start re-exec logs
-4. Verify `LD_LIBRARY_PATH` is correctly set (auto-handled in VNC mode)
-
-### Minecraft Bridge Connection Failure (SSL Error)
-
-**Symptom**: `SSL: CERTIFICATE_VERIFY_FAILED`.
-
-**Resolution**:
-1. Free ngrok has incomplete certificates; add `"verify_ssl": false` in TARGETS.md config
-2. If still failing, check for extra whitespace around the `bridge_url` value
+1. Add `"verify_ssl": false` in TARGETS.md config (ngrok free tier has incomplete certs)
+2. Ensure bridge_url has no trailing spaces
 
 ### Minecraft API Returns Empty or HTML
 
-**Symptom**: `JSONDecodeError: Expecting value` or HTML confirmation page returned.
-
-**Resolution**:
-1. Free ngrok shows a confirmation page first; ensure `ngrok-skip-browser-warning: true` header is set in `minecraft_target.py`
-2. Verify the ngrok tunnel is still running
-3. Confirm the bridge URL includes the `https://` prefix
+1. The `ngrok-skip-browser-warning: true` header is already added in minecraft_target.py
+2. Check ngrok tunnel is still running
+3. Ensure bridge URL includes `https://` prefix
 
 ### Minecraft Bot Teleport Not Working
 
-**Symptom**: Bot stuck at spawn point, can't move to player.
-
-**Resolution**:
-1. Ensure cheats are enabled (Esc → Open to LAN → Allow Cheats: ON)
-2. Player must be within the bot's render distance
-3. Use `test/tp_bot.py` to manually teleport the bot to your coordinates
+1. Enable cheats in world (Esc → Open to LAN → Allow Cheats: ON)
+2. Player must be within bot's render distance
 
 ---
 
 ## Further Reading
 
-- [Part 1: Framework Introduction](../01-framework-introduction.md) — Design philosophy, architecture, roadmap
-- [Part 3: API Developer Manual](../03-developer-manual.md) — API reference, secondary development, coding style
+- [Part 1: Framework Introduction](01-framework-introduction.md) — Design philosophy, architecture, roadmap
+- [Part 3: Developer Manual](03-developer-manual.md) — API reference, Target/Adapter/Skill development
+- [Minecraft Deployment Guide](../scenarios/game/minecraft/en/deployment.md) — Full deployment walkthrough
+
+> **Next step**: To add a new game or custom Target, go to the [Developer Manual](03-developer-manual.md).

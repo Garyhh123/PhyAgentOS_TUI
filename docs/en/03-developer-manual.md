@@ -1,50 +1,46 @@
-# PhyAgentOS API Developer Manual
+# PhyAgentOS-G Developer Manual
 
-> For secondary developers, hardware integrators, plugin authors, and maintainers. Covers API interfaces, secondary development workflows, coding style standards, implementation boundaries, and contribution rules.
+> For secondary developers and researchers: Runtime architecture deep dive, API reference, Target/Adapter/Skill development guide.
 
 ---
 
 ## Table of Contents
 
-- [3.1 About This Manual](#31-about-this-manual)
+- [3.1 Manual Scope](#31-manual-scope)
 - [3.2 Architecture Deep Dive](#32-architecture-deep-dive)
 - [3.3 API Reference](#33-api-reference)
-  - [3.3.1 BaseDriver Interface](#331-basedriver-interface)
-  - [3.3.2 BaseRolloutTarget Interface](#332-baserollouttarget-interface)
-  - [3.3.3 BaseSkillRuntime Interface](#333-baseskillruntime-interface)
-  - [3.3.4 TargetAdapter Interface](#334-targetadapter-interface)
-  - [3.3.5 WatchdogSupervisor Internal Architecture](#335-watchdogsupervisor-internal-architecture)
-  - [3.3.6 Agent-Side APIs](#336-agent-side-apis)
-  - [3.3.7 Configuration Schema](#337-configuration-schema)
-  - [3.3.8 File Protocol Conventions](#338-file-protocol-conventions)
-- [3.4 Secondary Development Guide](#34-secondary-development-guide)
-  - [3.4.1 Adding a New Driver](#341-adding-a-new-driver)
-  - [3.4.2 Adding a New Target](#342-adding-a-new-target)
-  - [3.4.3 Developing External Plugins](#343-developing-external-plugins)
-  - [3.4.4 Adding a New Skill](#344-adding-a-new-skill)
-  - [3.4.5 Integrating a New Robot](#345-integrating-a-new-robot)
-  - [3.4.6 Extending the Perception Pipeline](#346-extending-the-perception-pipeline)
-  - [3.4.7 Extending the Navigation Module](#347-extending-the-navigation-module)
-  - [3.4.8 ROS2 Adapter Development](#348-ros2-adapter-development)
-- [3.5 Coding Style Standards](#35-coding-style-standards)
+  - [3.3.1 BaseRolloutTarget Interface](#331-baserollouttarget-interface)
+  - [3.3.2 BaseSkillRuntime Interface](#332-baseskillruntime-interface)
+  - [3.3.3 TargetAdapter / PolicyAdapter Interface](#333-targetadapter--policyadapter-interface)
+  - [3.3.4 WatchdogSupervisor Internals](#334-watchdogsupervisor-internals)
+  - [3.3.5 Agent-Side API](#335-agent-side-api)
+  - [3.3.6 Configuration Schema](#336-configuration-schema)
+  - [3.3.7 File Protocol Conventions](#337-file-protocol-conventions)
+- [3.4 Development Guide](#34-development-guide)
+  - [3.4.1 Adding a New Game Target](#341-adding-a-new-game-target)
+  - [3.4.2 Adding a New Adapter](#342-adding-a-new-adapter)
+  - [3.4.3 Adding a New SkillRuntime](#343-adding-a-new-skillruntime)
+  - [3.4.4 Extending Perception Pipeline](#344-extending-perception-pipeline)
+  - [3.4.5 Adding a New Skill](#345-adding-a-new-skill)
+- [3.5 Code Style](#35-code-style)
 - [3.6 Implementation Boundaries](#36-implementation-boundaries)
-- [3.7 Testing Standards](#37-testing-standards)
-- [3.8 Contribution & Submission Rules](#38-contribution--submission-rules)
-- [3.9 Appendix](#39-appendix)
+- [3.7 Contribution Guidelines](#37-contribution-guidelines)
+- [3.8 Module Path Quick Reference](#38-module-path-quick-reference)
 
 ---
 
-## 3.1 About This Manual
+## 3.1 Manual Scope
 
 ### Who This Is For
 
-If your goal is no longer just "get the system running" but:
-- Understanding module responsibilities within the repository
-- Adding or modifying built-in drivers
-- Integrating new robots via HAL
-- Developing independent plugin repositories
-- Integrating perception, navigation, or ROS2 capabilities
-- Contributing tests, documentation, or deployment instructions
+If your goal goes beyond "getting the system running":
+
+- Understanding Runtime architecture and module responsibilities
+- Adding new Game Targets (e.g., Stardew Valley, new game environments)
+- Writing TargetAdapters or PolicyAdapters
+- Developing new SkillRuntimes
+- Extending perception plugin pipelines
+- Contributing tests or documentation
 
 Then this document is your primary reference.
 
@@ -52,10 +48,11 @@ Then this document is your primary reference.
 
 | Goal | Start With |
 |------|-----------|
-| Understand runtime communication | [§3.2](#32-architecture-deep-dive) → [§3.3.8](#338-file-protocol-conventions) |
-| Integrate a new robot | [§3.4.1](#341-adding-a-new-driver) → [§3.4.5](#345-integrating-a-new-robot) |
-| Develop external plugins | [§3.4.3](#343-developing-external-plugins) |
-| Understand full architecture | [Part 1 §1.3](../01-framework-introduction.md#13-technical-architecture) → [§3.2](#32-architecture-deep-dive) |
+| Understand Runtime communication | [§3.2](#32-architecture-deep-dive) → [§3.3.7](#337-file-protocol-conventions) |
+| Add a new Game Target | [§3.4.1](#341-adding-a-new-game-target) (reference MinecraftTarget) |
+| Develop an Adapter | [§3.4.2](#342-adding-a-new-adapter) (reference Libero/OpenPI adapters) |
+| Develop a SkillRuntime | [§3.4.3](#343-adding-a-new-skillruntime) |
+| Understand full architecture | [Part 1 §1.3](01-framework-introduction.md#13-technical-architecture) → [§3.2](#32-architecture-deep-dive) |
 
 ---
 
@@ -63,221 +60,174 @@ Then this document is your primary reference.
 
 ### 3.2.1 Core Design: Cognitive-Execution Decoupling
 
-PhyAgentOS's core value lies in decoupling the cognitive and execution layers via explicit protocols. **Many "interfaces" are fundamentally file protocols and runtime conventions, not Python function signatures.**
+PhyAgentOS-G's core value is decoupling the cognitive layer from the execution layer through explicit protocols. **Many "interfaces" are file protocols and runtime conventions, not Python function signatures.**
 
 - **Track A (Cognitive)**: Planner / Critic / Tool / Memory
-- **Track B (Execution)**: Watchdog / SessionRunner / SkillRuntime / Target
+- **Track B (Execution)**: WatchdogSupervisor / SessionRunner / SkillRuntime / RolloutTarget
 - **Protocol Boundary**: Markdown files carry shared state, not cross-layer Python calls
 
-### 3.2.2 Runtime Files Are the "Ground Truth"
+### 3.2.2 Runtime Files Are the "Truth Surface"
 
-The following files are often more important than class diagrams:
+These files are usually more important than class diagrams:
 
 | File | Logical Meaning |
-|------|----------------|
-| `TARGETS.md` | Runtime target registry and endpoint / adapter / contract references |
-| `SKILLRUNTIME.md` | Executable policy/builtin skill runtime declarations |
-| `SESSIONS.md` | Execution intent and result ground truth |
-| `ENVIRONMENT.md` | Environment state ground truth |
-| `EMBODIED.md` | Agent-facing target capability prose |
+|------|---------|
+| `TARGETS.md` | Target registry with endpoint/adapter/config |
+| `SKILLRUNTIME.md` | Executable skill runtime declarations |
+| `SESSIONS.md` | Execution intent and result truth |
+| `ENVIRONMENT.md` | Environment state truth |
+| `EMBODIED.md` | Agent-facing target capability descriptions |
 | `SKILLS.md` | Agent-facing skill discovery and loading rules |
-| `LESSONS.md` | Failure experience ground truth |
+| `LESSONS.md` | Failure experience truth |
 
-**Reading only the code without understanding the files will lead to misinterpreting system behavior.**
+**Reading code without reading files will mislead your understanding of system behavior.**
 
-### 3.2.3 Single vs Fleet Development Implications
-
-When developing any functionality involving embodied actions, navigation, or connectivity, you must explicitly consider both runtime semantics:
-
-- **single mode**: One workspace, all state files in one place
-- **fleet mode**: Shared workspace for global state, per-robot workspaces for private state
-
-### 3.2.4 Distinguishing Templates, Profiles, and Runtime Files
+### 3.2.3 Templates vs Runtime Files
 
 | Concept | Location | Meaning |
-|---------|----------|---------|
+|------|------|------|
 | **Templates** | `PhyAgentOS/templates/` | Define file structure and suggested fields |
-| **Profile** | `hal/profiles/` | Static capability declaration for a robot type |
-| **Runtime Files** | workspace/ | Actual state surface read/written by Agent, Watchdog, and runtime writers |
+| **Runtime Files** | workspace/ | The actual state surface read/written by Agent, Watchdog, and runtime writers |
 
-In short: **Templates define structure, Profiles provide instance type descriptions, Runtime files carry live state.**
+Templates define structure; runtime files carry real state.
 
 ---
 
 ## 3.3 API Reference
 
-### 3.3.1 BaseDriver Interface
+### 3.3.1 BaseRolloutTarget Interface
 
-**Location**: `hal/base_driver.py`
+**Location**: `PhyAgentOS/runtime/targets/base.py`
 
-All hardware and simulation drivers must inherit from `BaseDriver`.
-
-#### Required Abstract Methods
-
-```python
-class BaseDriver(ABC):
-    def get_profile_path(self) -> str:
-        """Return the path to the driver's EMBODIED.md Profile"""
-
-    def load_scene(self, scene: dict) -> None:
-        """Initialize world state from scene dictionary"""
-
-    def execute_action(self, action_type: str, params: dict) -> str:
-        """Execute atomic action, return result string"""
-
-    def get_scene(self) -> dict:
-        """Return current world state dictionary"""
-```
-
-#### Optional Overrides
-
-```python
-def connect(self) -> None:           # Establish hardware connection
-def disconnect(self) -> None:        # Close connection
-def is_connected(self) -> bool:      # Check connection status
-def health_check(self) -> bool:      # Lightweight health check
-def get_runtime_state(self) -> dict: # Return optional runtime state (nav, connection, etc.)
-def close(self) -> None:             # Release hardware resources
-```
-
-#### Driver Loading
-
-Drivers are registered in `hal/drivers/__init__.py` `DRIVER_REGISTRY` and loaded via `load_driver(name, **kwargs)`.
-
----
-
-### 3.3.2 BaseRolloutTarget Interface
-
-**Location**: `PhyAgentOS/runtime/targets/base.py` (new version)
-
-The single entry point for all three scenarios. WatchdogSupervisor does not need to know whether the Target is a game, simulation, or real robot.
+The single entry point for all Target implementations. WatchdogSupervisor doesn't need to know whether the Target is a game, simulation, or real robot.
 
 ```python
 class BaseRolloutTarget(ABC):
     def build(self) -> None:
-        """Initialize environment (connect SMAPI, launch sim instance, establish hardware session, etc.)"""
+        """Initialize target resources (connect game, start sim, establish hardware session)"""
+
+    def describe(self) -> dict[str, Any]:
+        """Return target runtime capability declaration"""
+
+    def configure_session(self, session_ctx: dict) -> dict:
+        """Configure target-side session after preflight acceptance"""
+
+    def start_session(self, session_ctx: dict) -> dict:
+        """Start target-side session state"""
 
     def reset(self, session_ctx: dict) -> dict:
-        """Reset to initial state, return initial observation dict"""
+        """Reset to initial state, return initial observation"""
 
     def observe(self) -> dict:
-        """Get current observation (RGBD, joints, voice, game state, etc.)"""
+        """Get current observation (images, state, game snapshot, etc.)"""
 
-    def step(self, executable_action: dict) -> dict:
-        """Execute one action step, return obs / reward / done / info"""
+    def action_chunk(self, executable_action_chunk: dict) -> dict:
+        """Execute action chunk, return target execution status"""
+
+    def execution_status(self) -> dict:
+        """Return current execution status"""
+
+    def cancel(self, reason: str) -> None:
+        """Interrupt execution"""
 
     def close(self) -> None:
-        """Release resources (disconnect, close sim window, etc.)"""
+        """Release resources"""
 
-    def get_state(self) -> dict:
-        """Return runtime state dict for ENVIRONMENT.md writeback"""
+    def describe_target_tools(self) -> dict:
+        """Return target tool metadata (for builtin runtimes)"""
+
+    def call_target_tool(self, tool_name: str, arguments: dict) -> dict:
+        """Call a target-exposed tool"""
 ```
 
-#### Scenario Implementation Examples
+#### Reference Implementations
 
-```python
-# Scenario 1: Stardew Valley Game Target
-class StardewTarget(BaseRolloutTarget):
-    def build(self): ...       # Connect SMAPI mod (HTTP)
-    def reset(self, ctx): ...  # Load game day/season
-    def observe(self): ...     # Return: position/time/inventory/NPC relations/crop state
-    def step(self, action): ...# Execute move_to/interact/sleep
-    def close(self): ...       # Disconnect SMAPI
+- **MinecraftTarget** (267 lines): Clean HTTP client connecting to external mineflayer bridge. Best reference for Game Targets.
+  - Location: `PhyAgentOS/runtime/targets/game/minecraft_target.py`
+- **DummySimTarget** (118 lines): Fully mocked target, returns numpy zero arrays, auto-succeeds after 5 steps.
+  - Location: `PhyAgentOS/runtime/targets/local/dummy_sim_target.py`
 
-# Game Target: Minecraft (verified)
-class MinecraftTarget(BaseLocalTarget):
-    def build(self): ...       # HTTP GET /health → verify bridge reachable
-    def reset(self, ctx): ...  # Initial observation (position/inventory/nearby blocks/entities)
-    def observe(self): ...     # HTTP GET /state → full game snapshot
-    def step(self, action): ...# HTTP POST /action → mineflayer execution
-    def close(self): ...       # Release HTTP client
+### 3.3.2 BaseSkillRuntime Interface
 
-# Scenario 2: Simulation Target
-class ManiSkillTarget(BaseRolloutTarget):
-    def build(self): ...       # Initialize ManiSkill environment
-    def observe(self): ...     # RGBD + proprioception + language instruction
-    def step(self, action): ...# Continuous action → obs/reward/done/info
+**Location**: `PhyAgentOS/runtime/skillruntime/base.py`
 
-# Scenario 3: Real Composite Target
-class CompositeTarget(BaseRolloutTarget):  # Go2 + Franka
-    def observe(self): ...     # RGBD + force + joints + voice text
-    def step(self, action): ...# chunk buffer + soft blend
-```
-
----
-
-### 3.3.3 BaseSkillRuntime Interface
-
-**Location**: `PhyAgentOS/runtime/skillruntime/base.py` (new version)
+SkillRuntime is responsible for "how to run" the execution strategy:
 
 ```python
 class BaseSkillRuntime(ABC):
-    def start(self, session_ctx: dict, target: BaseRolloutTarget) -> None:
+    def start(self, skill_ctx: SkillContext) -> None:
         """Initialize skill execution context"""
 
-    def tick(self, session_ctx: dict, target: BaseRolloutTarget) -> dict:
-        """Called once per execution cycle, return status dict"""
-
-    def cancel(self, session_ctx: dict, reason: str) -> None:
+    def cancel(self, skill_ctx: SkillContext, reason: str) -> None:
         """Interrupt execution"""
 
-    def snapshot(self, session_ctx: dict) -> dict:
+    def snapshot(self, skill_ctx: SkillContext) -> dict:
         """Return current skill snapshot"""
 ```
 
 #### Skill Runtime Hierarchy
 
 ```
-SkillRuntime
-├── PolicyBackedSkillRuntime
-│   ├── VLASkillRuntime
-│   ├── OpenPISkillRuntime
-│   └── GR00TSkillRuntime
-├── BuiltinAlgorithmSkillRuntime
-│   ├── SemanticNavigationRuntime
-│   ├── TargetNavigationRuntime
-│   └── ReKepGraspRuntime
-├── HybridSkillRuntime
-│   ├── NavThenVLARuntime
-│   └── ReKepThenVLARuntime
-└── DirectAtomicRuntime
+BaseSkillRuntime
+├── PolicySkillRuntime       # Maintains policy closed-loop (observe→predict→action→step)
+│   └── OpenPISkillRuntime  # pi0.5 OpenPI policy loop (100 lines)
+└── BuiltinSkillRuntime      # Manages Agent interactive loop
+    └── MinecraftSkillRuntime  # Minecraft episode driver loop (241 lines)
 ```
 
-**Key Design**: Skill runtime focuses on "how to run", target on "how to execute", adapter on "how to translate". Clear separation of concerns.
+**Key design**: Skill runtime focuses on "how to run", target on "how to execute", adapter on "how to translate". Clear separation of concerns.
 
----
+### 3.3.3 TargetAdapter / PolicyAdapter Interface
 
-### 3.3.4 TargetAdapter Interface
+**Location**: `PhyAgentOS/runtime/adapters/base.py`
 
-**Location**: `PhyAgentOS/runtime/adapters/base.py` (new version)
+**TargetAdapter**: Converts Target raw observations to Runtime unified format.
 
+```python
+class BaseTargetAdapter(ABC):
+    def output_observation_contract(self) -> dict:
+        """Declare the observation format contract output by this adapter"""
+
+    def input_action_contract(self) -> dict:
+        """Declare the action format contract expected by this adapter"""
+
+    def to_runtime_observation(self, raw_obs: dict, target_info: dict) -> dict:
+        """Convert raw observation to Runtime unified observation"""
 ```
-TargetAdapter
-├── SimAdapter (BuiltinSim / RoboCasa / LIBERO)
-└── RealAdapter (Franka / Go2 / XLeRobot / UR5)
+
+**PolicyAdapter**: Converts Runtime observations to/from Policy input/output.
+
+```python
+class BasePolicyAdapter(ABC):
+    def input_observation_contract(self) -> dict: ...
+    def output_action_contract(self) -> dict: ...
+    def to_policy_input(self, runtime_obs: dict) -> dict: ...
+    def from_policy_output(self, policy_output: dict) -> dict: ...
 ```
 
-Responsibilities:
-- Target-specific observation difference handling (coordinate transforms, sensor data normalization)
-- Target-specific action difference handling (normalization/de-normalization, sticky gripper, chunk decode)
-- `AdapterPlan` auto-composes adaptation steps
+#### Implemented Adapters
 
----
+| Adapter | Type | Location |
+|---------|------|------|
+| LiberoTargetAdapter | TargetAdapter | `PhyAgentOS/runtime/adapters/libero/target_adapter.py` |
+| OpenPIPi05Adapter | PolicyAdapter | `PhyAgentOS/runtime/adapters/openpi/pi05_policy_adapter.py` |
+| DummyOpenPIAdapter | PolicyAdapter | `PhyAgentOS/runtime/adapters/openpi/dummy_openpi_adapter.py` |
+| MinecraftAdapter | TargetAdapter | `PhyAgentOS/runtime/adapters/minecraft/minecraft_adapter.py` |
 
-### 3.3.5 WatchdogSupervisor Internal Architecture
+### 3.3.4 WatchdogSupervisor Internals
 
-**Location**: `PhyAgentOS/runtime/watchdog/supervisor.py` (new version)
+**Location**: `PhyAgentOS/runtime/watchdog/supervisor.py` (248 lines)
 
 ```
 WatchdogSupervisor
-├── WorkspaceWatcher      # Monitors SESSIONS.md / TARGETS.md / ENVIRONMENT.md
-├── SessionRegistry       # Session lifecycle management (pending→claimed→running→succeeded/failed)
-├── SessionScheduler      # Dispatches by target/skill/priority
-├── TargetRuntimeRegistry # Target runtime factory/manifest
-├── SkillRuntimeRegistry  # Skill runtime factory/manifest
-├── HealthMonitor         # Policy server / robot / simulator / session health monitoring
-├── ResultWriter          # Unified writeback to SESSIONS.md / ENVIRONMENT.md / LESSONS.md
-└── FailureEscalator      # retry / reset / cancel / notify / safety stop
+├── WorkspaceWatcher         # Monitors SESSIONS.md / TARGETS.md changes
+├── SessionRegistry          # Session lifecycle management
+├── SessionScheduler         # Dispatches by target/skill/priority
+├── TargetRuntimeRegistry    # Target factory/manifest
+├── SkillRuntimeRegistry     # Skill runtime factory/manifest
+├── HealthMonitor            # Policy server / target / session health
+├── ResultWriter             # Unified writeback to SESSIONS.md / ENVIRONMENT.md / LESSONS.md
+└── FailureEscalator         # retry / reset / cancel / notify
 ```
 
 #### Session State Machine
@@ -288,83 +238,52 @@ pending → rejected
 running → cancelling → cancelled
 ```
 
----
+#### Session Validation-Dispatch-Execution Chain
 
-### 3.3.6 Agent-Side APIs
+```
+1. Agent forms task intent
+2. Agent resolves target & skill runtime from TARGETS.md / SKILLRUNTIME.md
+3. Agent appends pending session to SESSIONS.md
+4. WatchdogSupervisor claims session, runs RuntimeCompatibilityPreflight
+5. SessionRunner executes target/skill runtime
+6. Results written back to SESSIONS.md, ENVIRONMENT.md, artifacts
+```
+
+### 3.3.5 Agent-Side API
 
 #### Agent Loop
 
 **Location**: `PhyAgentOS/agent/loop.py`
 
-```python
-class AgentLoop:
-    def run(self, user_input: str) -> str:
-        """Main loop: receive input → build context → call LLM → handle tools → return result"""
-```
-
 Workflow:
-1. Build context from bootstrap files (`AGENTS.md`, `SOUL.md`, `USER.md`, `TOOLS.md`, `SKILLS.md`) plus state files such as `ENVIRONMENT.md`, `EMBODIED.md`, and `LESSONS.md`
+1. Build context from bootstrap files (`AGENTS.md`, `SOUL.md`, `USER.md`, `SKILLS.md`) and state files (`ENVIRONMENT.md`, `EMBODIED.md`, `LESSONS.md`)
 2. Call LLM for planning and reasoning
-3. Handle tool invocations and skill-guided workflows
-4. For runtime execution, read `TARGETS.md` / `SKILLRUNTIME.md` and append work to `SESSIONS.md`
-5. Manage conversation history
-
-#### Runtime Session Validation
-
-**Location**: `PhyAgentOS/runtime/preflight/`
-
-Runtime validation happens before execution. It resolves the requested
-`target_ref` and `skillruntime_ref`, checks whether the target supports the
-skill runtime, validates sensor/perception/runtime contracts, and rejects
-invalid sessions before a target or policy runtime is started.
-
-#### Skill System
-
-**Location**: `PhyAgentOS/agent/skills.py`
-
-Each Skill is a directory containing `SKILL.md` (skill definition) and execution scripts. 13 built-in Skills:
-`agent-mode`, `clawhub`, `cron`, `github`, `image`, `memory`, `pipergo2-demo`,
-`rekep-robot-onboarding`, `robot-management-guideline`, `skill-creator`, `summarize`, `tmux`, `weather`.
+3. Process tool calls and skill-guided workflows
+4. When Runtime execution needed, read `TARGETS.md` / `SKILLRUNTIME.md` and append tasks to `SESSIONS.md`
 
 #### CLI Entry Points
 
 | Command | Description |
-|---------|-------------|
+|------|------|
 | `paos onboard` | Initialize workspace, sync template files |
 | `paos agent` | Start interactive Agent CLI |
 | `paos agent -m "..."` | Single-turn message call |
-| `paos gateway` | Start long-running gateway service |
+| `paos minecraft` | Minecraft game control commands |
 
----
-
-### 3.3.7 Configuration Schema
+### 3.3.6 Configuration Schema
 
 **Location**: `PhyAgentOS/config/schema.py`
 
-Pydantic configuration model core structure:
-
 ```python
-class EmbodimentInstanceConfig(BaseModel):
-    robot_id: str
-    driver: str
-    workspace: str
-
-class EmbodimentsConfig(BaseModel):
-    mode: Literal["single", "fleet"]
-    shared_workspace: str | None = None
-    instances: list[EmbodimentInstanceConfig] = []
-
 class Config(BaseModel):
     agents: AgentsConfig
     providers: ProvidersConfig
     gateway: GatewayConfig | None
     tools: ToolsConfig | None
-    embodiments: EmbodimentsConfig
+    runtime: RuntimeConfig | None    # Runtime workspace config
 ```
 
----
-
-### 3.3.8 File Protocol Conventions
+### 3.3.7 File Protocol Conventions
 
 #### SESSIONS.md Format
 
@@ -379,370 +298,259 @@ sessions:
     priority: normal
 ```
 
-#### Session Validate-Dispatch-Execute Pipeline
+#### TARGETS.md Format
 
+```yaml
+version: targets_v1
+targets:
+  - id: target://minecraft
+    kind: game
+    enabled: true
+    adapter: target_adapter://minecraft/v1
+    config:
+      bridge_url: "https://xxxx.ngrok-free.app"
+      verify_ssl: false
+    supported_skillruntimes:
+      - skillruntime://minecraft_game/v1
 ```
-1. Agent forms task intent
-2. Agent resolves target and skill runtime from TARGETS.md / SKILLRUNTIME.md
-3. Agent appends a pending session to SESSIONS.md
-4. Watchdog claims the session and runs preflight
-5. SessionRunner executes target/skill runtime and writes results to SESSIONS.md, ENVIRONMENT.md, LOG.md, and artifacts
-```
-
-When debugging, distinguish: task generation issue / target or skillruntime mismatch / preflight rejection / Watchdog execution failure / execution succeeded but state not written back.
 
 ---
 
-## 3.4 Secondary Development Guide
+## 3.4 Development Guide
 
-### 3.4.1 Adding a New Driver
+### 3.4.1 Adding a New Game Target
 
-Minimum workflow for adding a built-in driver:
+Adding a new game requires only a `BaseRolloutTarget` subclass (~100-300 lines). Reference `MinecraftTarget`.
 
-1. Create driver implementation file in `hal/drivers/`
-2. Inherit `BaseDriver`, implement 4 abstract methods
-3. Create corresponding Profile in `hal/profiles/`
-4. Register in `hal/drivers/__init__.py` `DRIVER_REGISTRY`
-5. Validate by starting directly: `hal/hal_watchdog.py --driver <name>`
-6. Full-pipeline integration test with `paos agent`
+**Steps**:
 
-#### Built-in Driver vs External Plugin
+1. Create Target implementation in `PhyAgentOS/runtime/targets/game/`
+2. Inherit from `BaseRolloutTarget` (local targets can use `BaseLocalTarget`)
+3. Implement all abstract methods
+4. Register in `PhyAgentOS/runtime/targets/factory.py`
+5. Configure endpoint, adapter, supported_skillruntimes in `TARGETS.md`
 
-| Modify Main Repo | External Plugin |
-|------------------|-----------------|
-| Fix existing driver bugs | Heavy third-party SDK dependencies |
-| Enhance built-in simulation | Vendor-private runtimes |
-| Universal changes | Complex real-robot deployment logic |
-| | Independent versioning and dependency management desired |
-
----
-
-### 3.4.2 Adding a New Target
-
-Adding a new scenario requires only implementing a `BaseRolloutTarget` subclass (~100 lines):
+**Minimal Template**:
 
 ```python
-class MyTarget(BaseRolloutTarget):
+class StardewTarget(BaseRolloutTarget):
     def build(self) -> None:
-        # Initialize environment
+        # Connect to SMAPI mod (HTTP)
+        pass
+
+    def describe(self) -> dict:
+        return {
+            "runtime": "StardewGameRuntime",
+            "observation_schema": {
+                "position": {"dtype": "int", "shape": [2]},
+                "time": {"dtype": "str"},
+                "inventory": {"dtype": "list"},
+            },
+            "action_contract": {
+                "id": "stardew_game_v1",
+                "types": ["move_to", "use_tool", "interact", "sleep"],
+            },
+        }
 
     def reset(self, session_ctx: dict) -> dict:
-        # Reset and return initial observation
-        return {"obs": ..., "info": ...}
+        return self.observe()
 
     def observe(self) -> dict:
-        # Return current observation
-        return {"rgb": ..., "depth": ..., "joint": ...}
+        return {"position": ..., "time": ..., "inventory": ..., "npc_relations": ...}
 
-    def step(self, executable_action: dict) -> dict:
-        # Execute one step
-        return {"obs": ..., "reward": ..., "done": ..., "info": ...}
+    def action_chunk(self, action_chunk: dict) -> dict:
+        return {"accepted": True, "obs": self.observe()}
 
-    def close(self) -> None:
-        # Release resources
+    def execution_status(self) -> dict:
+        return {"health": "ok"}
 
-    def get_state(self) -> dict:
-        # Return runtime state
-        return {"status": ..., "position": ...}
+    def configure_session(self, ctx): return {}
+    def start_session(self, ctx): return {}
+    def cancel(self, reason): pass
+    def close(self): pass
 ```
 
-**No need to understand**: Watchdog, Session state machine, file protocol, Critic — the Base layer handles all of that.
+### 3.4.2 Adding a New Adapter
 
-> **Reference implementation**: `runtime/targets/game/minecraft_target.py` (182 lines) is a clean `BaseLocalTarget` implementation. It has zero Minecraft protocol dependencies (no pyCraft), communicating only via HTTP to an external mineflayer bridge. Suitable as a reference template for game-type Targets.
->
-> Deployment guides, usage details, and 9 troubleshooting entries are in the [Minecraft scenario docs](../../scenarios/game/minecraft/en/deployment.md).
+#### TargetAdapter
 
----
+Converts target raw observation format. Reference `LiberoTargetAdapter` (152 lines).
 
-### 3.4.3 Developing External Plugins
+```python
+class MyTargetAdapter(BaseTargetAdapter):
+    def output_observation_contract(self) -> dict:
+        return {
+            "sensors": {
+                "front_rgb": {"kind": "image", "dtype": "uint8", "layout": "HWC"},
+            },
+            "state": {
+                "position": {"dtype": "float32", "shape": [3]},
+            },
+        }
 
-#### Plugin Registration Mechanism
+    def input_action_contract(self) -> dict:
+        return {"id": "my_action_v1", "shape": ["T", 7]}
 
-**Location**: `hal/plugins.py`
-
-1. Plugin repo provides `PhyAgentOS_plugin.toml` manifest
-2. Deployment script clones or copies plugin repo to `~/.PhyAgentOS/plugins/repos/`
-3. Main repo reads manifest and writes to local plugin registry
-4. When built-in `DRIVER_REGISTRY` doesn't find target driver, dynamically resolves from external registry
-
-#### Plugin Template Structure
-
-```
-my-plugin/
-├── PhyAgentOS_plugin.toml    # Plugin manifest
-├── requirements.txt          # Dependencies
-├── driver.py                 # Driver implementation (extends BaseDriver)
-├── profile.md                # Robot Profile
-└── README.md                 # Usage instructions
+    def to_runtime_observation(self, raw_obs: dict, target_info: dict) -> dict:
+        return {
+            "image": {"front_rgb": raw_obs["rgb"]},
+            "state": {"position": raw_obs["pos"]},
+        }
 ```
 
-#### Deployment Script Reference
+### 3.4.3 Adding a New SkillRuntime
 
-```bash
-python scripts/deploy_rekep_real_plugin.py \
-  --repo-url https://github.com/baiyu858/PhyAgentOS-rekep-real-plugin.git
+```python
+class MySkillRuntime(PolicySkillRuntime):
+    def start(self, skill_ctx: SkillContext) -> None: ...
+
+    def run_policy_loop(
+        self, skill_ctx, policy_client, handle, max_steps
+    ) -> SkillRuntimeResult:
+        for _ in range(max_steps):
+            obs = handle.observe()
+            runtime_obs = handle.adapt_observation(obs)
+            action = policy_client.predict(runtime_obs)
+            status = handle.execute_action(action)
+            if status.get("done"):
+                break
+        return SkillRuntimeResult(success=True, metrics={})
+
+    def cancel(self, skill_ctx, reason): ...
+    def snapshot(self, skill_ctx) -> dict: ...
 ```
 
----
+Reference: `OpenPISkillRuntime` (100 lines), `MinecraftSkillRuntime` (241 lines).
 
-### 3.4.4 Adding a New Skill
+### 3.4.4 Extending Perception Pipeline
 
-Each Skill is a directory containing a `SKILL.md` definition file and execution scripts:
+**Location**: `PhyAgentOS/runtime/perception/`
+
+Pipeline structure:
+
+```
+PerceptionRuntime
+  → SensorFrameBuilder      # Builds SensorFrame from Target observation
+    → PluginPipeline         # Executes perception plugin chain
+      → EnvironmentWriter    # Writes perception results to ENVIRONMENT.md
+```
+
+**Existing plugins** (`PhyAgentOS/plugins/perception_plugins/`):
+
+| Plugin | Description |
+|------|------|
+| `dummy_segmenter` | Smoke test segmenter |
+| `sam3_open_vocab` | SAM3 open-vocabulary segmentation |
+| `yolo_seg` | YOLO instance segmentation |
+| `rgbd_object_builder` | RGBD object builder |
+| `sim_oracle` | Simulation oracle perception |
+
+**Adding a new plugin**: Inherit from `BasePerceptionPlugin`, implement `process(sensor_frame) → SensorFrame`.
+
+### 3.4.5 Adding a New Skill
+
+Each skill is a directory containing a `SKILL.md` definition file:
 
 ```
 PhyAgentOS/skills/my-skill/
-├── SKILL.md      # Skill metadata and prompt
-└── run.sh        # Execution entry point
+├── SKILL.md      # Skill metadata & prompt
+└── run.sh        # Execution entry (optional)
 ```
 
-**SKILL.md format**:
-```markdown
-# Skill Name
-Description of what this skill does.
-
-## Parameters
-- param1: description
-- param2: description
-
-## Usage
-...
-```
+Reference: `PhyAgentOS/skills/benchmarking/SKILL.md`
 
 ---
 
-### 3.4.5 Integrating a New Robot
-
-#### Profile Writing Guidelines
-
-A Profile should contain (a capability specification for Critic and Agent):
-- Identity and type
-- Sensor capabilities
-- Supported action table
-- Physical constraints (workspace, torque limits, etc.)
-- Connection method
-- Runtime protocol mapping
-
-#### driver-config JSON Pass-Through Mechanism
-
-`hal_watchdog.py` supports passing a JSON object via `--driver-config`, transparently forwarded to the target driver constructor:
-
-```bash
-python hal/hal_watchdog.py \
-  --driver my_driver \
-  --driver-config examples/my_driver_config.json
-```
-
-Benefits: avoids frequent Watchdog CLI changes, each driver defines its own init params, config examples are persisted in the repo.
-
----
-
-### 3.4.6 Extending the Perception Pipeline
-
-**Location**: `hal/perception/`
-
-Perception pipeline layer structure:
-
-```
-service.py                 # Service orchestration entry point
-  ├── geometry_pipeline.py # Geometric processing (point clouds, transforms)
-  ├── segmentation_pipeline.py  # Semantic segmentation
-  ├── fusion_pipeline.py   # Multi-source fusion → scene graph
-  └── environment_writer.py     # Write perception results to ENVIRONMENT.md
-```
-
-**Development advice**: Clearly separate "perception processing" from "environment writeback". Don't cram all logic into the driver.
-
----
-
-### 3.4.7 Extending the Navigation Module
-
-**Location**: `hal/navigation/`
-
-```
-target_navigation_engine.py    # Core navigation engine, semantic goal resolution
-  └── target_navigation_backend.py  # Navigation execution backend abstraction
-        └── bridge.py          # Bridge between HAL and navigation backend
-```
-
-The most important thing in navigation extension is not just "making the robot move", but making state **visible, writable, and interpretable**.
-
----
-
-### 3.4.8 ROS2 Adapter Development
-
-**Location**: `hal/ros2/`
-
-```
-bridge.py          # ROS2 communication bridge
-messages.py        # Message type definitions and conversions
-adapters/          # Robot-specific ROS2 adapters
-```
-
-When integrating new ROS2 topics / sensors / control channels, prefer extending by adapter dimension rather than piling ad-hoc logic into a single driver.
-
----
-
-## 3.5 Coding Style Standards
+## 3.5 Code Style
 
 ### Python
 
-| Standard | Requirement |
-|----------|-------------|
+| Rule | Requirement |
+|------|------|
 | Python version | ≥ 3.11 |
-| Line length | Max 100 characters |
+| Line length | Max 100 chars |
 | Lint tool | ruff |
 | Lint rules | E / F / I / N / W |
 | Ignored rules | E501 (line length handled by ruff formatter) |
-| Type annotations | Required on all public functions |
-| Docstrings | Google-style docstrings |
-| Import ordering | isort auto-sorted (stdlib → third-party → project internal) |
-
-### Pydantic Schema Conventions
-
-- All runtime data structures defined using Pydantic BaseModel
-- Fields use explicit type annotations and default values
-- Complex nested fields defined as separate models
+| Type hints | All public functions must have type annotations |
+| Docstrings | Google style |
+| Import order | isort auto-sorted (stdlib → third-party → project internal) |
 
 ### File Organization
 
-- One clear responsibility per module
-- Don't cram all logic into the driver
-- Perception, navigation, ROS2 each have independent layers
+- Each module has a single clear responsibility
+- Target, Adapter, SkillRuntime are independent
+- Perception pipeline is cleanly layered
 
 ---
 
 ## 3.6 Implementation Boundaries
 
-### Strictly Forbidden Cross-Boundary Behavior
+### Strictly Forbidden Cross-Layer Access
 
-| Component | Must NOT Know |
-|-----------|---------------|
+| Component | Must Never Know |
+|------|-----------|
 | **RolloutTarget** | Policy inference, Skill logic, upper Agent |
 | **SkillRuntime** | Target internal implementation details |
 | **TargetAdapter** | Policy inference, Target internal state |
-| **WatchdogSupervisor** | How to execute step specifics |
-| **Base layer** | Any import from scenario modules |
+| **WatchdogSupervisor** | How to execute individual steps |
 
 ### Design Guardrails
 
-1. **Base layer must NOT import any scenario module**
-2. **Each new scenario = ~100 lines of BaseRolloutTarget subclass**
-3. **Three scenarios progress in parallel without blocking**
-4. **Real-robot final safety adjudication MUST stay on the local control machine** (no final stop decisions on the cloud Agent side)
-
-### Safety Boundary (Real-Robot Scenario)
-
-```
-Sensor → ObservationProvider → PolicyServer → ActionChunk
-  → ChunkBuffer (local) → SoftBlend → SafetyGuard (local) → MotorCommand
-```
-
-Cloud Agent only generates intent-level session specs. Local Runtime layer executes and performs final safety checks.
+1. **Base layer never imports scenario modules**
+2. **Each new scenario ≈ 100-line BaseRolloutTarget subclass**
+3. **Three scenarios (Game / Simulation / Real Robot) develop in parallel without blocking**
+4. **Real robot final safety arbitration must stay on local control machine**
 
 ---
 
-## 3.7 Testing Standards
+## 3.7 Contribution Guidelines
 
-### Four-Layer Validation System
-
-| Layer | Content | Command |
-|-------|---------|---------|
-| 1. Pure Python unit tests | Interfaces, config, registration, parsing logic | `pytest tests/test_hal_base_driver.py` |
-| 2. Driver local smoke test | Start Watchdog directly | `python hal/hal_watchdog.py --driver <name>` |
-| 3. Dry-run preflight | Pre-check real plugin or remote runtime | preflight + dry-run |
-| 4. Agent full-pipeline integration | Agent → SESSIONS → Watchdog → runtime target → ENVIRONMENT | `paos agent` + Watchdog |
-
-### Key Test Files
-
-| Test File | Coverage |
-|-----------|----------|
-| `tests/test_hal_external_plugins.py` | Plugin registration & external driver resolution |
-| `tests/test_hal_base_driver.py` | Driver base contract |
-| `tests/test_hal_watchdog_driver_config.py` | `driver-config` pass-through |
-| `tests/test_go2_navigation_stack.py` | Go2 navigation stack |
-| `tests/test_perception_service.py` | Perception service |
-| `tests/test_commands.py` | CLI commands |
-| `tests/test_fleet_watchdog.py` | Fleet Watchdog workflows |
-
-### Minimum Test Commands
-
-```bash
-# Full suite
-pytest tests/
-
-# Single module
-pytest tests/test_hal_external_plugins.py
-```
-
-### Real-Robot/Plugin Verification Sequence
-
-```
-preflight → dry-run → Watchdog direct connection validation → Agent full-pipeline validation
-```
-
----
-
-## 3.8 Contribution & Submission Rules
-
-### PR Workflow
-
-1. Fork the repo and create a feature branch
-2. Write code + tests + documentation
-3. Ensure `pytest tests/` all pass
-4. Ensure `ruff check .` has no errors
-5. Submit PR with clear description of changes and motivation
-
-### Commit Conventions
+### Commit Convention
 
 - Use semantic commit messages: `feat:` / `fix:` / `docs:` / `refactor:` / `test:` / `chore:`
-- One commit, one thing
-- Never commit secrets (`.env`, credentials, etc.)
+- One commit per logical change
+- Never include secrets in commits (`.env`, credentials, etc.)
 
-### Documentation Layering
+### Documentation Maintenance Layers
 
-| Doc Layer | Target Audience | Change Trigger |
-|-----------|----------------|----------------|
+| Layer | Audience | Change Trigger |
+|------|---------|-------------|
 | README | Everyone | Major feature changes |
-| Framework Introduction | Everyone | Architecture evolution, new features, demo updates |
+| Framework Introduction | Everyone | Architecture evolution, new features, roadmap updates |
 | User Manual | Users | Command changes, config structure changes, new scenario support |
 | Developer Manual | Developers | API changes, new modules, process changes |
 
-### When to Split Out a Separate Doc
-
-Split out when BOTH conditions are met:
-- Beyond "quick reference" scope, needs background + deployment + troubleshooting + examples + FAQ
-- Has a stable, specific audience (e.g., plugin authors, ROS2 developers, operators)
-
 ---
 
-## 3.9 Appendix
+## 3.8 Module Path Quick Reference
 
-### Module Path Quick Reference
-
-| Function | Path |
-|----------|------|
-| BaseDriver | `hal/base_driver.py` |
-| Watchdog | `hal/hal_watchdog.py` / `PhyAgentOS/runtime/watchdog/` |
-| Built-in Drivers | `hal/drivers/` |
-| Robot Profiles | `hal/profiles/` |
-| Driver Config Examples | `examples/` |
+| Functionality | Path |
+|------|------|
+| Runtime Watchdog | `PhyAgentOS/runtime/watchdog/supervisor.py` |
+| Session Runner | `PhyAgentOS/runtime/sessions/` |
+| Target Base | `PhyAgentOS/runtime/targets/base.py` |
+| Minecraft Target | `PhyAgentOS/runtime/targets/game/minecraft_target.py` |
+| DummySim Target | `PhyAgentOS/runtime/targets/local/dummy_sim_target.py` |
+| LIBERO TargetWS | `PhyAgentOS/runtime/targets/remote/libero/server.py` |
+| Skill Runtime Base | `PhyAgentOS/runtime/skillruntime/base.py` |
+| OpenPI SkillRuntime | `PhyAgentOS/runtime/skillruntime/policy/openpi.py` |
+| Minecraft SkillRuntime | `PhyAgentOS/runtime/skillruntime/game/minecraft_skill_runtime.py` |
+| Adapter Base | `PhyAgentOS/runtime/adapters/base.py` |
+| LIBERO TargetAdapter | `PhyAgentOS/runtime/adapters/libero/target_adapter.py` |
+| OpenPI PolicyAdapter | `PhyAgentOS/runtime/adapters/openpi/pi05_policy_adapter.py` |
+| Preflight | `PhyAgentOS/runtime/preflight/runtime_compatibility_preflight.py` |
+| Perception Runtime | `PhyAgentOS/runtime/perception/perception_runtime.py` |
 | Agent Loop | `PhyAgentOS/agent/loop.py` |
 | Agent Context | `PhyAgentOS/agent/context.py` |
 | Agent Skill System | `PhyAgentOS/agent/skills.py` |
-| Config Schema | `PhyAgentOS/config/schema.py` |
-| Perception Runtime | `PhyAgentOS/runtime/perception/` |
-| Runtime Session System | `PhyAgentOS/runtime/sessions/` |
-| Runtime Watchdog | `PhyAgentOS/runtime/watchdog/` |
-| Skill Runtime | `PhyAgentOS/runtime/skillruntime/` |
-| Skill System | `PhyAgentOS/agent/skills.py` |
+| Configuration Schema | `PhyAgentOS/config/schema.py` |
 | CLI Entry | `PhyAgentOS/cli/commands.py` |
-| Test Suite | `tests/` |
+| E2E Scripts | `scripts/run_pi05_libero_real_e2e.py` |
 
 ---
 
 ## Further Reading
 
-- [Part 1: Framework Introduction](../01-framework-introduction.md) — Design philosophy, architecture, roadmap
-- [Part 2: User Manual](../02-user-manual.md) — Quick start, scenario configuration, troubleshooting
-
-> **External Plugin Reference**: The ReKep real-robot plugin [GitHub](https://github.com/baiyu858/PhyAgentOS-rekep-real-plugin) is the best external plugin implementation reference.
+- [Part 1: Framework Introduction](01-framework-introduction.md) — Design philosophy, architecture, roadmap
+- [Part 2: User Manual](02-user-manual.md) — Quick start, scenario setup, troubleshooting

@@ -1,57 +1,54 @@
 <div align="center">
-  <img src="docs/imgs/logo_en.png" alt="PhyAgentOS" width="560">
+  <img src="docs/imgs/logo_en.png" alt="PhyAgentOS-G" width="700">
 
-  <h3>认知与物理解耦 —— 面向具身智能的 Session-Centered 运行时</h3>
+  <h1>PhyAgentOS-G</h1>
+
+  <h3>通用游戏智能体 —— 解耦式具身智能行为研究框架</h3>
 
   <p>
-    <a href="https://github.com/PhyAgentOS/PhyAgentOS/stargazers">
-      <img src="https://img.shields.io/github/stars/PhyAgentOS/PhyAgentOS?style=social" alt="Stars">
-    </a>
-    <a href="https://github.com/PhyAgentOS/PhyAgentOS/network/members">
-      <img src="https://img.shields.io/github/forks/PhyAgentOS/PhyAgentOS?style=social" alt="Forks">
-    </a>
+    <a href="./README.md">English</a> | <a href="./README_zh.md">中文</a>
   </p>
+
   <p>
-    <img src="https://img.shields.io/badge/Python-≥3.11-3776AB?logo=python&logoColor=white" alt="Python">
-    <img src="https://img.shields.io/badge/License-MIT-3DA639" alt="License">
-    <a href="https://sysu-hcp-eai.github.io/PhyAgentOS-website/">
-      <img src="https://img.shields.io/badge/🌐_Website-online-FF6B35" alt="Website">
-    </a>
+    <img src="https://img.shields.io/badge/version-v0.0.3-blue" alt="Version">
+    <img src="https://img.shields.io/badge/python-≥3.11-3776AB?logo=python&logoColor=white" alt="Python">
+    <img src="https://img.shields.io/badge/license-MIT-3DA639" alt="License">
     <a href="https://github.com/PhyAgentOS/PhyAgentOS">
       <img src="https://img.shields.io/badge/PRs-Welcome-2EA44F" alt="PRs">
     </a>
+    <a href="https://github.com/PhyAgentOS/PhyAgentOS/stargazers">
+      <img src="https://img.shields.io/github/stars/PhyAgentOS/PhyAgentOS?style=social" alt="Stars">
+    </a>
   </p>
+  <br>
   <p>
-    <sub><a href="./README.md">English</a> · <a href="./README_zh.md">中文</a></sub>
+    <sub>基于主分支 v0.1.4 重构迁移 · 专注于游戏智能体行为研究 · 支持仿真与真机验证</sub>
   </p>
 </div>
 
 ---
 
 ## 📢 更新日志
-README_zh.md
+
 | 版本 | 日期 | 更新内容 |
 |:-----|:-----|:---------|
-| ![v0.2.3](https://img.shields.io/badge/v0.2.3-FF574F) | 2026-05-29 | 基于 ![v0.2.2](https://img.shields.io/badge/v0.2.2-FF574F) 清理了协议文件以及文档 |
-| ![v0.2.2](https://img.shields.io/badge/v0.2.2-FF574F) | 2026-05-29 | 基于 ![v0.1.4](https://img.shields.io/badge/v0.1.4-47A882) 的MineCraft通路优化，可以在终端和游戏内下达指令并执行 |
-| ![v0.2.1](https://img.shields.io/badge/v0.2.1-11648A) | 2026-05-29 | 基于 ![v0.1.3](https://img.shields.io/badge/v0.1.3-11648A) 的MineCraft 就绪，以云端agent接入用户的本地服务器 |
-| ![v0.1.4](https://img.shields.io/badge/v0.1.4-47A882) | 2026-06-5 | 优化用户友好的启动流程; 通信协议规范; 更合理的代码规范; Game Agent & Benchmarking 就绪 |
-| ![v0.1.3](https://img.shields.io/badge/v0.1.3-11648A) | 2026-05-25 | `PolicySkillRuntime` / `BuiltinSkillRuntime` 边界严格分离，Game Agent & Benchmarking 就绪 |
-| ![v0.1.2](https://img.shields.io/badge/v0.1.2-11648A) | 2026-05-20 | 感知插件体系：`SensorConfig` / `PerceptionConfig` YAML + `EnvironmentWriter` 可审计写回 |
-| ![v0.1.1](https://img.shields.io/badge/v0.1.1-11648A) | 2026-05-18 | Session-Centered Runtime MVP：`DummySimTarget` + `DummyAdapter` + `DummyClient` 串行链路 |
-| ![v0.1.0](https://img.shields.io/badge/v0.1.0-11648A) | 2026-04-29 | Hackathon 基线：插件化 HAL，ReKep / SAM3 真机抓取与 VLN 全链路 |
+| ![v0.0.3](https://img.shields.io/badge/v0.0.3-FF574F) | 2026-06-11 | 整合为Agent Loop，支持复杂任务的完成 |
+| ![v0.0.2](https://img.shields.io/badge/v0.0.2-47A882) | 2026-05-29 | Minecraft 通路优化：支持终端和游戏内下达指令并执行 |
+| ![v0.0.1](https://img.shields.io/badge/v0.0.1-11648A) | 2026-05-29 | Minecraft 全链路就绪：云端 Agent 接入用户本地 Minecraft 服务器 |
+
+> **v0.0.3 说明**：PhyAgentOS-G 基于 [PhyAgentOS 主分支 v0.1.4](https://github.com/PhyAgentOS/PhyAgentOS) 重构而来。保留了 Session-Centered Runtime 核心架构，并聚焦于游戏智能体的行为研究。版本号从 0.0.x 开始，以独立追踪 Game Agent 分支的演进。
 
 ---
 
-## 🤔 为什么选择 PhyAgentOS？
+## 🤔 为什么选择 PhyAgentOS-G？
 
-传统的"大模型直连硬件"方案高度耦合，换一个机器人就要重写整个执行链路。PhyAgentOS 通过 **认知-物理解耦 + Session-Centered Runtime** 彻底改变了这一点：
+将具身智能体的学习和验证迁移到游戏环境，以极低成本探索智能行为的核心能力——长期决策、空间推理、任务规划——然后将已验证的策略迁移到仿真与真机环境。
 
 <table>
-<tr><td width="32">🔌</td><td><b>同代码，万硬件</b> — 新增机器人只需实现一个 Target Adapter（~100 行），调度层零改动。</td></tr>
-<tr><td>🛡️</td><td><b>三道安全防线</b> — Critic 校验 → Strict Preflight → Target-side SafetyGuard，真机场景不可绕过。</td></tr>
-<tr><td>📋</td><td><b>全程可审计</b> — 状态、动作、感知结果以 Markdown + YAML 落盘，每一步可追溯复现。</td></tr>
-<tr><td>🔄</td><td><b>零摩擦迁移</b> — 同一套 Session 协议在 sim / real / game 三类 target 上无差别运行。</td></tr>
+<tr><td width="32">🎮</td><td width="160"><b>低成本验证</b></td><td>游戏环境天然提供复杂交互、长期记忆依赖和开放世界，无需硬件成本即可迭代 Agent 能力。</td></tr>
+<tr><td>🔄</td><td><b>游戏→仿真→真机</b></td><td>同一套 Session 协议在 game / simulation / real_robot 三类 target 上无差别运行，零摩擦迁移。</td></tr>
+<tr><td>📋</td><td><b>全程可审计</b></td><td>状态、动作、感知结果以 Markdown + YAML 落盘，每一步可追溯复现。</td></tr>
+<tr><td>🧩</td><td><b>三段解耦架构</b></td><td>RolloutTarget + SkillRuntime + TargetAdapter 分离，新增游戏/硬件只需 ~100 行代码。</td></tr>
 </table>
 
 <br>
@@ -69,7 +66,7 @@ README_zh.md
 <tr>
   <td width="32">🔄</td>
   <td width="160"><b>Session-Centered Runtime</b></td>
-  <td><code>WatchdogSupervisor</code> → <code>SessionRunner</code> → <code>SkillRuntime</code> → <code>TargetSessionHandle</code> 执行链路，抛弃 Driver-Center 旧架构</td>
+  <td><code>WatchdogSupervisor</code> → <code>SessionRunner</code> → <code>SkillRuntime</code> → <code>TargetSessionHandle</code> 执行链路，以 Session 为核心调度单元</td>
 </tr>
 <tr>
   <td>🎯</td>
@@ -79,12 +76,12 @@ README_zh.md
 <tr>
   <td>🧩</td>
   <td><b>Adapter + Bridge</b></td>
-  <td><code>TargetAdapter</code> + <code>PolicyAdapter</code> + <code>ActionBridge</code> 三段解耦，并显式声明 observation/action 契约；<code>AdapterPlan</code> 自动编排，消灭 target×skill 组合爆炸</td>
+  <td><code>TargetAdapter</code> + <code>PolicyAdapter</code> + <code>ActionBridge</code> 三段解耦，显式声明 observation/action 契约；<code>AdapterPlan</code> 自动编排</td>
 </tr>
 <tr>
   <td>⚡</td>
   <td><b>双轨 Skill 运行时</b></td>
-  <td><code>PolicySkillRuntime</code> 维护 policy 闭环 + <code>BuiltinSkillRuntime</code> 管理 agent 交互闭环</td>
+  <td><code>PolicySkillRuntime</code> 维护策略闭环 + <code>BuiltinSkillRuntime</code> 管理 Agent 交互闭环</td>
 </tr>
 <tr>
   <td>🛡️</td>
@@ -99,12 +96,12 @@ README_zh.md
 <tr>
   <td>🔐</td>
   <td><b>多层安全</b></td>
-  <td>Critic 校验 → Preflight 契约检查 → Target-side SafetyGuard → Operator Override</td>
+  <td>Critic 校验 → Preflight 契约检查 → Target 端 SafetyGuard</td>
 </tr>
 <tr>
-  <td>🌐</td>
-  <td><b>Fleet 模式</b></td>
-  <td>多机器人协同，shared + per-robot 工作区，优先级串行调度</td>
+  <td>🎮</td>
+  <td><b>Game Agent CLI</b></td>
+  <td><code>paos minecraft</code> 命令行直接控制 Minecraft bot，支持 16 种动作类型</td>
 </tr>
 </table>
 
@@ -122,7 +119,6 @@ README_zh.md
 ```bash
 git clone https://github.com/PhyAgentOS/PhyAgentOS.git && cd PhyAgentOS
 pip install -e .            # Python ≥ 3.11
-pip install -e ".[dev]"     # 开发依赖
 ```
 </td>
 </tr>
@@ -144,7 +140,7 @@ paos onboard
 **启动 Agent**
 
 ```bash
-paos agent
+paos agent --workspace workspaces/minecraft
 ```
 </td>
 </tr>
@@ -152,30 +148,38 @@ paos agent
 <td align="center">4</td>
 <td>
 
-**可选：连接 Runtime 服务**
+**运行第一个任务**
 
 ```bash
-# LIBERO benchmark TargetWS 机器
-MUJOCO_GL=egl PYTHONWARNINGS=ignore \
-conda run -n liberopi python PhyAgentOS/runtime/targets/remote/libero/server.py \
-  --host 0.0.0.0 --port 9002
-
-# pi0.5 policy 机器
-conda run -n lerobot-pi python -m PhyAgentOS.runtime.policy.openpi.lerobot_pi0_server \
-  --model-dir /path/to/pi05/checkpoint --host 0.0.0.0 --port 8000
+paos agent "来到我身边"
 ```
 </td>
 </tr>
-</table>
+<tr>
+<td align="center">5</td>
+<td>
 
-当 config 启用 runtime 时，`paos agent` 和 `paos gateway` 会自动创建
-runtime workspace，并启动 session watchdog。Runtime target 由
-`TARGETS.md` 声明，可执行运行时由 `SKILLRUNTIME.md` 声明；Agent 通过向
-`SESSIONS.md` 追加 session 来排队执行任务。
+**可选：agent 视角观察**
 
 ```bash
-paos agent -m "运行已配置的 LIBERO benchmark 任务"
+...
 ```
+
+**可选：仿真场景验证**
+
+```bash
+...
+```
+
+**可选：真机场景验证**
+
+```bash
+...
+```
+
+</td>
+</tr>
+</table>
 
 ---
 
@@ -183,66 +187,79 @@ paos agent -m "运行已配置的 LIBERO benchmark 任务"
 
 | 进入上下文逻辑 | 文件 | 所属工作区 | 功能 |
 |:--|:--|:--|:--|
-| 始终进入 agent system prompt | `AGENTS.md` | Agent workspace | Agent 的项目级运行规则 |
-| 始终进入 agent system prompt | `SOUL.md` | Agent workspace | 身份、行为边界与助手风格 |
-| 始终进入 agent system prompt | `USER.md` | Agent workspace | 用户偏好与长期画像 |
+| 始终进入 agent system prompt | `AGENTS.md` / `SOUL.md` / `USER.md` | Agent workspace | Agent 运行规则、身份边界、用户偏好 |
 | 始终进入 agent system prompt | `TOOLS.md` | Agent workspace | 工具使用规则与可用工具说明 |
 | 始终进入 agent system prompt | `SKILLS.md` | Agent workspace | 面向 Agent 的 skill 发现与加载规则 |
 | 存在时进入上下文；涉及 target 时按启用 target 过滤 | `EMBODIED.md` | Agent workspace | Target 能力的人类可读描述 |
-| 存在时作为状态进入上下文，不是 bootstrap 规则 | `ENVIRONMENT.md` | Agent/runtime workspace | 当前 target、场景与环境状态 |
+| 存在时作为状态进入上下文 | `ENVIRONMENT.md` | Agent/runtime workspace | 当前 target、场景与环境状态 |
 | 存在时作为记忆/状态进入上下文 | `LESSONS.md` | Agent workspace | 运行经验、失败记录与修正建议 |
 | 存在时作为任务状态进入上下文 | `TASK.md` | Agent workspace | 多步任务拆解与进度 |
-| Runtime 协议；创建 session 前读取 | `RUNTIME.md` | Runtime workspace | 写入合法 runtime session 的说明 |
-| Runtime 协议；创建 session 前读取 | `TARGETS.md` | Runtime workspace | 已启用 target、endpoint/adapter/config 引用、支持的 skill runtime |
+| Runtime 协议；创建 session 前读取 | `TARGETS.md` | Runtime workspace | 已启用 target、endpoint/adapter/config、支持的 skill runtime |
 | Runtime 协议；创建 session 前读取 | `SKILLRUNTIME.md` | Runtime workspace | Policy/builtin skill runtime 注册表与执行契约 |
 | Runtime 队列/状态；Agent 与 watchdog 写入 | `SESSIONS.md` | Runtime workspace | 待执行、执行中、已完成 session 与结果 |
 
-`SKILLS.md` 服务 Agent 能力与 skill 发现；`SKILLRUNTIME.md` 服务 runtime
-执行契约，并与 `TARGETS.md`、`SESSIONS.md` 配套使用。
+`SKILLS.md` 服务 Agent 能力与 skill 发现；`SKILLRUNTIME.md` 服务 runtime 执行契约，并与 `TARGETS.md`、`SESSIONS.md` 配套使用。
 
 ---
 
 ## 📦 项目结构
 
 ```
-PhyAgentOS/
+PhyAgentOS-G/
 │
-├── PhyAgentOS/agent/          # Track A  ─  Planner / Critic / Memory
+├── PhyAgentOS/agent/          # Track A — Agent 大脑
+│   ├── loop.py                #   主 Agent 循环
+│   ├── context.py             #   上下文窗口构建
+│   ├── memory.py              #   短期/长期记忆系统
+│   ├── skills.py              #   Skill 加载与执行
+│   └── tools/                 #   内置工具（文件、Shell、Web 等）
 │
-├── PhyAgentOS/runtime/        # Track B  ─  执行平面
-│   ├── watchdog/              #   WatchdogSupervisor
-│   ├── sessions/              #   SessionRunner / TargetSessionHandle
-│   ├── targets/               #   RolloutTarget (game·debug·sim·real)
-│   │   └── remote/libero/     #   LIBERO benchmark TargetWS server + proxy
-│   ├── skillruntime/          #   PolicySkillRuntime / BuiltinSkillRuntime
-│   ├── adapters/              #   TargetAdapter / PolicyAdapter / Bridge
+├── PhyAgentOS/runtime/        # Track B — 执行平面
+│   ├── watchdog/              #   WatchdogSupervisor · Session 调度
+│   ├── sessions/              #   SessionRunner · TargetSessionHandle
+│   ├── targets/               #   RolloutTarget（game · debug · sim · real）
+│   │   ├── game/              #   Minecraft game target
+│   │   ├── local/             #   DummySimTarget 冒烟测试
+│   │   ├── remote/libero/     #   LIBERO benchmark TargetWS server + proxy
+│   │   ├── sim/               #   仿真 target（开发中）
+│   │   └── real/              #   真机 target（开发中）
+│   ├── skillruntime/          #   PolicySkillRuntime · BuiltinSkillRuntime
+│   │   ├── policy/            #   OpenPI policy runtime (pi05)
+│   │   └── game/              #   Minecraft skill runtime
+│   ├── adapters/              #   TargetAdapter · PolicyAdapter · Bridge
 │   │   ├── libero/            #   LIBERO target adapter
-│   │   └── openpi/            #   OpenPI policy adapters
-│   ├── policy/openpi/         #   OpenPI client + LeRobot pi0-family server
-│   ├── perception/            #   感知运行时 / EnvironmentWriter
+│   │   ├── openpi/            #   OpenPI policy adapters
+│   │   └── minecraft/         #   Minecraft adapter
+│   ├── policy/openpi/         #   OpenPI client · LeRobot pi0-family server
+│   ├── perception/            #   感知运行时 · EnvironmentWriter
 │   ├── preflight/             #   RuntimeCompatibilityPreflight
-│   └── schemas/               #   Pydantic Schema
+│   ├── schemas/               #   Pydantic Session/Contract Schema
+│   └── workspace/             #   Runtime workspace 生命周期管理
 │
-├── configs/runtime/           # Sensor / Perception / Contract YAML
-├── scripts/                   # 工具脚本
-├── workspace/                 # Agent 工作区；runtime 文件可按配置共用该目录
-├── docs/                      # 文档
-└── tests/                     # 测试
+├── PhyAgentOS/cli/            # CLI 入口（paos agent / onboard / minecraft）
+├── PhyAgentOS/skills/         # Agent 内置 Skills（benchmarking 等）
+├── PhyAgentOS/config/         # Pydantic 配置模型
+├── PhyAgentOS/templates/      # 工作区模板（TARGETS.md / SESSIONS.md 等）
+│   └── configs/runtime/       # Sensor / Perception / Contract YAML
+├── scripts/                   # 工具脚本（E2E 验收、workspace 初始化）
+├── bridge/                    # TypeScript 桥接层
+├── docs/                      # 文档（中英文）
+│   ├── zh/                    #   中文文档
+│   ├── en/                    #   英文文档
+│   └── scenarios/game/        #   Minecraft 部署与使用指南
+└── pyproject.toml             # Python 包配置
 ```
 
 ---
 
 ## 🏷️ 支持目标
 
-| | Kind | 位置 | 示例 |
-|:--|:-----|:-----|:-----|
-| 🎮 | `game` | Local | Minecraft、星露谷物语 —— 低成本验证长期决策与记忆 |
-| 🐛 | `debug` | Local | echo / mock / dry-run —— 零硬件验证协议链路 |
-| 🧪 | `simulation` | Remote | RoboCasa、LIBERO —— Benchmark 评测与批量经验挖掘 |
-| 🤖 | `real_robot` | Remote | Franka、Go2、XLeRobot、AgileX PIPER —— 真实运行 |
+| | Kind | 位置 | 示例 | 状态 |
+|:--|:-----|:-----|:-----|:-----|
+| 🎮 | `game` | Local | Minecraft | ✅ 已支持 |
+| 🧪 | `simulation` | Remote | LIBERO benchmark + pi0.5 policy | ✅ 已支持 |
 
 > 全部 target 通过 `TARGETS.md` 统一注册，`target_adapter://` URI 标识 adapter。
-> 更多实例与演示 → [项目网站](https://phy-agent-os.net/)
 
 ---
 
@@ -250,21 +267,25 @@ PhyAgentOS/
 
 | 文档 | 面向 | 说明 |
 |:-----|:-----|:-----|
-| [🌐 项目网站](https://phy-agent-os.net/docs/en/architecture.html) | 所有人 | 完整文档、架构详解、Demo 演示 |
-| [📘 用户手册](https://phy-agent-os.net/docs/en/api-reference.html) | 使用者 | 安装部署、运行操作指南 |
-| [📙 开发指南](https://phy-agent-os.net/docs/en/developer-guide.html) | 开发者 | 二次开发、硬件接入、插件编写 |
+| [框架介绍](docs/zh/01-framework-introduction.md) | 所有人 | 设计理念、技术架构、当前进展、路线图 |
+| [用户手册](docs/zh/02-user-manual.md) | 使用者 | 安装部署、游戏/仿真场景运行、排障指南 |
+| [开发者手册](docs/zh/03-developer-manual.md) | 开发者 | API 接口、Target/Adapter/Skill 开发、代码风格 |
+| [Minecraft 部署指南](docs/scenarios/game/minecraft/zh/deployment.md) | 使用者 | Windows bridge + Linux Agent 完整部署流程 |
+| [Minecraft 使用指南](docs/scenarios/game/minecraft/zh/usage.md) | 使用者 | CLI 控制、对话监听、踩坑记录 |
 
 ---
 
 ## 🤝 参与贡献
 
-欢迎提交 PR 和 Issue，我们的开发计划可以在此处查看👉 [开发计划](https://phy-agent-os.net/docs/en/developer-guide.html)。
+欢迎提交 PR 和 Issue。
 
 ---
 
 <div align="center">
 
-本项目基于 **[nanobot](https://github.com/HKUDS/nanobot)** 构建
+基于 **[nanobot](https://github.com/HKUDS/nanobot)** 构建
+
+**PhyAgentOS-G** 是 [PhyAgentOS](https://github.com/PhyAgentOS/PhyAgentOS) 的 Game Agent 分支
 
 由 **中山大学 HCP 实验室** 与 **鹏城实验室** 联合开发
 

@@ -1,6 +1,6 @@
-# PhyAgentOS 用户手册
+# PhyAgentOS-G 用户手册
 
-> 面向使用者、集成者与演示操作者的运行手册。覆盖单机模式、Fleet 多机器人模式、各场景配置与排障指南。
+> 面向使用者的运行手册：安装部署、Game Agent 配置、仿真验证、排障指南。
 
 ---
 
@@ -12,13 +12,9 @@
 - [2.4 5 分钟快速开始](#24-5-分钟快速开始)
 - [2.5 配置详解](#25-配置详解)
 - [2.6 场景使用指南](#26-场景使用指南)
-  - [2.6.1 仿真场景](#261-仿真场景)
-  - [2.6.2 真机机械臂（Franka Research 3）](#262-真机机械臂franka-research-3)
-  - [2.6.3 移动机器人（Go2）](#263-移动机器人go2)
-  - [2.6.4 远程底盘（XLeRobot）](#264-远程底盘xlerobot)
-  - [2.6.5 ReKep 真机插件](#265-rekep-真机插件)
-  - [2.6.6 Fleet 多机器人协同](#266-fleet-多机器人协同)
-  - [2.6.7 Minecraft Game Agent](#267-minecraft-game-agent)
+  - [2.6.1 DummySimTarget 冒烟测试](#261-dummysimtarget-冒烟测试)
+  - [2.6.2 Minecraft Game Agent](#262-minecraft-game-agent)
+  - [2.6.3 LIBERO Benchmark 仿真验证](#263-libero-benchmark-仿真验证)
 - [2.7 运行时文件说明](#27-运行时文件说明)
 - [2.8 常见交互示例](#28-常见交互示例)
 - [2.9 常见问题排查](#29-常见问题排查)
@@ -29,14 +25,14 @@
 
 ### 适合谁
 
-- 希望快速跑通 PhyAgentOS 的首次使用者
-- 需要用命令行操作 Agent 的集成使用者
-- 需要启动仿真、Go2、远程底盘或真实机器人插件的演示操作者
+- 希望快速跑通 PhyAgentOS-G 的首次使用者
+- 需要部署 Minecraft Game Agent 的研究者
+- 需要运行仿真 Benchmark 验证的研究者
 - 需要理解运行时工作区文件如何变化的调试人员
 
 ### 不适合谁
 
-如果你要进行二次开发、编写驱动、开发插件或研究系统内部架构，请阅读 [Part 3: API 开发者手册](../03-developer-manual.md)。
+如需进行二次开发、添加新 Game Target 或编写 Adapter，请阅读 [Part 3: 开发者手册](03-developer-manual.md)。
 
 ---
 
@@ -44,29 +40,22 @@
 
 ### 2.2.1 双轨结构
 
-PhyAgentOS 是一个显式解耦的双轨运行架构：
+PhyAgentOS-G 是一个显式解耦的双轨运行架构：
 
-- **Track A（Agent / 大脑）**：负责理解用户输入、规划动作、调用工具、Critic 校验。通过 `paos agent` 或 `paos gateway` 启动。
-- **Track B（Runtime / 执行层）**：负责 session 级执行监督、target/policy 调用、artifact 与环境状态写回。Runtime watchdog 会随 `paos agent` 或 `paos gateway` 自动启动；远端 target/policy server 按需单独部署。
+- **Track A（Agent / 大脑）**：负责理解用户输入、规划动作、调用工具、Critic 校验。通过 `paos agent` 启动。
+- **Track B（Runtime / 执行层）**：负责 Session 级执行监督、Target/Policy 调用、状态写回。Runtime watchdog 随 Agent 自动启动；远端 target/policy server 按需单独部署。
 
-两者之间的共享状态通过工作区中的 Markdown 文件表达，而不是跨层直接 Python 调用。
+两者之间的共享状态通过工作区中的 Markdown 文件表达，不跨层直接 Python 调用。
 
-### 2.2.2 单机模式与 Fleet 模式
-
-| 模式 | 工作区 | 适用场景 |
-|------|--------|---------|
-| **单机模式（single）** | `~/.PhyAgentOS/workspace` | 单个机器人或仿真快速验证 |
-| **Fleet 模式（fleet）** | 共享 + per-robot 工作区 | 异构多机器人协同 |
-
-### 2.2.3 一次典型运行的完整闭环
+### 2.2.2 一次典型运行的完整闭环
 
 1. 运行 `paos onboard` 初始化配置与工作区
-2. 启动 `paos agent` 或 `paos gateway`
-3. 当 config 启用 runtime 时，Agent 自动创建/刷新 runtime workspace，并启动 session watchdog
-4. 用户输入自然语言任务
-5. Agent 读取 `TARGETS.md`、`SKILLRUNTIME.md`、`ENVIRONMENT.md` 等工作区文件进行规划
-6. Agent 将可执行任务追加到 `SESSIONS.md`
-7. Watchdog claim pending session，执行 preflight、运行 target/skill，并写回 result、artifact 与环境状态
+2. 启动 `paos agent`
+3. 用户输入自然语言任务
+4. Agent 读取 `TARGETS.md`、`SKILLRUNTIME.md`、`ENVIRONMENT.md` 等文件进行规划
+5. Agent 将可执行任务追加到 `SESSIONS.md`
+6. WatchdogSupervisor claim pending session，执行 preflight，运行 target/skill
+7. 结果写回到 `SESSIONS.md`、`ENVIRONMENT.md`、`LESSONS.md` 及 artifacts 目录
 
 ---
 
@@ -76,27 +65,25 @@ PhyAgentOS 是一个显式解耦的双轨运行架构：
 
 - Python 3.11 或更高版本
 - Git
-- 可访问的 LLM 提供方 API 或兼容服务
-- 仿真场景可选：`pybullet`、Isaac Sim
-- 桥接/前端可选：Node.js 18+
+- 可访问的 LLM 提供方 API Key 或兼容服务
+- Minecraft 场景额外需要：Windows 11 + Minecraft Java 1.20.4 + Node.js + ngrok
 
 ### 克隆与安装
 
 ```bash
 git clone https://github.com/PhyAgentOS/PhyAgentOS.git
 cd PhyAgentOS
-pip install -e .             # Python ≥ 3.11
-pip install -e ".[dev]"      # 开发依赖
+pip install -e .
 ```
 
-### 安装后你会得到
+### CLI 入口
 
-CLI 入口 `paos` 来自项目的 Python 包入口：
+安装后得到 `paos` 命令：
 
 - `paos onboard` — 初始化工作区
 - `paos agent` — 启动交互式 Agent
 - `paos agent -m "..."` — 单轮消息调用
-- `paos gateway` — 启动长期在线网关
+- `paos minecraft` — Minecraft 游戏控制命令
 
 ---
 
@@ -115,37 +102,37 @@ pip install -e .
 paos onboard
 ```
 
-该命令会：创建/刷新 `~/.PhyAgentOS/config.json`、准备默认工作区、同步模板文件。
+该命令会：创建 `~/.PhyAgentOS/config.json`、准备默认工作区、同步模板文件。
 
-### 第 3 步：启动 Agent
+### 第 3 步：配置 API Key
+
+编辑 `~/.PhyAgentOS/config.json`，至少配置：
+
+```json
+{
+  "agents": {
+    "defaults": {
+      "model": "openrouter/openai/gpt-4o-mini"
+    }
+  },
+  "providers": {
+    "openrouter": {
+      "api_key": "YOUR_API_KEY"
+    }
+  }
+}
+```
+
+### 第 4 步：启动 Agent
 
 ```bash
 paos agent
 ```
 
-进入交互模式后，直接输入自然语言任务，例如：
-
-```text
-看看桌面上有什么物体。
-```
-
-如果只想单次调用，也可以使用：
+进入交互模式后，直接输入自然语言任务。如果只想单次调用：
 
 ```bash
-paos agent -m "看看桌面上有什么物体"
-```
-
-### 第 4 步：连接远程 runtime 服务
-
-如果任务需要远程仿真或真实策略服务，先在对应机器启动 target/policy server。例如 LIBERO + pi0.5：
-
-```bash
-MUJOCO_GL=egl PYTHONWARNINGS=ignore \
-conda run -n liberopi python PhyAgentOS/runtime/targets/remote/libero/server.py \
-  --host 0.0.0.0 --port 9002
-
-conda run -n lerobot-pi python -m PhyAgentOS.runtime.policy.openpi.lerobot_pi0_server \
-  --model-dir /path/to/pi05/checkpoint --host 0.0.0.0 --port 8000
+paos agent -m "使用 dummy_sim target 运行一次冒烟测试"
 ```
 
 ---
@@ -153,8 +140,6 @@ conda run -n lerobot-pi python -m PhyAgentOS.runtime.policy.openpi.lerobot_pi0_s
 ## 2.5 配置详解
 
 ### 最小配置
-
-最小可用配置至少需要：
 
 ```json
 {
@@ -179,321 +164,177 @@ conda run -n lerobot-pi python -m PhyAgentOS.runtime.policy.openpi.lerobot_pi0_s
 |--------|------|
 | `agents.defaults` | 默认模型、工作区路径 |
 | `providers` | LLM 提供方 API Key 与地址 |
-| `gateway` | 网关服务配置 |
-| `tools` | 工具启用/禁用 |
-| `embodiments` | 具身配置（single / fleet 模式） |
+| `runtime` | Runtime workspace 配置（enable / workspace 路径） |
 
-### Fleet 模式最小配置
+### Runtime 配置示例
 
 ```json
 {
-  "embodiments": {
-    "mode": "fleet",
-    "shared_workspace": "~/.PhyAgentOS/workspaces/shared",
-    "instances": [
-      {
-        "robot_id": "go2_edu_001",
-        "driver": "go2_edu",
-        "workspace": "~/.PhyAgentOS/workspaces/go2_edu_001"
-      }
-    ]
+  "runtime": {
+    "enabled": true,
+    "workspace": "~/.PhyAgentOS/runtime_workspace"
   }
 }
 ```
 
-### 工作区路径
-
-| 模式 | 路径 |
-|------|------|
-| 单机模式 | `~/.PhyAgentOS/workspace` |
-| Fleet 共享工作区 | `~/.PhyAgentOS/workspaces/shared` |
-| Fleet 机器人工作区 | `~/.PhyAgentOS/workspaces/<robot_id>` |
-
-> 每次修改配置后建议重新执行 `paos onboard`，它会刷新模板并补充新字段。
+当 `runtime.enabled` 为 `true` 时，Agent 会：
+1. 创建/刷新 runtime workspace
+2. 同步 `TARGETS.md`、`SKILLRUNTIME.md`、`SESSIONS.md` 模板
+3. 启动 Session Watchdog
 
 ---
 
 ## 2.6 场景使用指南
 
-### 2.6.1 仿真场景
+### 2.6.1 DummySimTarget 冒烟测试
 
-本地 `paos agent` 是最快验证 Agent 与 runtime workspace 是否打通的起点。
-
-```bash
-paos agent
-```
-
-**Isaac Sim 高保真仿真（PIPER + Go2 复合操作）**：
+最快的验证方式——零外部依赖：
 
 ```bash
-# GUI 模式（需要本地 X 显示）
-python hal/hal_watchdog.py --gui --interval 0.05 \
-  --driver pipergo2_manipulation \
-  --driver-config examples/pipergo2_manipulation_driver.json
-
-# VNC 模式（远程服务器/容器，通过浏览器访问）
-python hal/hal_watchdog.py --vnc --interval 0.05 \
-  --driver pipergo2_manipulation \
-  --driver-config examples/pipergo2_manipulation_driver.json
-# 浏览器打开 http://<host>:31315/vnc.html
+paos agent -m "使用 dummy_sim target 运行一次冒烟测试"
 ```
 
-然后通过 Agent 发送命令：
+DummySimTarget 是一个全模拟的本地 Target，不连接任何外部服务。它返回 numpy 零数组作为观测，执行 5 步后自动返回 success。适合验证 Agent → Runtime 全链路是否打通。
 
-```bash
-paos agent -m "open simulation"
-paos agent -m "go to desk"
-paos agent -m "pick up the red cube and return to the starting position"
-```
+### 2.6.2 Minecraft Game Agent
 
-> `--gui` 和 `--vnc` 互斥。不加任一参数则运行 headless 模式。
+PhyAgentOS-G 的首个 Game Target，已完整打通全链路。
 
----
-
-### 2.6.2 真机机械臂（Franka Research 3）
-
-#### 网络架构
+#### 架构概览
 
 ```
-WorkStation PC → Control Box (Shop Floor: 172.16.0.x) → Robot Arm
+[Windows 11]                              [Linux 云端]
+  Minecraft ← mineflayer bridge           PhyAgentOS-G Agent
+       ↑           ↑                            ↑
+  localhost:25565  localhost:3001               │
+                   ngrok → HTTPS → MinecraftTarget (HTTP client)
+                                           ↑
+                                   WatchdogSupervisor
 ```
 
-#### 首次设置
+**关键设计**：MinecraftTarget 不包含任何 Minecraft 协议代码，仅通过 HTTP 与外部 mineflayer bridge 通信。
 
-1. 网线连接 PC ↔ Control Box（Shop Floor 接口）
-2. PC 有线网络 IP 设为 `172.16.0.x`（如 `172.16.0.1`）
-3. 在 Control Box Desk 界面激活 FCI
-4. 安装后端驱动
+#### Windows 端部署（详细步骤）
 
-#### 后端安装
+完整部署指南：[Minecraft 部署文档](../../scenarios/game/minecraft/zh/deployment.md)
 
-```bash
-# pylibfranka（官方 Python 绑定）
-pip install pylibfranka
+最简启动：
 
-# franky-control（备选高层库，更宽松兼容性）
-pip install git+https://github.com/TimSchneider42/franky.git
-```
-
-#### 驱动选择
-
-| 驱动名 | 说明 | 适用场景 |
-|:-------|:-----|:---------|
-| `franka_research3` | 原始 pylibfranka 驱动 | 精确控制或实时 1kHz |
-| `franka_multi` | 多后端协商驱动 | 自动选择可用后端 |
-
-#### 启动方式
-
-```bash
-# 多后端自动协商（推荐）
-python hal/hal_watchdog.py --driver franka_multi
-
-# 原始 pylibfranka 驱动
-python hal/hal_watchdog.py --driver franka_research3
-
-# 自定义配置
-python hal/hal_watchdog.py \
-  --driver franka_multi \
-  --driver-config examples/franka_research3.driver.json
-```
-
-#### 支持的动作
-
-`move_to`（笛卡尔位置）、`move_joints`（关节位置）、`grasp`、`move_gripper`、`stop` 等。
-
-#### 实时控制模式
-
-设置 `realtime_mode: true` 启用 1 kHz 实时控制（需安装实时内核）。
-
-> 安装前请确认库版本与机器人系统版本兼容。
-
----
-
-### 2.6.3 移动机器人（Go2）
-
-```bash
-python hal/hal_watchdog.py \
-  --driver go2_edu \
-  --driver-config examples/go2_driver_config.json
-```
-
-驱动配置 JSON 透传给 Go2 驱动，用于远程 ROS2、视频、状态流和运动后端初始化。
-
----
-
-### 2.6.4 远程底盘（XLeRobot）
-
-```bash
-python hal/hal_watchdog.py \
-  --driver xlerobot_2wheels_remote \
-  --driver-config examples/xlerobot_2wheels_remote.driver.json
-```
-
-配置示例中包含 ZMQ 通信参数、远程主机地址等。
-
----
-
-### 2.6.5 ReKep 真机插件
-
-`rekep_real` 通过外部插件仓库接入：
-
-```bash
-# 部署插件
-python scripts/deploy_rekep_real_plugin.py \
-  --repo-url https://github.com/baiyu858/PhyAgentOS-rekep-real-plugin.git
-
-# 启动
-python hal/hal_watchdog.py --driver rekep_real
-```
-
----
-
-### 2.6.6 Fleet 多机器人协同
-
-#### 何时使用
-
-- 让一个 Agent 面向多个机器人实例协同规划
-- 将共享环境、target registry 与 session 队列分开维护
-- 通过 `TARGETS.md`、`SKILLRUNTIME.md` 与 `SESSIONS.md` 管理多个 target 的执行入口
-
-#### 启动顺序
-
-1. 配置 `embodiments.mode = "fleet"`
-2. 运行 `paos onboard`
-3. 启动 `paos agent` 或 `paos gateway`
-4. 当 runtime 启用时，runtime workspace 与 session watchdog 会自动启动
-
-```bash
-paos agent
-```
-
-#### Fleet 模式文件布局
-
-| 文件 | 位置 | 用途 |
-|------|------|------|
-| `ENVIRONMENT.md` | shared/ | 全局环境状态 |
-| `TARGETS.md` | runtime/shared | Target registry |
-| `SKILLRUNTIME.md` | runtime/shared | Skill runtime registry |
-| `SESSIONS.md` | runtime/shared | Session 队列与结果 |
-| `TASK.md` | shared/ | 多步任务状态 |
-| `ORCHESTRATOR.md` | shared/ | 全局编排状态 |
-
----
-
-### 2.6.7 Minecraft Game Agent
-
-PhyAgentOS 通过 HTTP bridge 远程操控本地 Minecraft Java 版（1.20.4），实现云端 Agent 控制游戏 bot。完整的部署指南、使用手册、配置示例与踩坑记录存放在独立的 scenario 文档中。
-
-#### 三层文档索引
-
-| 阅读路径 | 文档 | 内容 |
-|---------|------|------|
-| 了解架构 | [scenario 总览](https://github.com/PhyAgentOS/PhyAgentOS/tree/main/docs/scenarios/game/minecraft) | 文件结构、bridge_server.js 源码 |
-| 快速跑通 | [部署指南](../../scenarios/game/minecraft/zh/deployment.md) | 从零部署：Windows ngrok + bridge → Linux 连接 |
-| 日常使用 | [使用指南](../../scenarios/game/minecraft/zh/usage.md) | CLI 控制、对话监听、bot 传送、脚本速查 |
-
-#### 最简启动
-
-**Windows 端**（详见[部署指南](../../scenarios/game/minecraft/zh/deployment.md)）：
 ```powershell
-cd E:\mc_bridge
+cd mc_bridge
 $env:MC_HOST="localhost"; $env:MC_PORT="25565"; $env:BOT_NAME="paos"
 $env:MC_VERSION="1.20.4"; $env:API_PORT="3001"
 node bridge_server.js
-# 另开终端: ngrok http 3001 --region=ap
+
+# 另开终端
+ngrok http 3001 --region=ap
 ```
 
-**Linux 云端**：
-```python
-from PhyAgentOS.runtime.targets.game.minecraft_target import MinecraftTarget
-t = MinecraftTarget({"bridge_url": "https://xxx.ngrok-free.app"})
-t.build(); t.reset({})
-t.step({"type": "chat", "params": {"message": "Hello"}})
-t.close()
+记录 ngrok 显示的 HTTPS URL（如 `https://xxxx.ngrok-free.app`）。
+
+#### Linux 端配置
+
+编辑 runtime workspace 中的 `TARGETS.md`，添加 Minecraft target：
+
+```yaml
+version: targets_v1
+targets:
+  - id: target://minecraft
+    kind: game
+    enabled: true
+    adapter: target_adapter://minecraft/v1
+    config:
+      bridge_url: "https://xxxx.ngrok-free.app"
+      verify_ssl: false
+    supported_skillruntimes:
+      - skillruntime://minecraft_game/v1
 ```
 
-或直接 CLI：
+编辑 `SKILLRUNTIME.md`，注册 Minecraft skill runtime：
+
+```yaml
+version: skillruntimes_v1
+skillruntimes:
+  - id: skillruntime://minecraft_game/v1
+    kind: builtin
+    module: PhyAgentOS.runtime.skillruntime.game.minecraft_skill_runtime
+    class: MinecraftSkillRuntime
+```
+
+#### 使用
+
 ```bash
+# CLI 直接控制
 paos minecraft say "挖5个橡木然后过来"
+
+# 通过 Agent 下发任务
+paos agent -m "让 Minecraft bot 挖10个橡木并合成工作台"
 ```
 
-#### 完整内容位置
+#### 动作空间
 
-| 内容 | 位置 |
-|------|------|
-| Windows 9 步部署流程 | [deployment.md](../../scenarios/game/minecraft/zh/deployment.md) |
-| 观察空间 schema | [deployment.md §3.3](../../scenarios/game/minecraft/zh/deployment.md#33-观察空间) |
-| 16 种动作空间 | [deployment.md §4](../../scenarios/game/minecraft/zh/deployment.md#四动作空间16-种) |
-| TARGETS.md / SKILLRUNTIME.md 配置 | [deployment.md §5-6](../../scenarios/game/minecraft/zh/deployment.md#五配置-targetsmd) |
-| Agent → SESSIONS.md 全链路 | [deployment.md §7](../../scenarios/game/minecraft/zh/deployment.md#七完整-pipelineagent-下发任务) |
-| CLI 与对话控制 | [usage.md](../../scenarios/game/minecraft/zh/usage.md) |
-| bot 传送 | [usage.md §3](../../scenarios/game/minecraft/zh/usage.md#三bot-传送) |
-| 9 条踩坑记录 | [usage.md §5](../../scenarios/game/minecraft/zh/usage.md#五踩坑记录) |
-| 代码变更速查 | [usage.md §6](../../scenarios/game/minecraft/zh/usage.md#六代码变更速查) |
+支持 16 种动作类型：`move`、`look`、`jump`、`sneak`、`sprint`、`attack`、`interact`、`place`、`dig`、`use`、`select_slot`、`drop`、`chat`、`collect`、`equip`、`craft`。
+
+### 2.6.3 LIBERO Benchmark 仿真验证
+
+LIBERO 是标准的机器人操作 Benchmark，PhyAgentOS-G 通过 TargetWS 远程协议支持。
+
+#### 启动服务
+
+```bash
+# TargetWS 机器（需 LIBERO 环境）
+MUJOCO_GL=egl PYTHONWARNINGS=ignore \
+python PhyAgentOS/runtime/targets/remote/libero/server.py \
+  --host 0.0.0.0 --port 9002
+
+# Policy 机器（需 pi0.5 checkpoint）
+python -m PhyAgentOS.runtime.policy.openpi.lerobot_pi0_server \
+  --model-dir /path/to/pi05/checkpoint --host 0.0.0.0 --port 8000
+```
+
+#### 运行 E2E 验证
+
+```bash
+python scripts/run_pi05_libero_real_e2e.py \
+  --policy-endpoint openpi://127.0.0.1:8000 \
+  --target-endpoint targetws://127.0.0.1:9002 \
+  --benchmark-name libero_spatial --task-id 0
+```
+
+或通过 Agent：
+```bash
+paos agent -m "运行已配置的 LIBERO benchmark 任务"
+```
 
 ---
 
 ## 2.7 运行时文件说明
 
-| 进入上下文逻辑 | 文件 | 所属工作区 | 功能 |
-|------|------|------|------|
-| 始终进入 agent system prompt | `AGENTS.md` | Agent workspace | 项目级运行规则 |
-| 始终进入 agent system prompt | `SOUL.md` | Agent workspace | 身份与助手行为 |
-| 始终进入 agent system prompt | `USER.md` | Agent workspace | 用户偏好与长期画像 |
-| 始终进入 agent system prompt | `TOOLS.md` | Agent workspace | 工具使用规则 |
-| 始终进入 agent system prompt | `SKILLS.md` | Agent workspace | Agent skill 发现与加载规则 |
-| 存在时进入上下文；涉及 target 时按启用 target 过滤 | `EMBODIED.md` | Agent workspace | Target 能力的人类可读描述 |
-| 存在时作为状态进入上下文 | `ENVIRONMENT.md` | Agent/runtime workspace | 当前 target、场景、对象与环境状态 |
-| 存在时作为记忆/状态进入上下文 | `LESSONS.md` | Agent workspace | 运行经验与失败记录 |
-| 存在时作为任务状态进入上下文 | `TASK.md` | Agent workspace | 多步任务拆解状态 |
-| Runtime 协议；创建 session 前读取 | `RUNTIME.md` | Runtime workspace | 写入合法 runtime session 的说明 |
-| Runtime 协议；创建 session 前读取 | `TARGETS.md` | Runtime workspace | Target registry、endpoint、adapter、config 与支持的 skill runtime |
-| Runtime 协议；创建 session 前读取 | `SKILLRUNTIME.md` | Runtime workspace | Policy/builtin skill runtime 注册表与执行契约 |
-| Runtime 队列/状态 | `SESSIONS.md` | Runtime workspace | 执行会话队列与结果 |
+| 文件 | 所属工作区 | 功能 |
+|------|------|------|
+| `AGENTS.md` | Agent workspace | 项目级运行规则 |
+| `SOUL.md` | Agent workspace | 身份与助手行为 |
+| `USER.md` | Agent workspace | 用户偏好与长期画像 |
+| `SKILLS.md` | Agent workspace | Agent skill 发现与加载规则 |
+| `EMBODIED.md` | Agent workspace | Target 能力的人类可读描述 |
+| `ENVIRONMENT.md` | Agent/runtime workspace | 当前 target、场景、对象与环境状态 |
+| `LESSONS.md` | Agent workspace | 运行经验与失败记录 |
+| `TASK.md` | Agent workspace | 多步任务拆解状态 |
+| `TARGETS.md` | Runtime workspace | Target 注册、endpoint、adapter、config |
+| `SKILLRUNTIME.md` | Runtime workspace | Skill runtime 注册表与执行契约 |
+| `SESSIONS.md` | Runtime workspace | Session 队列与执行结果 |
 
 ---
 
 ## 2.8 常见交互示例
 
-### 环境查询
-
-```text
-看看当前环境里有什么物体。
-```
-
-验证点：Agent 是否能读取 `ENVIRONMENT.md`，环境状态是否已被 Watchdog 正确写回。
-
-### 机械臂抓取任务
-
-```text
-把桌上的红色苹果拿起来，放到托盘里。
-```
-
-验证点：目标物体是否存在于环境状态、机器人 profile 是否声明了对应动作、Watchdog 是否成功执行并清空动作队列。
-
-### 移动机器人导航
-
-```text
-移动到冰箱附近并停下。
-```
-
-验证点：场景图中是否存在目标语义位置、当前移动机器人是否支持导航动作。
-
-### Fleet 多机器人协同
-
-```text
-让 Go2 先去门口巡检，再让机械臂把桌上的包裹抓起来准备交接。
-```
-
-验证点：Agent 是否识别目标 target，session 是否使用正确的 `target_ref`，`SESSIONS.md` 与 `ENVIRONMENT.md` 是否正确更新。
-
-### Isaac Sim 环境操控
+### DummySimTarget 冒烟
 
 ```bash
-paos agent -m "open simulation"
-paos agent -m "go to desk"
-paos agent -m "pick up the red cube and return to the starting position"
+paos agent -m "使用 dummy_sim target 运行一次冒烟测试"
 ```
+
+验证 Agent → Runtime 全链路是否打通。
 
 ### Minecraft 自然语言控制
 
@@ -501,21 +342,22 @@ paos agent -m "pick up the red cube and return to the starting position"
 paos minecraft say "挖5个橡木然后过来"
 ```
 
-LLM 自动将自然语言转为 Minecraft 动作序列执行。
+LLM 自动将自然语言转为 Minecraft 16 种动作序列执行。
 
-也可以在游戏聊天中对 bot 下达指令：
-```bash
-python test/chat_listener.py
-# 在游戏里说: paos 挖5个橡木
+### Minecraft 游戏内聊天控制
+
+在游戏聊天中对 bot 下达指令：
+```text
+paos 挖5个橡木
 ```
 
-### VLA 模型抓取
+### LIBERO Benchmark 评测
 
 ```bash
-paos agent -m "deploy a VLA to pick up the red cube"
+python scripts/run_pi05_libero_sweep.py --benchmark-name libero_spatial
 ```
 
-可通过修改 `examples/pipergo2_manipulation_driver.json` 中的 `vla` 块配置自己的 VLA checkpoint。
+批量运行多个 LIBERO task 并收集结果。
 
 ---
 
@@ -523,93 +365,54 @@ paos agent -m "deploy a VLA to pick up the red cube"
 
 ### 提示没有 API Key
 
-**现象**：启动 Agent 后报没有 API key。
-
-**排查**：
 1. 检查 `~/.PhyAgentOS/config.json` 是否配置了 `providers.<name>.api_key`
 2. 确认 `agents.defaults.model` 与对应 provider 配套
-3. 确保 API Key 格式正确，无多余空格
+3. API Key 格式正确，无多余空格
 
 ### Runtime 协议文件缺失
 
-**现象**：找不到 `TARGETS.md`、`SKILLRUNTIME.md` 或 `SESSIONS.md`。
-
-**排查**：
 1. 确认 config 中 `runtime.enabled` 为 `true`
-2. 检查 `runtime.workspace` 是否指向独立目录
-3. 启动 `paos agent` / `paos gateway`，或用 `python scripts/init_runtime_workspace.py --workspace <path>` 手动初始化
-4. Fleet 模式下确认查看的是 shared/runtime workspace
+2. 检查 `runtime.workspace` 路径
+3. 启动 `paos agent`，或手动初始化：
+   ```bash
+   python scripts/init_runtime_workspace.py --workspace <path>
+   ```
 
 ### SESSIONS.md 有 pending 但没有执行
 
-**排查**：
-1. 确认 session watchdog 仍在运行
-2. 检查 session 的 `target_ref` 与 `skillruntime_ref` 是否存在
-3. 检查 `TARGETS.md` 中 target 是否 `enabled: true`
-4. 查看 Watchdog 日志是否出现 preflight 或 runtime 错误
+1. 确认 WatchdogSupervisor 仍在运行（随 Agent 自动启动）
+2. 检查 session 的 `target_ref` 与 `skillruntime_ref` 是否存在于 `TARGETS.md` / `SKILLRUNTIME.md`
+3. 检查 target 是否 `enabled: true`
+4. 查看 Agent 日志中的 preflight 错误
 
 ### Session 被 preflight 拒绝
 
-**排查**：
 1. 查看 `SESSIONS.md` 中该 session 的 result/error
 2. 检查 target 是否支持该 `skillruntime_ref`
 3. 检查 `SKILLRUNTIME.md` 中 observation/action contract 是否与 target runtime contract 兼容
-4. 检查 `ENVIRONMENT.md` 中是否存在必要目标物体、地图信息或连接状态
-
-### Fleet 模式下任务没有派发到正确机器人
-
-**排查**：
-1. 检查配置中的 `robot_id`、`driver`、`workspace` 是否匹配
-2. 检查 `TARGETS.md` 中 target id、workspace 与 enabled 状态
-3. 检查 `SESSIONS.md` 中 session 的 `target_ref`
-4. 确认任务语义里明确了目标机器人
-
-### 找不到 rekep_real 驱动
-
-**排查**：
-1. 确认已经执行插件部署脚本 `python scripts/deploy_rekep_real_plugin.py`
-2. 确认插件仓库已注册到本地插件目录 `~/.PhyAgentOS/plugins/`
-3. 重启 Watchdog 使插件加载生效
-
-### Isaac Sim 启动失败
-
-**排查**：
-1. 确认 Isaac Sim 已正确安装
-2. 检查 `pipergo2_manipulation_driver.json` 中 `isaac_env` 块的路径配置
-3. `--vnc` 模式下查看首次启动的 re-exec 日志
-4. 确认 `LD_LIBRARY_PATH` 已正确设置（VNC 模式会自动处理）
 
 ### Minecraft bridge 连接失败（SSL 错误）
 
-**现象**：`SSL: CERTIFICATE_VERIFY_FAILED`。
-
-**排查**：
 1. ngrok 免费版证书不完整，在 TARGETS.md 配置中添加 `"verify_ssl": false`
-2. 若仍报错，检查 bridge_url 前后是否有多余空格
+2. 确认 bridge_url 前后无多余空格
 
 ### Minecraft API 返回空或 HTML
 
-**现象**：`JSONDecodeError: Expecting value` 或返回 HTML 确认页。
-
-**排查**：
-1. ngrok 免费版会先显示确认页，确认已在 `minecraft_target.py` 中添加 `ngrok-skip-browser-warning: true` header
+1. ngrok 免费版会先显示确认页，在 `minecraft_target.py` 中已添加 `ngrok-skip-browser-warning: true` header
 2. 检查 ngrok 隧道是否仍在运行
 3. 确认 bridge URL 包含 `https://` 前缀
 
 ### Minecraft bot 传送不生效
 
-**现象**：bot 在出生点，无法移动到玩家身边。
-
-**排查**：
-1. 确认世界开启了作弊（Esc → 对局域网开放 → 允许作弊: 开）
+1. 确认世界开启作弊（Esc → 对局域网开放 → 允许作弊: 开）
 2. 玩家需在 bot 的 render distance 范围内
-3. 可手动使用 `test/tp_bot.py` 传送 bot 到你的坐标
 
 ---
 
 ## 后续阅读
 
-- [Part 1: 框架介绍](../01-framework-introduction.md) — 设计理念、架构、路线图
-- [Part 3: API 开发者手册](../03-developer-manual.md) — 接口文档、二次开发、代码风格
+- [Part 1: 框架介绍](01-framework-introduction.md) — 设计理念、架构、路线图
+- [Part 3: 开发者手册](03-developer-manual.md) — 接口文档、Target/Adapter/Skill 开发
+- [Minecraft 部署指南](../scenarios/game/minecraft/zh/deployment.md) — 完整部署流程
 
-> **下一步**：如果需要开发新驱动或接入新硬件，进入 [API 开发者手册](../03-developer-manual.md)。
+> **下一步**：如果需要添加新游戏或自定义 Target，进入 [开发者手册](03-developer-manual.md)。

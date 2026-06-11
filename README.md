@@ -1,28 +1,28 @@
 <div align="center">
-  <img src="docs/imgs/logo_en.png" alt="PhyAgentOS" width="560">
+  <img src="docs/imgs/logo_en.png" alt="PhyAgentOS-G" width="700">
 
-  <h3>Cognitive-Physical Decoupling — A Session-Centered Runtime for Embodied Intelligence</h3>
+  <h1>PhyAgentOS-G</h1>
+
+  <h3>General Game Agent — A Decoupled Research Framework for Embodied Intelligence Behavior</h3>
 
   <p>
-    <a href="https://github.com/PhyAgentOS/PhyAgentOS/stargazers">
-      <img src="https://img.shields.io/github/stars/PhyAgentOS/PhyAgentOS?style=social" alt="Stars">
-    </a>
-    <a href="https://github.com/PhyAgentOS/PhyAgentOS/network/members">
-      <img src="https://img.shields.io/github/forks/PhyAgentOS/PhyAgentOS?style=social" alt="Forks">
-    </a>
+    <a href="./README.md">English</a> | <a href="./README_zh.md">中文</a>
   </p>
+
   <p>
-    <img src="https://img.shields.io/badge/Python-≥3.11-3776AB?logo=python&logoColor=white" alt="Python">
-    <img src="https://img.shields.io/badge/License-MIT-3DA639" alt="License">
-    <a href="https://phy-agent-os.net/">
-      <img src="https://img.shields.io/badge/🌐_Website-online-FF6B35" alt="Website">
-    </a>
+    <img src="https://img.shields.io/badge/version-v0.0.3-blue" alt="Version">
+    <img src="https://img.shields.io/badge/python-≥3.11-3776AB?logo=python&logoColor=white" alt="Python">
+    <img src="https://img.shields.io/badge/license-MIT-3DA639" alt="License">
     <a href="https://github.com/PhyAgentOS/PhyAgentOS">
       <img src="https://img.shields.io/badge/PRs-Welcome-2EA44F" alt="PRs">
     </a>
+    <a href="https://github.com/PhyAgentOS/PhyAgentOS/stargazers">
+      <img src="https://img.shields.io/github/stars/PhyAgentOS/PhyAgentOS?style=social" alt="Stars">
+    </a>
   </p>
+  <br>
   <p>
-    <sub><a href="./README.md">English</a> · <a href="./README_zh.md">中文</a></sub>
+    <sub>Migrated from main branch v0.1.4 · Focused on game agent behavior research · Simulation & real-robot validation</sub>
   </p>
 </div>
 
@@ -32,26 +32,23 @@
 
 | Version | Date | Update |
 |:------|:-----|:-------|
-| ![v0.2.3](https://img.shields.io/badge/v0.2.3-FF574F) | 2026-05-29 | Based on ![v0.2.2](https://img.shields.io/badge/v0.2.2-FF574F) — Clean Protocol Files and Docs |
-| ![v0.2.2](https://img.shields.io/badge/v0.2.2-FF574F) | 2026-05-29 | Based on ![v0.1.4](https://img.shields.io/badge/v0.1.4-47A882) — Minecraft pipeline optimization: issue and execute commands from terminal and in-game chat |
-| ![v0.2.1](https://img.shields.io/badge/v0.2.1-11648A) | 2026-05-29 | Based on ![v0.1.3](https://img.shields.io/badge/v0.1.3-11648A) — Minecraft ready: cloud agent connects to user's local server |
-| ![v0.1.4](https://img.shields.io/badge/v0.1.4-47A882) | 2026-06-5 | Optimize the user-friendly onboarding process; Communication Protocol Specification; More reasonable coding standards; Game Agent & Benchmarking ready |
-| ![v0.1.3](https://img.shields.io/badge/v0.1.3-11648A) | 2026-05-25 | Strict separation of `PolicySkillRuntime` / `BuiltinSkillRuntime`; Game Agent & Benchmarking ready |
-| ![v0.1.2](https://img.shields.io/badge/v0.1.2-11648A) | 2026-05-20 | Perception plugin system: `SensorConfig` / `PerceptionConfig` YAML + `EnvironmentWriter` auditable writeback |
-| ![v0.1.1](https://img.shields.io/badge/v0.1.1-11648A) | 2026-05-18 | Session-Centered Runtime MVP: `DummySimTarget` + `DummyAdapter` + `DummyClient` serial pipeline |
-| ![v0.1.0](https://img.shields.io/badge/v0.1.0-11648A) | 2026-04-29 | Hackathon baseline: plugin-based HAL, ReKep / SAM3 real-robot grasping & VLN full pipeline |
+| ![v0.0.3](https://img.shields.io/badge/v0.0.3-FF574F) | 2026-06-11 | Integrated as Agent Loop, supporting complex task completion |
+| ![v0.0.2](https://img.shields.io/badge/v0.0.2-47A882) | 2026-05-29 | Minecraft pipeline optimization: issue commands from terminal and in-game chat |
+| ![v0.0.1](https://img.shields.io/badge/v0.0.1-11648A) | 2026-05-29 | Minecraft ready: cloud Agent connects to user's local Minecraft server |
+
+> **v0.0.3 note**: PhyAgentOS-G is rebuilt from [PhyAgentOS main branch v0.1.4](https://github.com/PhyAgentOS/PhyAgentOS). The Session-Centered Runtime core is retained, and the project is now focused on game agent behavior research. Versioning starts from 0.0.x to track the Game Agent branch independently.
 
 ---
 
-## 🤔 Why PhyAgentOS?
+## 🤔 Why PhyAgentOS-G?
 
-Traditional "LLM-direct-to-hardware" approaches tightly couple reasoning to execution — switching robots means rewriting the entire pipeline. PhyAgentOS changes this through **Cognitive-Physical Decoupling + Session-Centered Runtime**:
+By moving embodied intelligence learning and validation into game environments, we explore core intelligent behavior capabilities at minimal cost — long-term decision-making, spatial reasoning, task planning — then transfer proven strategies to simulation and real-robot environments.
 
 <table>
-<tr><td width="32">🔌</td><td><b>One Codebase, Any Hardware</b> — Adding a new robot means implementing one Target Adapter (~100 lines); zero changes to the scheduling layer.</td></tr>
-<tr><td>🛡️</td><td><b>Three Safety Layers</b> — Critic validation → Strict Preflight → Target-side SafetyGuard; mandatory for real-robot deployment.</td></tr>
-<tr><td>📋</td><td><b>Fully Auditable</b> — State, actions, and perception results are written to Markdown + YAML files; every step is traceable and reproducible.</td></tr>
-<tr><td>🔄</td><td><b>Zero-Friction Migration</b> — The same Session protocol runs identically across sim, real, and game targets.</td></tr>
+<tr><td width="32">🎮</td><td width="165"><b>Low-Cost Validation</b></td><td>Game environments naturally provide complex interactions, long-term memory, and open worlds — iterate Agent capabilities without hardware cost.</td></tr>
+<tr><td>🔄</td><td><b>Game→Sim→Real Transfer</b></td><td>The same Session protocol runs identically across game, simulation, and real_robot targets — zero-friction migration.</td></tr>
+<tr><td>📋</td><td><b>Fully Auditable</b></td><td>State, actions, and perception results are written to Markdown + YAML files; every step is traceable and reproducible.</td></tr>
+<tr><td>🧩</td><td><b>Three-Way Decoupling</b></td><td>RolloutTarget + SkillRuntime + TargetAdapter separation — add a new game or hardware in ~100 lines of code.</td></tr>
 </table>
 
 <br>
@@ -69,7 +66,7 @@ Traditional "LLM-direct-to-hardware" approaches tightly couple reasoning to exec
 <tr>
   <td width="32">🔄</td>
   <td width="165"><b>Session-Centered Runtime</b></td>
-  <td><code>WatchdogSupervisor</code> → <code>SessionRunner</code> → <code>SkillRuntime</code> → <code>TargetSessionHandle</code> execution pipeline, replacing the legacy Driver-Center architecture</td>
+  <td><code>WatchdogSupervisor</code> → <code>SessionRunner</code> → <code>SkillRuntime</code> → <code>TargetSessionHandle</code> execution pipeline, with Session as the scheduling unit</td>
 </tr>
 <tr>
   <td>🎯</td>
@@ -79,17 +76,17 @@ Traditional "LLM-direct-to-hardware" approaches tightly couple reasoning to exec
 <tr>
   <td>🧩</td>
   <td><b>Adapter + Bridge</b></td>
-  <td><code>TargetAdapter</code> + <code>PolicyAdapter</code> + <code>ActionBridge</code> three-way decoupling with explicit observation/action contracts; <code>AdapterPlan</code> auto-composed, eliminating target×skill combinatorial explosion</td>
+  <td><code>TargetAdapter</code> + <code>PolicyAdapter</code> + <code>ActionBridge</code> three-way decoupling with explicit observation/action contracts; <code>AdapterPlan</code> auto-composed</td>
 </tr>
 <tr>
   <td>⚡</td>
   <td><b>Dual Skill Runtimes</b></td>
-  <td><code>PolicySkillRuntime</code> maintains policy closed-loop + <code>BuiltinSkillRuntime</code> manages agent interactive loop</td>
+  <td><code>PolicySkillRuntime</code> maintains policy closed-loop + <code>BuiltinSkillRuntime</code> manages Agent interactive loop</td>
 </tr>
 <tr>
   <td>🛡️</td>
   <td><b>Strict Preflight</b></td>
-  <td>Runtime validation checks (target / sensor / perception / adapter contract / action contract / tool); failures are <code>rejected</code> before execution starts</td>
+  <td>Runtime validation checks (target / sensor / perception / adapter contract / action contract / tool); failures are <code>rejected</code></td>
 </tr>
 <tr>
   <td>📝</td>
@@ -99,12 +96,12 @@ Traditional "LLM-direct-to-hardware" approaches tightly couple reasoning to exec
 <tr>
   <td>🔐</td>
   <td><b>Multi-Layer Safety</b></td>
-  <td>Critic validation → Preflight contract checks → Target-side SafetyGuard → Operator Override</td>
+  <td>Critic validation → Preflight contract checks → Target-side SafetyGuard</td>
 </tr>
 <tr>
-  <td>🌐</td>
-  <td><b>Fleet Mode</b></td>
-  <td>Multi-robot coordination with shared + per-robot workspaces, priority-based serial scheduling</td>
+  <td>🎮</td>
+  <td><b>Game Agent CLI</b></td>
+  <td><code>paos minecraft</code> direct control of Minecraft bot, 16 action types supported</td>
 </tr>
 </table>
 
@@ -122,7 +119,6 @@ Traditional "LLM-direct-to-hardware" approaches tightly couple reasoning to exec
 ```bash
 git clone https://github.com/PhyAgentOS/PhyAgentOS.git && cd PhyAgentOS
 pip install -e .            # Python ≥ 3.11
-pip install -e ".[dev]"     # Dev dependencies
 ```
 </td>
 </tr>
@@ -144,7 +140,7 @@ paos onboard
 **Start Agent**
 
 ```bash
-paos agent
+paos agent --workspace workspaces/minecraft
 ```
 </td>
 </tr>
@@ -152,30 +148,38 @@ paos agent
 <td align="center">4</td>
 <td>
 
-**Optional: Connect Runtime Services**
+**Run First Task**
 
 ```bash
-# LIBERO benchmark TargetWS machine
-MUJOCO_GL=egl PYTHONWARNINGS=ignore \
-conda run -n liberopi python PhyAgentOS/runtime/targets/remote/libero/server.py \
-  --host 0.0.0.0 --port 9002
-
-# pi0.5 policy machine
-conda run -n lerobot-pi python -m PhyAgentOS.runtime.policy.openpi.lerobot_pi0_server \
-  --model-dir /path/to/pi05/checkpoint --host 0.0.0.0 --port 8000
+paos agent "Come to me"
 ```
 </td>
 </tr>
-</table>
+<tr>
+<td align="center">5</td>
+<td>
 
-`paos agent` and `paos gateway` create the runtime workspace and start the
-session watchdog automatically when runtime is enabled in config. Runtime
-targets are declared in `TARGETS.md`, executable runtimes in `SKILLRUNTIME.md`,
-and the Agent queues work by appending sessions to `SESSIONS.md`.
+**Optional: Agent Perspective Observation**
 
 ```bash
-paos agent -m "run the configured LIBERO benchmark task"
+...
 ```
+
+**Optional: Simulation Validation**
+
+```bash
+...
+```
+
+**Optional: Real-Robot Validation**
+
+```bash
+...
+```
+
+</td>
+</tr>
+</table>
 
 ---
 
@@ -183,66 +187,79 @@ paos agent -m "run the configured LIBERO benchmark task"
 
 | Context Loading | File | Owner | Purpose |
 |:--|:--|:--|:--|
-| Always loaded into the agent system prompt | `AGENTS.md` | Agent workspace | Project-level operating rules for the agent |
-| Always loaded into the agent system prompt | `SOUL.md` | Agent workspace | Identity, high-level behavior, and assistant style |
-| Always loaded into the agent system prompt | `USER.md` | Agent workspace | User preferences and durable profile notes |
+| Always loaded into the agent system prompt | `AGENTS.md` / `SOUL.md` / `USER.md` | Agent workspace | Agent operating rules, identity, user preferences |
 | Always loaded into the agent system prompt | `TOOLS.md` | Agent workspace | Tool usage policy and available tool guidance |
 | Always loaded into the agent system prompt | `SKILLS.md` | Agent workspace | Agent-facing skill discovery and loading rules |
-| Loaded when present; filtered by enabled runtime targets where applicable | `EMBODIED.md` | Agent workspace | Human-readable target capability descriptions |
-| Loaded when present as state, not bootstrap policy | `ENVIRONMENT.md` | Agent/runtime workspace | Current target and scene/environment state |
+| Loaded when present; filtered by enabled runtime targets | `EMBODIED.md` | Agent workspace | Human-readable target capability descriptions |
+| Loaded when present as state | `ENVIRONMENT.md` | Agent/runtime workspace | Current target, scene, and environment state |
 | Loaded when present as memory/state | `LESSONS.md` | Agent workspace | Operational lessons and failure notes |
 | Loaded when present as task state | `TASK.md` | Agent workspace | Multi-step task decomposition and progress |
-| Runtime protocol; read before scheduling sessions | `RUNTIME.md` | Runtime workspace | Instructions for writing valid runtime sessions |
-| Runtime protocol; read before scheduling sessions | `TARGETS.md` | Runtime workspace | Enabled targets, endpoint/adapter/config references, supported skill runtimes |
+| Runtime protocol; read before scheduling sessions | `TARGETS.md` | Runtime workspace | Enabled targets, endpoint/adapter/config, supported skill runtimes |
 | Runtime protocol; read before scheduling sessions | `SKILLRUNTIME.md` | Runtime workspace | Policy/builtin skill runtime registry and execution contracts |
-| Runtime queue/state; written by Agent and watchdog | `SESSIONS.md` | Runtime workspace | Pending/running/completed execution sessions and results |
+| Runtime queue/state; written by Agent and watchdog | `SESSIONS.md` | Runtime workspace | Pending/running/completed sessions and results |
 
-`SKILLS.md` is for agent capabilities and skill discovery. `SKILLRUNTIME.md` is
-for runtime execution contracts; it is paired with `TARGETS.md` and `SESSIONS.md`.
+`SKILLS.md` is for Agent capabilities and skill discovery. `SKILLRUNTIME.md` is for runtime execution contracts, paired with `TARGETS.md` and `SESSIONS.md`.
 
 ---
 
 ## 📦 Project Structure
 
 ```
-PhyAgentOS/
+PhyAgentOS-G/
 │
-├── PhyAgentOS/agent/          # Track A  ─  Planner / Critic / Memory
+├── PhyAgentOS/agent/          # Track A — Agent Brain
+│   ├── loop.py                #   Main agent loop
+│   ├── context.py             #   Context window builder
+│   ├── memory.py              #   Short/long-term memory system
+│   ├── skills.py              #   Skill loading and execution
+│   └── tools/                 #   Built-in tools (file, shell, web)
 │
-├── PhyAgentOS/runtime/        # Track B  ─  Execution Plane
-│   ├── watchdog/              #   WatchdogSupervisor
-│   ├── sessions/              #   SessionRunner / TargetSessionHandle
-│   ├── targets/               #   RolloutTarget (game·debug·sim·real)
-│   │   └── remote/libero/     #   LIBERO benchmark TargetWS server + proxy
-│   ├── skillruntime/          #   PolicySkillRuntime / BuiltinSkillRuntime
-│   ├── adapters/              #   TargetAdapter / PolicyAdapter / Bridge
+├── PhyAgentOS/runtime/        # Track B — Execution Plane
+│   ├── watchdog/              #   WatchdogSupervisor · Session scheduling
+│   ├── sessions/              #   SessionRunner · TargetSessionHandle
+│   ├── targets/               #   RolloutTarget (game · debug · sim · real)
+│   │   ├── game/              #   Minecraft game target
+│   │   ├── local/             #   DummySimTarget smoke tests
+│   │   ├── remote/libero/     #   LIBERO benchmark TargetWS server + proxy
+│   │   ├── sim/               #   Simulation targets (in development)
+│   │   └── real/              #   Real-robot targets (in development)
+│   ├── skillruntime/          #   PolicySkillRuntime · BuiltinSkillRuntime
+│   │   ├── policy/            #   OpenPI policy runtime (pi05)
+│   │   └── game/              #   Minecraft skill runtime
+│   ├── adapters/              #   TargetAdapter · PolicyAdapter · Bridge
 │   │   ├── libero/            #   LIBERO target adapter
-│   │   └── openpi/            #   OpenPI policy adapters
-│   ├── policy/openpi/         #   OpenPI client + LeRobot pi0-family server
-│   ├── perception/            #   Perception Runtime / EnvironmentWriter
+│   │   ├── openpi/            #   OpenPI policy adapters
+│   │   └── minecraft/         #   Minecraft adapter
+│   ├── policy/openpi/         #   OpenPI client · LeRobot pi0-family server
+│   ├── perception/            #   Perception runtime · EnvironmentWriter
 │   ├── preflight/             #   RuntimeCompatibilityPreflight
-│   └── schemas/               #   Pydantic Schema
+│   ├── schemas/               #   Pydantic Session/Contract Schema
+│   └── workspace/             #   Runtime workspace lifecycle management
 │
-├── configs/runtime/           # Sensor / Perception / Contract YAML
-├── scripts/                   # Utility scripts
-├── workspace/                 # Agent workspace; runtime files may share it by config
-├── docs/                      # Documentation
-└── tests/                     # Tests
+├── PhyAgentOS/cli/            # CLI entry (paos agent / onboard / minecraft)
+├── PhyAgentOS/skills/         # Agent built-in skills (benchmarking, etc.)
+├── PhyAgentOS/config/         # Pydantic configuration model
+├── PhyAgentOS/templates/      # Workspace templates (TARGETS.md / SESSIONS.md)
+│   └── configs/runtime/       # Sensor / Perception / Contract YAML
+├── scripts/                   # Utility scripts (E2E acceptance, workspace init)
+├── bridge/                    # TypeScript bridge layer
+├── docs/                      # Documentation (Chinese/English)
+│   ├── zh/                    #   Chinese docs
+│   ├── en/                    #   English docs
+│   └── scenarios/game/        #   Minecraft deployment & usage guides
+└── pyproject.toml             # Python package config
 ```
 
 ---
 
 ## 🏷️ Supported Targets
 
-| | Kind | Location | Examples |
-|:--|:-----|:-----|:-----|
-| 🎮 | `game` | Local | Minecraft, Stardew Valley — low-cost validation of long-term decisions & memory |
-| 🐛 | `debug` | Local | echo / mock / dry-run — zero-hardware protocol pipeline validation |
-| 🧪 | `simulation` | Remote | RoboCasa, LIBERO — benchmark evaluation & batch experience mining |
-| 🤖 | `real_robot` | Remote | Franka, Go2, XLeRobot, AgileX PIPER — real-world deployment |
+| | Kind | Location | Example | Status |
+|:--|:-----|:-----|:-----|:-----|
+| 🎮 | `game` | Local | Minecraft | ✅ Supported |
+| 🧪 | `simulation` | Remote | LIBERO benchmark + pi0.5 policy | ✅ Supported |
 
-> All targets are registered in `TARGETS.md`, identified by `target_adapter://` URI.
-> More examples & demos → [Project Website](https://phy-agent-os.net/)
+> All targets registered in `TARGETS.md`, identified by `target_adapter://` URI.
 
 ---
 
@@ -250,21 +267,25 @@ PhyAgentOS/
 
 | Document | Audience | Description |
 |:-----|:-----|:-----|
-| [🌐 Website](https://phy-agent-os.net/docs/en/architecture.html) | Everyone | Full docs, architecture details, demos |
-| [📘 User Manual](https://phy-agent-os.net/docs/en/api-reference.html) | Users | Installation, deployment, and operation guide |
-| [📙 Dev Guide](https://phy-agent-os.net/docs/en/developer-guide.html) | Developers | Secondary development, hardware integration, plugin authoring |
+| [Framework Introduction](docs/en/01-framework-introduction.md) | Everyone | Design philosophy, architecture, progress, roadmap |
+| [User Manual](docs/en/02-user-manual.md) | Users | Installation, game/simulation scenarios, troubleshooting |
+| [Developer Manual](docs/en/03-developer-manual.md) | Developers | API reference, Target/Adapter/Skill development, coding style |
+| [Minecraft Deployment Guide](docs/scenarios/game/minecraft/en/deployment.md) | Users | Windows bridge + Linux Agent complete deployment |
+| [Minecraft Usage Guide](docs/scenarios/game/minecraft/en/usage.md) | Users | CLI control, chat listener, troubleshooting |
 
 ---
 
 ## 🤝 Contributing
 
-PRs and Issues are welcome! Check our development roadmap here → [Dev Plan](https://phy-agent-os.net/docs/en/developer-guide.html).
+PRs and Issues are welcome!
 
 ---
 
 <div align="center">
 
 Built on **[nanobot](https://github.com/HKUDS/nanobot)**
+
+**PhyAgentOS-G** is the Game Agent fork of [PhyAgentOS](https://github.com/PhyAgentOS/PhyAgentOS)
 
 Jointly developed by **Sun Yat-sen University HCP Lab** & **Peng Cheng Laboratory**
 
