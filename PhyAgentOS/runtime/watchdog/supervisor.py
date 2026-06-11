@@ -154,6 +154,7 @@ class WatchdogSupervisor:
                             result,
                         )
                         self.result_writer.write_session_history(session, scheduled.target_spec, result)
+                        self._write_session_lesson(session, scheduled, result, "session_execution")
                         self.registry.mark_timed_out(session_id, result)
                         return True
                     self._sleep_runner_poll_interval(session)
@@ -162,6 +163,7 @@ class WatchdogSupervisor:
                 result = thread_handle.result
                 if result is None:
                     raise RuntimeError("runner thread finished without a result")
+                target.write_environment_snapshot(self.environment_workspace / "ENVIRONMENT.md")
             finally:
                 self._close_policy_client(policy_client)
                 if cleanup_in_background:
@@ -179,6 +181,7 @@ class WatchdogSupervisor:
                 result,
             )
             self.result_writer.write_session_history(session, scheduled.target_spec, result)
+            self._write_session_lesson(session, scheduled, result, "session_execution")
             self.registry.mark_finished(session_id, result)
             return True
         except Exception as exc:
@@ -234,6 +237,33 @@ class WatchdogSupervisor:
             f"{item.code}: {item.field} expected {item.expected}"
             + (f", found {item.found}" if item.found is not None else "")
             for item in preflight_result.missing_items
+        )
+
+    def _write_session_lesson(self, session, scheduled, result: SessionResult, phase: str) -> None:
+        task = getattr(session, "task_description", "") or ""
+        if result.success:
+            summary = (
+                f"task succeeded: {task} — "
+                f"{result.num_steps} steps, return_value={result.return_value}"
+            )
+        else:
+            summary = (
+                f"task failed: {task} — "
+                f"error={result.error_code}: {result.error_message or 'unknown'}"
+            )
+        self.result_writer.write_lesson(
+            session,
+            scheduled.target_spec.id,
+            scheduled.skillruntime_id,
+            phase,
+            result.error_code,
+            summary,
+            {
+                "success": result.success,
+                "status": result.status,
+                "num_steps": result.num_steps,
+                "return_value": result.return_value,
+            },
         )
 
     def _write_preflight_metadata(self, session_id: str, preflight_result) -> None:

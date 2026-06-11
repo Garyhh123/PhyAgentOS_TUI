@@ -9,18 +9,17 @@ import re
 import sys
 from contextlib import AsyncExitStack
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Awaitable, Callable
 
 from loguru import logger
 
 from PhyAgentOS.agent.context import ContextBuilder
-from PhyAgentOS.embodiment_registry import EmbodimentRegistry
 from PhyAgentOS.agent.memory import MemoryConsolidator
 from PhyAgentOS.agent.subagent import SubagentManager
-from PhyAgentOS.agent.tools.cron import CronTool
 from PhyAgentOS.agent.tools.agent import AgentModeTool
-from PhyAgentOS.agent.tools.image import ImageTool
+from PhyAgentOS.agent.tools.cron import CronTool
 from PhyAgentOS.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
+from PhyAgentOS.agent.tools.image import ImageTool
 from PhyAgentOS.agent.tools.message import MessageTool
 from PhyAgentOS.agent.tools.registry import ToolRegistry
 from PhyAgentOS.agent.tools.scene_graph import SceneGraphQueryTool
@@ -29,6 +28,7 @@ from PhyAgentOS.agent.tools.spawn import SpawnTool
 from PhyAgentOS.agent.tools.web import WebFetchTool, WebSearchTool
 from PhyAgentOS.bus.events import InboundMessage, OutboundMessage
 from PhyAgentOS.bus.queue import MessageBus
+from PhyAgentOS.embodiment_registry import EmbodimentRegistry
 from PhyAgentOS.providers.base import LLMProvider
 from PhyAgentOS.providers.providers_manager import ProvidersManager
 from PhyAgentOS.session.manager import Session, SessionManager
@@ -80,6 +80,8 @@ class AgentLoop:
         self.workspace = workspace
         self.model = model or provider.get_default_model()
         self.max_iterations = max_iterations
+        self.max_task_continues = 10
+        self.task_continue_cooldown_s = 3.0
         self.context_window_tokens = context_window_tokens
         self.brave_api_key = brave_api_key
         self.web_proxy = web_proxy
@@ -273,6 +275,62 @@ class AgentLoop:
 
         return final_content, tools_used, messages
 
+    async def _run_persistent_task_loop(
+        self,
+        initial_messages: list[dict],
+        on_progress: Callable[..., Awaitable[None]] | None = None,
+    ) -> tuple[str | None, list[str], list[dict]]:
+        """Wrap _run_agent_loop with auto-continuation for long-running tasks.
+
+        When _run_agent_loop hits max_iterations and the task appears incomplete,
+        inject a continuation prompt and restart the loop.  This lets the Agent
+        persistently work on a task instead of giving up after one batch of
+        tool calls.
+        """
+        messages = initial_messages
+        all_tools_used: list[str] = []
+        continue_count = 0
+
+        while continue_count <= self.max_task_continues:
+            final_content, tools_used, messages = await self._run_agent_loop(
+                messages, on_progress=on_progress,
+            )
+            all_tools_used.extend(tools_used)
+
+            if final_content and "maximum number of tool call" in final_content:
+                continue_count += 1
+                logger.info(
+                    "Auto-continue #{}/{} for persistent task",
+                    continue_count,
+                    self.max_task_continues,
+                )
+                continue_prompt = (
+                    "[Auto-continue] The previous iteration reached the tool-call limit "
+                    f"({self.max_iterations} calls). Your task may not be finished. "
+                    "Read ENVIRONMENT.md and LESSONS.md to assess current progress, "
+                    "then continue where you left off. If the runtime session completed "
+                    "successfully and the task is done, reply to the user. "
+                    "If it failed, reflect on why and try a different approach."
+                )
+                messages = self.context.add_system_continue(messages, continue_prompt)
+                await asyncio.sleep(self.task_continue_cooldown_s)
+                continue
+
+            return final_content, all_tools_used, messages
+
+        logger.warning(
+            "Task exceeded max continues ({}) after {} total tool calls",
+            self.max_task_continues,
+            len(all_tools_used),
+        )
+        return (
+            f"Task could not be completed after {self.max_task_continues} attempts "
+            f"({len(all_tools_used)} total tool calls). Consider breaking the task "
+            "into smaller steps.",
+            all_tools_used,
+            messages,
+        )
+
     async def run(self) -> None:
         """Run the agent loop, dispatching messages as tasks to stay responsive to /stop."""
         self._running = True
@@ -380,7 +438,8 @@ class AgentLoop:
                 history=history,
                 current_message=msg.content, channel=channel, chat_id=chat_id,
             )
-            final_content, _, all_msgs = await self._run_agent_loop(messages)
+            final_content, _, all_msgs = await self._run_persistent_task_loop(
+                messages) if self.context.runtime_enabled else await self._run_agent_loop(messages)
             self._save_turn(session, all_msgs, 1 + len(history))
             self.sessions.save(session)
             await self.memory_consolidator.maybe_consolidate_by_tokens(session)
@@ -450,8 +509,12 @@ class AgentLoop:
                 channel=msg.channel, chat_id=msg.chat_id, content=content, metadata=meta,
             ))
 
-        final_content, _, all_msgs = await self._run_agent_loop(
-            initial_messages, on_progress=on_progress or _bus_progress,
+        final_content, _, all_msgs = (
+            await self._run_persistent_task_loop(
+                initial_messages, on_progress=on_progress or _bus_progress,
+            ) if self.context.runtime_enabled else await self._run_agent_loop(
+                initial_messages, on_progress=on_progress or _bus_progress,
+            )
         )
 
         if final_content is None:

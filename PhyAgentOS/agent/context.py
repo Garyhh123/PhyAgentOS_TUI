@@ -119,7 +119,34 @@ Your workspace is at: {workspace_path}
 - After writing or editing a file, re-read it if accuracy matters.
 - If a tool call fails, analyze the error before retrying with a different approach.
 - Ask for clarification when the request is ambiguous.
-- Runtime execution uses the session protocol. Read `RUNTIME.md`, `TARGETS.md`, and `SKILLRUNTIME.md` before appending executable work to `SESSIONS.md`.
+
+## Runtime Protocol — MANDATORY
+
+The ONLY way to interact with runtime targets (robots, game agents, simulators) is
+through the session protocol.  There are NO shortcuts.
+
+| Rule | Description |
+|------|-------------|
+| **SESSIONS.md only** | Write sessions with `write_file` to `SESSIONS.md`. Never use `exec`, `curl`, `http`, or any other tool to call target APIs directly. |
+| **Read before write** | Read `RUNTIME.md`, `TARGETS.md`, and `SKILLRUNTIME.md` before writing to `SESSIONS.md`. |
+| **Verify before claim** | After the watchdog executes, `read_file ENVIRONMENT.md` to verify the result. Never claim success or failure without reading ENVIRONMENT.md first. |
+| **YAML correctness** | Use `write_file` (not `edit_file`) for `SESSIONS.md` to preserve YAML structure. |
+
+## Task Persistence & Reflection (Self-Evolution)
+
+When you execute tasks through the runtime (via SESSIONS.md), follow this cycle:
+
+1. **Plan** — read RUNTIME.md + TARGETS.md, then use `write_file` to append a session to SESSIONS.md with appropriate perception_queries.
+2. **Wait** — the watchdog daemon picks up pending sessions automatically. You do NOT need to run any commands.
+3. **Check** — after the watchdog executes (wait a few seconds), `read_file ENVIRONMENT.md` to see the actual result. Also read LESSONS.md.
+4. **Reflect** — did it succeed or fail? What does ENVIRONMENT.md actually say?
+   - If it failed: what error code, what error message, what likely caused it?
+   - What alternative approach would work better?
+5. **Learn** — use `edit_file` to append a structured lesson to LESSONS.md:
+   - Task, Strategy, Outcome (from ENVIRONMENT.md), Insight, Escalation plan.
+6. **Retry** (max 3 same-approach attempts) — if not done, write a new session with adjusted strategy.
+7. **Escalate** — if the same approach fails 3 times, switch to a fundamentally different one.
+   Example: `collect` fails → try `dig` + `move`; absolute `move` times out → try short relative `move`.
 
 Reply directly with text for conversations. Only use the 'message' tool to send to a specific chat channel."""
 
@@ -158,9 +185,26 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
                         continue
                 else:
                     content = file_path.read_text(encoding="utf-8")
+                if filename == "LESSONS.md":
+                    content = self._format_lessons(content)
                 parts.append(f"## {filename}\n\n{content}")
 
         return "\n\n".join(parts) if parts else ""
+
+    @staticmethod
+    def _format_lessons(content: str) -> str:
+        """If LESSONS.md has actual entries, prepend a prominent notice."""
+        stripped = content.strip()
+        if not stripped:
+            return content
+        lines = [line for line in stripped.splitlines() if line.strip() and not line.strip().startswith("#")]
+        if len(lines) < 2:
+            return content
+        return (
+            "**Read these lessons before planning — they describe what failed before "
+            "and what worked. Apply them to avoid repeating past mistakes.**\n\n"
+            + stripped
+        )
 
     def _context_file_path(self, filename: str) -> Path:
         """Return the context-visible source path for a protocol file."""
@@ -310,6 +354,17 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
     ) -> list[dict[str, Any]]:
         """Add a tool result to the message list."""
         messages.append({"role": "tool", "tool_call_id": tool_call_id, "name": tool_name, "content": result})
+        return messages
+
+    def add_system_continue(
+        self, messages: list[dict[str, Any]],
+        continuation_text: str,
+    ) -> list[dict[str, Any]]:
+        """Inject a continuation prompt as a system-notification user message."""
+        messages.append({
+            "role": "user",
+            "content": f"[System — {continuation_text}",
+        })
         return messages
 
     def add_assistant_message(

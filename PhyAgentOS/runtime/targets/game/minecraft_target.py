@@ -12,8 +12,11 @@ does NOT require Minecraft or pyCraft on the Linux side.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
+from collections import Counter
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -265,3 +268,109 @@ class MinecraftTarget(BaseLocalTarget):
             self._http = None
         self._built = False
         logger.info("MinecraftTarget disconnected")
+
+    def write_environment_snapshot(self, env_path: Path) -> None:
+        """Write Minecraft terrain (nearby_blocks by y-level) to ENVIRONMENT.md."""
+        try:
+            obs = self.observe()
+        except Exception:
+            logger.warning("Failed to observe for terrain snapshot")
+            return
+        blocks = obs.get("nearby_blocks")
+        if not isinstance(blocks, list):
+            return
+        info = obs.get("info", {})
+        bot_pos = info.get("position", {})
+        bot_y = float(bot_pos.get("y", 0))
+        terrain = {
+            "bot": {
+                "x": round(float(bot_pos.get("x", 0)), 1),
+                "y": round(bot_y, 1),
+                "z": round(float(bot_pos.get("z", 0)), 1),
+                "dimension": info.get("dimension", "overworld"),
+                "on_ground": info.get("on_ground", True),
+                "health": info.get("health", 20),
+            },
+            "nearby_blocks_summary": _summarize_terrain(blocks, bot_y),
+        }
+        if env_path.exists():
+            try:
+                existing = env_path.read_text(encoding="utf-8")
+            except Exception:
+                existing = ""
+        else:
+            existing = ""
+        marker = "\n## Terrain Snapshot\n"
+        idx = existing.rfind(marker)
+        if idx >= 0:
+            existing = existing[:idx]
+        terrain_text = marker + "```json\n" + json.dumps(terrain, indent=2, ensure_ascii=False) + "\n```\n"
+        env_path.write_text(existing + terrain_text, encoding="utf-8")
+
+
+def _summarize_terrain(blocks: list, bot_y: float) -> dict:
+    """Group nearby_blocks by y-level with compact summaries for LLM consumption."""
+    by_y: dict[int, Counter] = {}
+    for b in blocks:
+        if not isinstance(b, dict):
+            continue
+        pos = b.get("position", {})
+        if not isinstance(pos, dict):
+            continue
+        y = int(round(float(pos.get("y", 0))))
+        name = str(b.get("name", "unknown"))
+        by_y.setdefault(y, Counter())[name] += 1
+
+    layers: list[dict] = []
+    bot_y_int = int(round(bot_y))
+    for y_level in sorted(by_y.keys(), reverse=True):
+        counter = by_y[y_level]
+        total = sum(counter.values())
+        if total == 0:
+            continue
+        most = counter.most_common(8)
+        desc = ", ".join(f"{name}×{count}" if count > 1 else name for name, count in most)
+        if len(counter) > 8:
+            desc += f", +{len(counter) - 8} more types"
+        tag = ""
+        if y_level == bot_y_int:
+            tag = " ← BOT"
+        elif y_level > bot_y_int:
+            tag = " (above)"
+        else:
+            tag = " (below)"
+        layers.append({
+            "y": y_level,
+            "total_blocks": total,
+            "blocks": desc,
+            "tag": tag,
+        })
+
+    above_bot = sum(c.total() for y, c in by_y.items() if y > bot_y_int)
+    below_bot = sum(c.total() for y, c in by_y.items() if y < bot_y_int)
+    return {
+        "radius": _estimate_radius(blocks),
+        "total_non_air_blocks": sum(sum(c.values()) for c in by_y.values()),
+        "layers": layers,
+        "blocks_above_bot": above_bot,
+        "blocks_below_bot": below_bot,
+    }
+
+
+def _estimate_radius(blocks: list) -> int:
+    if not blocks:
+        return 0
+    import math
+    max_dist = 0
+    for b in blocks:
+        if not isinstance(b, dict):
+            continue
+        pos = b.get("position", {})
+        if not isinstance(pos, dict):
+            continue
+        x = float(pos.get("x", 0))
+        z = float(pos.get("z", 0))
+        dist = int(math.ceil(math.sqrt(x * x + z * z)))
+        if dist > max_dist:
+            max_dist = dist
+    return max_dist if max_dist > 0 else 5

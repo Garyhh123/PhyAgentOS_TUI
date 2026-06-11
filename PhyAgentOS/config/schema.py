@@ -241,6 +241,8 @@ class AgentDefaults(Base):
     context_window_tokens: int = 65_536
     temperature: float = 0.1
     max_tool_iterations: int = 40
+    max_task_continues: int = 10
+    task_continue_cooldown_s: float = 3.0
     # Deprecated compatibility field: accepted from old configs but ignored at runtime.
     memory_window: int | None = Field(default=None, exclude=True)
     reasoning_effort: str | None = None  # low / medium / high — enables LLM thinking mode

@@ -32,8 +32,9 @@
 
 | 版本 | 日期 | 更新内容 |
 |:-----|:-----|:---------|
-| ![v0.0.3](https://img.shields.io/badge/v0.0.3-FF574F) | 2026-06-11 | 整合为Agent Loop，支持复杂任务的完成 |
-| ![v0.0.2](https://img.shields.io/badge/v0.0.2-47A882) | 2026-05-29 | Minecraft 通路优化：支持终端和游戏内下达指令并执行 |
+| ![v0.0.4](https://img.shields.io/badge/v0.0.4-47A882) | 2026-06-12 | 支持自我反思的自进化机制，可以在未知场景完成复杂任务并总结经验 |
+| ![v0.0.3](https://img.shields.io/badge/v0.0.3-11648A) | 2026-06-11 | 整合为Agent Loop，支持复杂任务的完成 |
+| ![v0.0.2](https://img.shields.io/badge/v0.0.2-11648A) | 2026-05-29 | Minecraft 通路优化：支持终端和游戏内下达指令并执行 |
 | ![v0.0.1](https://img.shields.io/badge/v0.0.1-11648A) | 2026-05-29 | Minecraft 全链路就绪：云端 Agent 接入用户本地 Minecraft 服务器 |
 
 > **v0.0.3 说明**：PhyAgentOS-G 基于 [PhyAgentOS 主分支 v0.1.4](https://github.com/PhyAgentOS/PhyAgentOS) 重构而来。保留了 Session-Centered Runtime 核心架构，并聚焦于游戏智能体的行为研究。版本号从 0.0.x 开始，以独立追踪 Game Agent 分支的演进。

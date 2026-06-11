@@ -32,8 +32,9 @@
 
 | Version | Date | Update |
 |:------|:-----|:-------|
-| ![v0.0.3](https://img.shields.io/badge/v0.0.3-FF574F) | 2026-06-11 | Integrated as Agent Loop, supporting complex task completion |
-| ![v0.0.2](https://img.shields.io/badge/v0.0.2-47A882) | 2026-05-29 | Minecraft pipeline optimization: issue commands from terminal and in-game chat |
+| ![v0.0.4](https://img.shields.io/badge/v0.0.4-47A882) | 2026-06-12 | Self-evolution with self-reflection: complete complex tasks in unknown scenarios and summarize experience |
+| ![v0.0.3](https://img.shields.io/badge/v0.0.3-11648A) | 2026-06-11 | Integrated as Agent Loop, supporting complex task completion |
+| ![v0.0.2](https://img.shields.io/badge/v0.0.2-11648A) | 2026-05-29 | Minecraft pipeline optimization: issue commands from terminal and in-game chat |
 | ![v0.0.1](https://img.shields.io/badge/v0.0.1-11648A) | 2026-05-29 | Minecraft ready: cloud Agent connects to user's local Minecraft server |
 
 > **v0.0.3 note**: PhyAgentOS-G is rebuilt from [PhyAgentOS main branch v0.1.4](https://github.com/PhyAgentOS/PhyAgentOS). The Session-Centered Runtime core is retained, and the project is now focused on game agent behavior research. Versioning starts from 0.0.x to track the Game Agent branch independently.

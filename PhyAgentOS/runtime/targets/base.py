@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any
 
 
@@ -60,3 +61,11 @@ class BaseRolloutTarget(ABC):
     @abstractmethod
     def close(self) -> None:
         """Release target resources."""
+
+    def write_environment_snapshot(self, env_path: Path) -> None:
+        """Optional hook: write target-specific state to ENVIRONMENT.md.
+
+        Called by WatchdogSupervisor after every session.  Override in
+        game-specific targets to write terrain, entity positions, or
+        other target-native environment data that the Agent can read.
+        """
