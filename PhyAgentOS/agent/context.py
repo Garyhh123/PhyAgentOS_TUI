@@ -9,9 +9,75 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from PhyAgentOS.agent.memory import MemoryStore
 from PhyAgentOS.agent.skills import SkillsLoader
 from PhyAgentOS.utils.helpers import build_assistant_message, detect_image_mime
+
+_YAML_BLOCK_RE = re.compile(
+    r"(?P<fence>`{3,}|~{3,})\s*yaml\s*\n(?P<body>.*?)(?:\n(?P=fence)\s*)",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _parse_lessons_yaml(content: str) -> list | None:
+    """Extract the lessons list from a LESSONS.md YAML block. Returns None on failure."""
+    match = _YAML_BLOCK_RE.search(content)
+    if not match:
+        return None
+    try:
+        payload = yaml.safe_load(match.group("body"))
+        if not isinstance(payload, dict):
+            return None
+        lessons = payload.get("lessons")
+        if not isinstance(lessons, list):
+            return None
+        return lessons
+    except Exception:
+        return None
+
+
+def _filter_recent_and_successful(
+    lessons: list,
+    max_items: int = 25,
+    recent_count: int = 15,
+) -> tuple[list, int]:
+    """Filter lessons: keep most recent + succeeded entries, dedup by session_id.
+
+    Returns (filtered_lessons, original_count).
+    """
+    # Dedup: keep newest entry per session_id
+    seen_sessions: set[str] = set()
+    deduped: list[dict] = []
+    for lesson in reversed(lessons):
+        sid = lesson.get("session_id", "")
+        if sid and sid in seen_sessions:
+            continue
+        if sid:
+            seen_sessions.add(sid)
+        deduped.append(lesson)
+    deduped.reverse()
+
+    recent = deduped[-recent_count:] if len(deduped) > recent_count else list(deduped)
+
+    recent_ids = {item.get("session_id") for item in recent}
+    succeeded: list[dict] = []
+    for lesson in reversed(deduped):
+        if len(recent) + len(succeeded) >= max_items:
+            break
+        sid = lesson.get("session_id", "")
+        if sid in recent_ids:
+            continue
+        metadata = lesson.get("metadata") or {}
+        summary = lesson.get("summary", "")
+        if metadata.get("success") or "succeeded" in str(summary):
+            succeeded.append(lesson)
+            recent_ids.add(sid)
+    succeeded.reverse()
+
+    filtered = recent + succeeded
+    return filtered[:max_items], len(lessons)
 
 
 class ContextBuilder:
@@ -147,6 +213,26 @@ When you execute tasks through the runtime (via SESSIONS.md), follow this cycle:
 6. **Retry** (max 3 same-approach attempts) — if not done, write a new session with adjusted strategy.
 7. **Escalate** — if the same approach fails 3 times, switch to a fundamentally different one.
    Example: `collect` fails → try `dig` + `move`; absolute `move` times out → try short relative `move`.
+8. **Abstract** — after the task is done (or definitively failed), distill the key
+   lesson into an abstract, game-agnostic principle. Write it to `memory/MEMORY.md`
+   using `edit_file`. Use format:
+   ```
+   ## [Category Name]
+
+   [Game] Specific observation. Why it matters. How to handle it.
+   Pattern: abstract rule that applies across games.
+   ```
+   Tag each entry with `[Minecraft]`, `[Stardew]`, or `[Cross-game]` so it's clear
+   where the lesson came from. Cross-game principles help future tasks in ANY game.
+9. **Convert to Skill** — when a pattern has been proven in ≥2 successful sessions
+   in the same game, promote it from MEMORY.md into a reusable `skills/` guide.
+   Use the `skill-creator` skill (`read_file skills/skill-creator/SKILL.md`)
+   to generate `skills/<skill-name>/SKILL.md`. A pattern should become a skill when:
+   - It describes a reproducible *methodology or workflow* (not just a fact)
+   - Multiple attempts confirm it works reliably
+   - It would save significant time if the next agent reads it before acting
+   Example: cave escape via dy-climbing was confirmed twice → create `minecraft-navigation` skill.
+   Skills override MEMORY.md principles because they are more actionable and structured.
 
 Reply directly with text for conversations. Only use the 'message' tool to send to a specific chat channel."""
 
@@ -191,20 +277,59 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
 
         return "\n\n".join(parts) if parts else ""
 
+    _LESSONS_NOTICE = (
+        "**Read these lessons before planning — they describe what failed before "
+        "and what worked. Apply them to avoid repeating past mistakes.**\n\n"
+    )
+
     @staticmethod
     def _format_lessons(content: str) -> str:
-        """If LESSONS.md has actual entries, prepend a prominent notice."""
+        """Filter LESSONS.md to ≤25 entries and prepend a prominent notice."""
         stripped = content.strip()
         if not stripped:
             return content
-        lines = [line for line in stripped.splitlines() if line.strip() and not line.strip().startswith("#")]
-        if len(lines) < 2:
+
+        lessons = _parse_lessons_yaml(stripped)
+        if lessons is None:
+            # YAML parse failed — fall back to original heuristic
+            lines = [
+                line
+                for line in stripped.splitlines()
+                if line.strip() and not line.strip().startswith("#")
+            ]
+            if len(lines) < 2:
+                return content
+            return ContextBuilder._LESSONS_NOTICE + stripped
+
+        if not lessons:
             return content
-        return (
-            "**Read these lessons before planning — they describe what failed before "
-            "and what worked. Apply them to avoid repeating past mistakes.**\n\n"
-            + stripped
+
+        filtered, orig_count = _filter_recent_and_successful(lessons)
+
+        if len(filtered) >= orig_count:
+            return ContextBuilder._LESSONS_NOTICE + stripped
+
+        # Rebuild content with filtered YAML block
+        filtered_yaml = yaml.dump(
+            {
+                "version": "runtime_lessons_v1",
+                "lessons": filtered,
+            },
+            sort_keys=False,
+            allow_unicode=True,
         )
+
+        def _replace_block(match: re.Match) -> str:
+            return f"{match.group('fence')}yaml\n{filtered_yaml}\n{match.group('fence')}"
+
+        new_content = _YAML_BLOCK_RE.sub(_replace_block, stripped)
+        result = ContextBuilder._LESSONS_NOTICE + new_content
+        if orig_count > len(filtered):
+            result += (
+                f"\n(+{orig_count - len(filtered)} older lessons, "
+                "use read_file to view LESSONS.md)"
+            )
+        return result
 
     def _context_file_path(self, filename: str) -> Path:
         """Return the context-visible source path for a protocol file."""

@@ -2,24 +2,38 @@
 
 ## 架构概览
 
-```
-[Windows 11]
-  Minecraft Java Edition (1.20.4 推荐)
-       ↑ localhost:25565
-  mineflayer bridge (Node.js)           ← 机器人引擎，bot 名: paos
-       ↑ localhost:3001 (HTTP API)
-  ngrok tunnel                          ← 公网暴露
-       ↓
+<p>
+<details open>
+<summary><b>📐 架构图</b></summary>
 
-[Linux 云端 — PhyAgentOS]
-  MinecraftTarget                       ← HTTP 客户端，连接 ngrok URL
-       ↑
-  MinecraftSkillRuntime                 ← episode 驱动循环
-       ↑
-  WatchdogSupervisor                    ← session 监督器
-       ↑
-  Agent (Planner/Critic)               ← 通过 SESSIONS.md 下发任务
 ```
+┌─────────────────────────────────────────────────────┐
+│ Windows 11                                           │
+│  Minecraft Java Edition (1.20.4)                     │
+│       ↑ localhost:25565                              │
+│  mineflayer bridge (Node.js)  ← bot: paos           │
+│       ↑ localhost:3001 (HTTP API)                    │
+│  ngrok tunnel  →  https://xxxx.ngrok-free.dev        │
+└──────────────────┬──────────────────────────────────┘
+                   │ HTTPS
+┌──────────────────▼──────────────────────────────────┐
+│ Linux 云端 — PhyAgentOS                              │
+│                                                      │
+│  路径 A: Runtime Session Protocol（标准多场景）      │
+│    MinecraftTarget → TargetSessionHandle             │
+│    → MinecraftSkillRuntime → SessionRunner           │
+│    → WatchdogSupervisor ← SESSIONS.md                │
+│                                                      │
+│  路径 B: Direct Bridge API（Minecraft 推荐）         │
+│    Agent exec curl → HTTP /state + /action           │
+│    结合 minecraft-navigation skill                   │
+│                                                      │
+│  ↑ Agent (Planner/Critic) — 对话式下达任务            │
+└─────────────────────────────────────────────────────┘
+```
+
+</details>
+</p>
 
 **关键设计**：
 - MinecraftTarget 是 OS 中一个干净的 `BaseLocalTarget` 实现，不包含任何 Minecraft 协议代码
@@ -41,7 +55,9 @@
 
 ## 二、Windows 11 端部署
 
-### 2.1 安装 Node.js
+<p>
+<details>
+<summary><b>2.1 安装 Node.js</b></summary>
 
 ```powershell
 winget install OpenJS.NodeJS.LTS
@@ -55,6 +71,13 @@ winget install OpenJS.NodeJS.LTS
 node --version   # → v22.x
 npm --version    # → 10.x
 ```
+
+</details>
+</p>
+
+<p>
+<details>
+<summary><b>2.2 – 2.5 创建 bridge 工程 &amp; 安装依赖</b></summary>
 
 ### 2.2 创建 bridge 工程
 
@@ -95,7 +118,12 @@ scp user@linux-server:/path/PhyAgentOS/.kilo/project/game/bridge_server.js E:\mc
 npm install
 ```
 
-### 2.6 安装 ngrok
+</details>
+</p>
+
+<p>
+<details>
+<summary><b>2.6 安装 ngrok</b></summary>
 
 1. 从 https://ngrok.com/download 下载 Windows 版本
 2. 注册 ngrok 免费账号（无需绑卡）
@@ -105,7 +133,12 @@ npm install
 ngrok config add-authtoken <你的token>
 ```
 
-### 2.7 启动 Minecraft 1.20.4
+</details>
+</p>
+
+<p>
+<details>
+<summary><b>2.7 启动 Minecraft 1.20.4</b></summary>
 
 mineflayer 的协议库对新版支持有延迟。**推荐创建 1.20.4 游戏实例**：
 
@@ -121,7 +154,12 @@ Minecraft Launcher → 安装配置 → 新建配置
 
 > 备选：使用 Paper 1.20.4 服务器。`java -jar paper-1.20.4-496.jar nogui`，客户端和 bridge 都连 `localhost:25565`。
 
-### 2.8 启动 bridge
+</details>
+</p>
+
+<p>
+<details>
+<summary><b>2.8 启动 bridge</b></summary>
 
 ```powershell
 cd E:\mc_bridge
@@ -148,7 +186,12 @@ curl.exe http://localhost:3001/health
 # → {"ok":true,"bot_spawned":true,"uptime_seconds":5}
 ```
 
-### 2.9 建立 ngrok 公网隧道
+</details>
+</p>
+
+<p>
+<details>
+<summary><b>2.9 建立 ngrok 公网隧道</b></summary>
 
 ```powershell
 # 再开一个 PowerShell
@@ -161,6 +204,9 @@ Forwarding  https://abc123.ap.ngrok-free.app → http://localhost:3001
 ```
 
 **记下这个 ngrok URL**，Linux 云端将通过它连接。
+
+</details>
+</p>
 
 ---
 
@@ -197,7 +243,9 @@ print(obs["info"]["health"])      # 20.0
 t.close()
 ```
 
-### 3.3 观察空间
+<p>
+<details>
+<summary><b>3.3 观察空间</b></summary>
 
 ```python
 {
@@ -225,6 +273,9 @@ t.close()
 }
 ```
 
+</details>
+</p>
+
 ---
 
 ## 四、动作空间（16 种）
@@ -236,10 +287,8 @@ t.close()
 ```python
 # 路径规划到绝对坐标
 t.step({"type": "move", "params": {"dx": 100, "dy": 64, "dz": 200, "absolute": True}})
-
 # 相对移动
 t.step({"type": "move", "params": {"dx": 5, "dz": 0}})
-
 # 转向
 t.step({"type": "look", "params": {"yaw": 90.0, "pitch": 0.0}})
 ```
@@ -257,9 +306,7 @@ t.step({"type": "sprint",   "params": {"start": True}})
 ```python
 # 挖掘指定坐标的方块（异步，mineflayer 自动处理时序）
 t.step({"type": "dig",   "params": {"x": 100, "y": 63, "z": 200}})
-
-# 放置方块到指定面
-# face: 0=下 1=上 2=北 3=南 4=西 5=东
+# 放置方块到指定面（face: 0=下 1=上 2=北 3=南 4=西 5=东）
 t.step({"type": "place", "params": {"x": 100, "y": 63, "z": 200, "face": 1}})
 ```
 
@@ -278,7 +325,7 @@ t.step({"type": "select_slot", "params": {"slot": 0}})
 t.step({"type": "drop",        "params": {}})
 ```
 
-### 聊天与命令
+### 聊天
 
 ```python
 t.step({"type": "chat", "params": {"message": "hello"}})
@@ -287,13 +334,8 @@ t.step({"type": "chat", "params": {"message": "hello"}})
 ### 高级动作
 
 ```python
-# 自动采集 10 个橡木原木（mineflayer-collectblock）
 t.step({"type": "collect", "params": {"block_type": "oak_log", "count": 10}})
-
-# 合成工作台
 t.step({"type": "craft",   "params": {"recipe_id": "crafting_table", "count": 1}})
-
-# 装备物品
 t.step({"type": "equip",   "params": {"item": "stone_pickaxe", "destination": "hand"}})
 ```
 
@@ -304,74 +346,165 @@ t.step({"type": "equip",   "params": {"item": "stone_pickaxe", "destination": "h
 ```yaml
 targets:
   - id: minecraft_java_env
-    type: sim
+    target_class: local
+    target_kind: game
     workspace: workspaces/minecraft
     enabled: true
-    supported_skillruntimes: [minecraft_navigate, minecraft_mine, minecraft_build]
+    supported_skills: [minecraft_navigate, minecraft_mine, minecraft_build]
     runtime:
       target_runtime: MinecraftTargetRuntime
-      target_endpoint: targetws://local/minecraft_java_env
       target_adapter: target_adapter://minecraft_adapter
-    perception:
-      enabled: false
+      runtime_contract_ref: configs/runtime/contracts/minecraft.runtime.yaml
     config:
       bridge_url: "https://abc123.ap.ngrok-free.app"   # ← ngrok 公网地址
+      verify_ssl: false
       step_delay: 0.1
 ```
 
-## 六、配置 SKILLRUNTIME.md
+<p>
+<details>
+<summary><b>📋 字段说明</b></summary>
+
+- `target_class: local` — 本地进程内 target（非 remote WebSocket）
+- `target_kind: game` — TargetSpec schema 规定的游戏场景类型
+- `runtime_contract_ref` — 运行时契约文件（必填）
+- 无需 `target_endpoint`（local target 不需要）
+
+</details>
+</p>
+
+---
+
+## 六、配置 SKILLRUNTIME.md（Runtime Skill Registry）
+
+> **注意区分**：`SKILLRUNTIME.md` 是 watchdog 使用的 runtime skill 注册表（YAML，定义可执行的 skill runtime），
+> `SKILLS.md` 是 Agent 使用的技能列表（Markdown，列出 Agent 可加载的方法论指导）。
+> 两者名字相似但用途完全不同。
 
 ```yaml
 skills:
   - id: minecraft_navigate
-    category: builtin
     runtime: MinecraftSkillRuntime
-    supported_targets: [minecraft_java_env]
+    runtime_kind: builtin
+    loop_mode: open_loop_step
+    agent_exposure: none
+    supported_target_kinds: [game]
+    observation_contract:
+      observation_type: environment_only
     requires:
-      environment_outputs: [player_position, nearby_blocks]
+      environment_outputs: []
 ```
 
-## 七、完整 pipeline：Agent 下发任务（未来）
+<p>
+<details>
+<summary><b>📋 字段说明</b></summary>
 
-### 7.1 Agent 写入 SESSIONS.md
+- `runtime_kind: builtin`（原 `category: builtin`）
+- `supported_target_kinds: [game]`（原 `supported_targets: [minecraft_java_env]`，按 target_kind 匹配而非 target ID）
+- `loop_mode`、`agent_exposure`、`observation_contract` 均为 SkillSpec schema 必填字段
+
+</details>
+</p>
+
+### MinecraftSkillRuntime 注册
+
+Runtime skill 必须在 `runtime_registry.py` 中注册才能被 watchdog 使用：
+
+```python
+# PhyAgentOS/runtime/watchdog/runtime_registry.py
+from PhyAgentOS.runtime.skillruntime.game.minecraft_skill_runtime import MinecraftSkillRuntime
+register_skill_runtime("MinecraftSkillRuntime", MinecraftSkillRuntime)
+```
+
+**忘记注册的典型症状**：`SKILL_RUNTIME_MISSING: unsupported skill runtime: MinecraftSkillRuntime`。
+
+---
+
+## 七、完整 pipeline：Agent 下发任务
+
+<p>
+<details open>
+<summary><b>路径 A：Runtime Session Protocol（标准多场景路径）</b></summary>
+
+### 7.1 首次配置
+
+```bash
+# 1. 填入 bridge_url（ngrok 公网地址）
+#    编辑 workspaces/minecraft/TARGETS.md，将 bridge_url 改为实际值
+#    bridge_url: "https://xxxx.ngrok-free.app"
+
+# 2. 启动
+paos agent --workspace workspaces/minecraft
+```
+
+### 7.2 Agent 写入 SESSIONS.md
+
+Agent 系统提示词自动注入 TARGETS.md/SKILLS.md/RUNTIME.md/EMBODIED.md。
+收到用户指令后，Agent 按照 RUNTIME.md 格式用 `write_file` 写入 SESSIONS.md：
 
 ```yaml
 sessions:
-  - session_id: sess_mc_demo
+  - session_id: move_fwd_5
     target_ref: target://minecraft_java_env
-    skillruntime_ref: skillruntime://minecraft_navigate
-    task_description: "go to (100, 64, 200), say hello, mine 5 oak logs"
+    skill_ref: skill://minecraft_navigate
+    task_description: "往前走5步"
     status: pending
-    timeouts:
-      execute_timeout_s: 300
-    execution:
-      max_steps: 50
+    execution: {max_steps: 1}
     runtime_hints:
       perception_queries:
         - type: move
-          params: {dx: 100, dy: 64, dz: 200, absolute: true}
-        - type: chat
-          params: {message: "Arrived at target!"}
-        - type: collect
-          params: {block_type: "oak_log", count: 5}
+          params: {forward: 5}
 ```
 
-### 7.2 WatchdogSupervisor 执行
+### 7.3 WatchdogSupervisor 执行
 
 ```
-1. 读取 SESSIONS.md → 解析 SessionSpec
-2. 绑定 MinecraftTarget + MinecraftSkillRuntime
-3. MinecraftSkillRuntime.run():
-     target.build()           # HTTP GET /health
-     target.reset(ctx)        # → observe()
-     loop:
-       observe()              # HTTP GET /state
-       adapter.to_runtime_observation()
-       pick_action(plan)      # 从 runtime_hints 读取
-       target.step(action)    # HTTP POST /action → mineflayer
-       直到 done/success/max_steps
-4. SessionResult → ENVIRONMENT.md + LESSONS.md
+1. 轮询 SESSIONS.md → 发现 pending session
+2. Preflight 校验（合同 + adapter + skill 兼容性）
+3. 绑定 MinecraftTarget + MinecraftSkillRuntime
+4. SessionRunner.start():
+     target.build()              # HTTP GET /health → 验证 bridge 可达
+     target.start_session(ctx)   # → observe()
+     SkillRuntime.run_builtin_loop():
+       for each perception_query:
+         handle.action_chunk()   # SafetyClampBridge 检测 dict action 自动透传
+                                 # → MinecraftAdapter.to_executable_action_chunk()
+                                 # → MinecraftTarget.action_chunk() → HTTP POST /action
+         handle.observe()        # HTTP GET /state → 获取最新观察
+         校验 action_ok/action_result
+         直到 done/max_steps
+     → SkillRuntimeResult
+5. ResultWriter → ENVIRONMENT.md + LESSONS.md
 ```
+
+### 7.4 Agent 验证
+
+Agent 读取 ENVIRONMENT.md 验证执行结果，成功则回复用户，失败则读 LESSONS.md 分析原因、调整策略、重写 SESSIONS.md 重试。
+
+</details>
+</p>
+
+<p>
+<details>
+<summary><b>路径 B：Direct Bridge API（Minecraft 推荐路径）</b></summary>
+
+Runtime session protocol 对 Minecraft 不必要——preflight 检查链（perception → sensor → runtime）复杂且经常失败。
+Minecraft 场景下推荐使用 bridge HTTP API 直接调用，Agent 可结合 `minecraft-navigation` skill 高效导航。
+
+```bash
+# 查询 bot 状态
+curl -s https://xxxx.ngrok-free.dev/state
+
+# 直接执行动作
+curl -s -XPOST https://xxxx.ngrok-free.dev/action \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"move","params":{"dx":10,"dy":0,"dz":0}}'
+```
+
+> Agent 使用 `exec` 工具调用 curl 命令即可。详见 `skills/minecraft-navigation/SKILL.md`。
+
+</details>
+</p>
 
 ---
 
@@ -379,34 +512,39 @@ sessions:
 
 | 文件 | 行数 | 说明 |
 |------|------|------|
-| `runtime/targets/game/minecraft_target.py` | 267 | MinecraftTarget（HTTP 客户端，继承 BaseLocalTarget） |
+| `runtime/targets/game/minecraft_target.py` | 272 | MinecraftTarget（HTTP 客户端，继承 BaseLocalTarget） |
 | `runtime/adapters/minecraft/minecraft_adapter.py` | 83 | Observation/Action 归一化 |
-| `runtime/skillruntime/game/minecraft_skill_runtime.py` | 241 | Episode 驱动循环（含 entity 解析 + 到达检测） |
+| `runtime/skills/game/minecraft_skill_runtime.py` | 260 | Episode 驱动循环（含 entity 解析 + 到达检测），继承 BuiltinSkillRuntime |
+| `runtime/adapters/bridges.py` | +5 | SafetyClampBridge 对 dict-based game action 自动透传 |
 | `runtime/targets/factory.py` | +4 | 注册 MinecraftTargetRuntime |
 | `runtime/adapters/factory.py` | +3 | 注册 minecraft_adapter |
-| `cli/minecraft_commands.py` | 239 | `minecraft_say` + `minecraft_listen` 命令 |
+| `runtime/watchdog/runtime_registry.py` | +2 | 注册 MinecraftSkillRuntime |
+| `templates/configs/runtime/embodied/minecraft.md` | 63 | Minecraft 专属 EMBODIED.md（16 种动作 + Critic Guidance），自动部署 |
+| `templates/configs/runtime/contracts/minecraft.runtime.yaml` | 34 | 运行时契约文件（safety/action_contract） |
 | `tests/runtime/test_minecraft_target.py` | 16 tests | 单元测试（Mock HTTP bridge） |
 | `tests/runtime/test_minecraft_skill_runtime.py` | 3 tests | Skill runtime 测试 |
-| `.kilo/project/game/bridge_server.js` | 217 | mineflayer bridge（部署到 Windows） |
+| `.kilo/project/game/bridge_server.js` | 257 | mineflayer bridge（部署到 Windows） |
 
-**CLI 命令速查**：
+**使用方式**：
 
 ```bash
-paos minecraft say "挖5个橡木"       # 终端自然语言 → LLM → SkillRuntime
-paos minecraft listen                 # 游戏聊天监听（前缀 "paos"）
+# 一切通过 paos agent 完成，不再有独立的 minecraft 子命令
+paos agent --workspace workspaces/minecraft
+# → Agent 上下文自动包含 EMBODIED.md/ENVIRONMENT.md/LESSONS.md
+# → 对话式下达任务，Agent 自动写 SESSIONS.md，watchdog 执行
 ```
-
-**测试结果**：26 passed, 0 failed。
 
 ---
 
 ## 九、已知限制
 
-| 限制 | 说明 |
-|------|------|
-| Minecraft 版本 | mineflayer 稳定支持 1.20.4。1.21.5 协议太新，minecraft-data 暂不支持 |
-| 无图像观察 | `observation.image` 返回零数组。3D 观察视角见 `todo_list.md` §1 |
-| 无 Agent 闭环 | 当前仅支持单次 LLM 批量规划（`paos minecraft say`），逐步感知-规划-执行闭环见 `todo_list.md` §2 |
-| ngrok 域名变化 | 免费版每次重启域名随机，需更新 `bridge_url` |
-| bridge 重启需重连 | bridge 断开后 bot 从世界消失，需重新 `node bridge_server.js` |
-
+| 限制 | 说明 | 状态 |
+|------|------|------|
+| Minecraft 版本 | mineflayer 稳定支持 1.20.4。1.21.5 协议太新，minecraft-data 暂不支持 | 待上游更新 |
+| 无图像观察 | `observation.image` 返回零数组。3D viewer 见 `todo_list.md` §1 | 待实现 |
+| bridge_url 需手动填入 | 模板中 `bridge_url: ""`，首次使用需编辑 `workspaces/minecraft/TARGETS.md` 填入 ngrok URL | 使用前必做 |
+| ngrok 域名变化 | 免费版每次重启域名随机，需更新 `bridge_url` | ngrok 限制 |
+| bridge 重启需重连 | bridge 断开后 bot 从世界消失，需重新 `node bridge_server.js` | 使用习惯 |
+| ~~dig/place Vec3 bug~~ | ~~`bot.blockAt({x,y,z})` 传普通对象导致 `pos.floored is not a function`~~ | ✅ 已修复（2026-06-12） |
+| ~~Runtime session 不可靠~~ | ~~Minecraft 用 runtime session protocol 频繁 preflight 失败（7/7）~~ | ✅ 改用 bridge API 直连 |
+| ~~MinecraftSkillRuntime 未注册~~ | ~~`SKILL_RUNTIME_MISSING` 错误~~ | ✅ 已在 `runtime_registry.py` 注册 |

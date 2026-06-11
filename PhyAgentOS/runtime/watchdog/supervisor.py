@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import socket
+from datetime import datetime
 from pathlib import Path
 
 from pydantic import ValidationError
 
+from PhyAgentOS.agent.memory import MemoryStore
 from PhyAgentOS.runtime.perception import PerceptionRuntime
 from PhyAgentOS.runtime.policy.factory import build_policy_client
 from PhyAgentOS.runtime.preflight import RuntimeCompatibilityPreflight
@@ -41,6 +43,7 @@ class WatchdogSupervisor:
             Path(environment_workspace).expanduser() if environment_workspace is not None else self.workspace
         )
         self.worker_id = worker_id or f"runtime-watchdog@{socket.gethostname()}"
+        self._memory_store = MemoryStore(self.environment_workspace)
         self.registry = SessionRegistry(self.paths.sessions)
         self.result_writer = ResultWriter(self.workspace)
         self.watcher = WorkspaceWatcher(self.paths)
@@ -264,6 +267,10 @@ class WatchdogSupervisor:
                 "num_steps": result.num_steps,
                 "return_value": result.return_value,
             },
+        )
+        self._memory_store.append_history(
+            f"[{datetime.now().strftime('%Y-%m-%d %H:%M')}] "
+            f"session {session.session_id} on {scheduled.target_spec.id}: {summary}"
         )
 
     def _write_preflight_metadata(self, session_id: str, preflight_result) -> None:

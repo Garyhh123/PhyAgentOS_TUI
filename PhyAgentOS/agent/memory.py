@@ -4,13 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import weakref
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 from loguru import logger
 
-from PhyAgentOS.utils.helpers import ensure_dir, estimate_message_tokens, estimate_prompt_tokens_chain
+from PhyAgentOS.utils.helpers import (
+    ensure_dir,
+    estimate_message_tokens,
+    estimate_prompt_tokens_chain,
+)
 
 if TYPE_CHECKING:
     from PhyAgentOS.providers.base import LLMProvider
@@ -169,6 +175,7 @@ class MemoryConsolidator:
         self._build_messages = build_messages
         self._get_tool_definitions = get_tool_definitions
         self._locks: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
+        self._last_compact_time: float = 0.0
 
     def get_lock(self, session_key: str) -> asyncio.Lock:
         """Return the shared consolidation lock for one session."""
@@ -177,6 +184,53 @@ class MemoryConsolidator:
     async def consolidate_messages(self, messages: list[dict[str, object]]) -> bool:
         """Archive a selected message chunk into persistent memory."""
         return await self.store.consolidate(messages, self.provider, self.model)
+
+    async def _compact_long_term_memory(self) -> bool:
+        """Refine MEMORY.md when it exceeds the hard character limit.
+
+        Uses a plain-text LLM call (no tools) to merge and trim principles.
+        Fails silently — compaction failure must not block the main loop.
+        """
+        limit = 4000
+        current = self.store.read_long_term()
+        if not current:
+            return False
+
+        prompt = f"""You are a memory refinement agent. The long-term memory below
+has grown too large ({len(current)} chars). Refine it to ≤{limit} chars by:
+
+1. Merging similar principles into single entries
+2. Keeping only patterns confirmed by ≥2 observations
+3. Removing one-off observations or resolved issues
+4. Preserving all [Cross-game] and Pattern: fields
+5. Sorting by importance (most frequently applied first)
+
+## Current Long-term Memory
+{current}"""
+
+        try:
+            response = await self.provider.chat_with_retry(
+                messages=[
+                    {"role": "system", "content": "Refine long-term memory."},
+                    {"role": "user", "content": prompt},
+                ],
+                model=self.model,
+            )
+            if response.content and len(response.content) < len(current) * 0.9:
+                self.store.write_long_term(response.content)
+                self.store.append_history(
+                    f"[{datetime.now().strftime('%Y-%m-%d %H:%M')}] MEMORY.md refined: "
+                    f"{len(current)}→{len(response.content)} chars"
+                )
+                logger.info(
+                    "Long-term memory compacted: %d→%d chars",
+                    len(current), len(response.content),
+                )
+                return True
+            return False
+        except Exception:
+            logger.exception("Long-term memory compaction failed")
+            return False
 
     def pick_consolidation_boundary(
         self,
@@ -230,6 +284,15 @@ class MemoryConsolidator:
         """Loop: archive old messages until prompt fits within half the context window."""
         if not session.messages or self.context_window_tokens <= 0:
             return
+
+        # Hard limit: compact long-term memory if it exceeds character budget.
+        # Throttled to at most once per 5 minutes so we don't burn LLM calls.
+        limit = 4000
+        if len(self.store.read_long_term()) > limit:
+            now = time.time()
+            if now - self._last_compact_time > 300:
+                if await self._compact_long_term_memory():
+                    self._last_compact_time = now
 
         lock = self.get_lock(session.key)
         async with lock:

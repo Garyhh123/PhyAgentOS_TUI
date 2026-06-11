@@ -10,7 +10,7 @@
   </p>
 
   <p>
-    <img src="https://img.shields.io/badge/version-v0.0.3-blue" alt="Version">
+    <img src="https://img.shields.io/badge/version-v0.0.5-blue" alt="Version">
     <img src="https://img.shields.io/badge/python-≥3.11-3776AB?logo=python&logoColor=white" alt="Python">
     <img src="https://img.shields.io/badge/license-MIT-3DA639" alt="License">
     <a href="https://github.com/PhyAgentOS/PhyAgentOS">
@@ -32,12 +32,15 @@
 
 | 版本 | 日期 | 更新内容 |
 |:-----|:-----|:---------|
+| ![v0.0.5](https://img.shields.io/badge/v0.0.5-47A882) | 2026-06-12 | 分层记忆系统（Hermes 机制）：LESSONS.md 筛选、MEMORY.md 精炼、经验自动沉淀为 skills |
 | ![v0.0.4](https://img.shields.io/badge/v0.0.4-47A882) | 2026-06-12 | 支持自我反思的自进化机制，可以在未知场景完成复杂任务并总结经验 |
-| ![v0.0.3](https://img.shields.io/badge/v0.0.3-11648A) | 2026-06-11 | 整合为Agent Loop，支持复杂任务的完成 |
+| ![v0.0.3](https://img.shields.io/badge/v0.0.3-11648A) | 2026-06-11 | 整合为 Agent Loop，支持复杂任务的完成 |
 | ![v0.0.2](https://img.shields.io/badge/v0.0.2-11648A) | 2026-05-29 | Minecraft 通路优化：支持终端和游戏内下达指令并执行 |
 | ![v0.0.1](https://img.shields.io/badge/v0.0.1-11648A) | 2026-05-29 | Minecraft 全链路就绪：云端 Agent 接入用户本地 Minecraft 服务器 |
 
 > **v0.0.3 说明**：PhyAgentOS-G 基于 [PhyAgentOS 主分支 v0.1.4](https://github.com/PhyAgentOS/PhyAgentOS) 重构而来。保留了 Session-Centered Runtime 核心架构，并聚焦于游戏智能体的行为研究。版本号从 0.0.x 开始，以独立追踪 Game Agent 分支的演进。
+
+> **v0.0.5 新特性**：三层分层记忆系统（借鉴 Hermes）。战术层 — LESSONS.md ≤25 条规则筛选；战略层 — MEMORY.md ≤4000 字符硬上限触发 LLM 精炼；方法论层 — ≥2 次验证后 Agent 自动调用 skill-creator 将经验沉淀为可复用技能。完整 Reflection 9 步闭环：Plan → Wait → Check → Reflect → Learn → Retry → Escalate → Abstract → Convert to Skill。
 
 ---
 
@@ -99,11 +102,21 @@
   <td><b>多层安全</b></td>
   <td>Critic 校验 → Preflight 契约检查 → Target 端 SafetyGuard</td>
 </tr>
-<tr>
-  <td>🎮</td>
-  <td><b>Game Agent CLI</b></td>
-  <td><code>paos minecraft</code> 命令行直接控制 Minecraft bot，支持 16 种动作类型</td>
-</tr>
+  <tr>
+    <td>🎮</td>
+    <td><b>Game Agent CLI</b></td>
+    <td><code>paos minecraft</code> 命令行直接控制 Minecraft bot，支持 16 种动作类型</td>
+  </tr>
+  <tr>
+    <td>🧠</td>
+    <td><b>三层分层记忆</b></td>
+    <td>战术层 LESSONS.md ≤25 条筛选 + 战略层 MEMORY.md ≤4000 字符 LLM 精炼 + 方法论层 skills/ 自动沉淀</td>
+  </tr>
+  <tr>
+    <td>🔄</td>
+    <td><b>9 步反思闭环</b></td>
+    <td>Plan→Wait→Check→Reflect→Learn→Retry→Escalate→Abstract→Convert to Skill，经验自动转化为可复用技能</td>
+  </tr>
 </table>
 
 ---
@@ -191,15 +204,16 @@ paos agent "来到我身边"
 | 始终进入 agent system prompt | `AGENTS.md` / `SOUL.md` / `USER.md` | Agent workspace | Agent 运行规则、身份边界、用户偏好 |
 | 始终进入 agent system prompt | `TOOLS.md` | Agent workspace | 工具使用规则与可用工具说明 |
 | 始终进入 agent system prompt | `SKILLS.md` | Agent workspace | 面向 Agent 的 skill 发现与加载规则 |
+| 始终进入 agent system prompt | `memory/MEMORY.md` | Agent workspace | 长期记忆；Agent 反思写入抽象原则；≤4000 字符硬上限触发 LLM 精炼 |
 | 存在时进入上下文；涉及 target 时按启用 target 过滤 | `EMBODIED.md` | Agent workspace | Target 能力的人类可读描述 |
 | 存在时作为状态进入上下文 | `ENVIRONMENT.md` | Agent/runtime workspace | 当前 target、场景与环境状态 |
-| 存在时作为记忆/状态进入上下文 | `LESSONS.md` | Agent workspace | 运行经验、失败记录与修正建议 |
-| 存在时作为任务状态进入上下文 | `TASK.md` | Agent workspace | 多步任务拆解与进度 |
+| 存在时 ≤25 条筛选后注入 | `LESSONS.md` | Agent workspace | YAML 格式运行经验，战术层：去重 + 最近 15 + 成功条目优先 |
 | Runtime 协议；创建 session 前读取 | `TARGETS.md` | Runtime workspace | 已启用 target、endpoint/adapter/config、支持的 skill runtime |
 | Runtime 协议；创建 session 前读取 | `SKILLRUNTIME.md` | Runtime workspace | Policy/builtin skill runtime 注册表与执行契约 |
 | Runtime 队列/状态；Agent 与 watchdog 写入 | `SESSIONS.md` | Runtime workspace | 待执行、执行中、已完成 session 与结果 |
+| Watchdog 写入（不注入 prompt） | `memory/HISTORY.md` | Agent workspace | Session 完成时间线 + MEMORY 精炼事件；Agent 按需 grep |
 
-`SKILLS.md` 服务 Agent 能力与 skill 发现；`SKILLRUNTIME.md` 服务 runtime 执行契约，并与 `TARGETS.md`、`SESSIONS.md` 配套使用。
+`SKILLS.md` 服务 Agent 能力与 skill 发现；`SKILLRUNTIME.md` 服务 runtime 执行契约。`memory/MEMORY.md` + `HISTORY.md` 构成长期记忆系统，`skills/<name>/SKILL.md` 为可复用方法论指导。
 
 ---
 
@@ -271,8 +285,10 @@ PhyAgentOS-G/
 | [框架介绍](docs/zh/01-framework-introduction.md) | 所有人 | 设计理念、技术架构、当前进展、路线图 |
 | [用户手册](docs/zh/02-user-manual.md) | 使用者 | 安装部署、游戏/仿真场景运行、排障指南 |
 | [开发者手册](docs/zh/03-developer-manual.md) | 开发者 | API 接口、Target/Adapter/Skill 开发、代码风格 |
-| [Minecraft 部署指南](docs/scenarios/game/minecraft/zh/deployment.md) | 使用者 | Windows bridge + Linux Agent 完整部署流程 |
-| [Minecraft 使用指南](docs/scenarios/game/minecraft/zh/usage.md) | 使用者 | CLI 控制、对话监听、踩坑记录 |
+| [Minecraft 部署指南](docs/scenarios/game/minecraft/0_start.md) | 使用者 | Windows bridge + Linux Agent 完整部署流程 |
+| [Minecraft 使用指南](docs/scenarios/game/minecraft/1_hello.md) | 使用者 | CLI 控制、动作空间、踩坑记录 |
+| [Minecraft Agent 闭环](docs/scenarios/game/minecraft/2_agent_loop.md) | 开发者 | Agent→Watchdog 完整执行链路 |
+| [Minecraft 自进化](docs/scenarios/game/minecraft/3_self_evo.md) | 开发者 | 三层分层记忆 + 9 步反思闭环 |
 
 ---
 

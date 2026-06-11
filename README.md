@@ -10,7 +10,7 @@
   </p>
 
   <p>
-    <img src="https://img.shields.io/badge/version-v0.0.3-blue" alt="Version">
+    <img src="https://img.shields.io/badge/version-v0.0.5-blue" alt="Version">
     <img src="https://img.shields.io/badge/python-≥3.11-3776AB?logo=python&logoColor=white" alt="Python">
     <img src="https://img.shields.io/badge/license-MIT-3DA639" alt="License">
     <a href="https://github.com/PhyAgentOS/PhyAgentOS">
@@ -32,12 +32,15 @@
 
 | Version | Date | Update |
 |:------|:-----|:-------|
+| ![v0.0.5](https://img.shields.io/badge/v0.0.5-47A882) | 2026-06-12 | Hierarchical memory system (Hermes mechanism): LESSONS.md filtering, MEMORY.md refinement, auto-skill from experience |
 | ![v0.0.4](https://img.shields.io/badge/v0.0.4-47A882) | 2026-06-12 | Self-evolution with self-reflection: complete complex tasks in unknown scenarios and summarize experience |
 | ![v0.0.3](https://img.shields.io/badge/v0.0.3-11648A) | 2026-06-11 | Integrated as Agent Loop, supporting complex task completion |
 | ![v0.0.2](https://img.shields.io/badge/v0.0.2-11648A) | 2026-05-29 | Minecraft pipeline optimization: issue commands from terminal and in-game chat |
 | ![v0.0.1](https://img.shields.io/badge/v0.0.1-11648A) | 2026-05-29 | Minecraft ready: cloud Agent connects to user's local Minecraft server |
 
 > **v0.0.3 note**: PhyAgentOS-G is rebuilt from [PhyAgentOS main branch v0.1.4](https://github.com/PhyAgentOS/PhyAgentOS). The Session-Centered Runtime core is retained, and the project is now focused on game agent behavior research. Versioning starts from 0.0.x to track the Game Agent branch independently.
+
+> **v0.0.5 new features**: Hierarchical 3-tier memory system (inspired by Hermes). Episodic tier — LESSONS.md ≤25 entries rule-based filtering. Semantic tier — MEMORY.md ≤4000 chars hard limit triggers LLM compaction. Methodological tier — ≥2 successful verifications trigger agent to auto-create reusable skills via skill-creator. Full 9-step Reflection loop: Plan → Wait → Check → Reflect → Learn → Retry → Escalate → Abstract → Convert to Skill.
 
 ---
 
@@ -99,11 +102,21 @@ By moving embodied intelligence learning and validation into game environments, 
   <td><b>Multi-Layer Safety</b></td>
   <td>Critic validation → Preflight contract checks → Target-side SafetyGuard</td>
 </tr>
-<tr>
-  <td>🎮</td>
-  <td><b>Game Agent CLI</b></td>
-  <td><code>paos minecraft</code> direct control of Minecraft bot, 16 action types supported</td>
-</tr>
+  <tr>
+    <td>🎮</td>
+    <td><b>Game Agent CLI</b></td>
+    <td><code>paos minecraft</code> direct control of Minecraft bot, 16 action types supported</td>
+  </tr>
+  <tr>
+    <td>🧠</td>
+    <td><b>3-Tier Hierarchical Memory</b></td>
+    <td>Episodic tier LESSONS.md ≤25 filtering + Semantic tier MEMORY.md ≤4000 chars LLM compaction + Methodological tier skills/ auto-deposition</td>
+  </tr>
+  <tr>
+    <td>🔄</td>
+    <td><b>9-Step Reflection Loop</b></td>
+    <td>Plan→Wait→Check→Reflect→Learn→Retry→Escalate→Abstract→Convert to Skill, experience auto-converted to reusable agent skills</td>
+  </tr>
 </table>
 
 ---
@@ -191,15 +204,16 @@ paos agent "Come to me"
 | Always loaded into the agent system prompt | `AGENTS.md` / `SOUL.md` / `USER.md` | Agent workspace | Agent operating rules, identity, user preferences |
 | Always loaded into the agent system prompt | `TOOLS.md` | Agent workspace | Tool usage policy and available tool guidance |
 | Always loaded into the agent system prompt | `SKILLS.md` | Agent workspace | Agent-facing skill discovery and loading rules |
+| Always loaded into the agent system prompt | `memory/MEMORY.md` | Agent workspace | Long-term memory; Agent writes abstract principles; ≤4000 chars hard limit triggers LLM compaction |
 | Loaded when present; filtered by enabled runtime targets | `EMBODIED.md` | Agent workspace | Human-readable target capability descriptions |
 | Loaded when present as state | `ENVIRONMENT.md` | Agent/runtime workspace | Current target, scene, and environment state |
-| Loaded when present as memory/state | `LESSONS.md` | Agent workspace | Operational lessons and failure notes |
-| Loaded when present as task state | `TASK.md` | Agent workspace | Multi-step task decomposition and progress |
+| Loaded when present, ≤25 entries after filtering | `LESSONS.md` | Agent workspace | YAML-format operational lessons; dedup + recent 15 + succeeded entries prioritized |
 | Runtime protocol; read before scheduling sessions | `TARGETS.md` | Runtime workspace | Enabled targets, endpoint/adapter/config, supported skill runtimes |
 | Runtime protocol; read before scheduling sessions | `SKILLRUNTIME.md` | Runtime workspace | Policy/builtin skill runtime registry and execution contracts |
 | Runtime queue/state; written by Agent and watchdog | `SESSIONS.md` | Runtime workspace | Pending/running/completed sessions and results |
+| Written by watchdog (not injected into prompt) | `memory/HISTORY.md` | Agent workspace | Session completion timeline + MEMORY refinement events; Agent grep-on-demand |
 
-`SKILLS.md` is for Agent capabilities and skill discovery. `SKILLRUNTIME.md` is for runtime execution contracts, paired with `TARGETS.md` and `SESSIONS.md`.
+`SKILLS.md` is for Agent capabilities and skill discovery. `SKILLRUNTIME.md` is for runtime execution contracts. `memory/MEMORY.md` + `HISTORY.md` form the long-term memory system, `skills/<name>/SKILL.md` provides reusable methodological guidance.
 
 ---
 
@@ -271,8 +285,10 @@ PhyAgentOS-G/
 | [Framework Introduction](docs/en/01-framework-introduction.md) | Everyone | Design philosophy, architecture, progress, roadmap |
 | [User Manual](docs/en/02-user-manual.md) | Users | Installation, game/simulation scenarios, troubleshooting |
 | [Developer Manual](docs/en/03-developer-manual.md) | Developers | API reference, Target/Adapter/Skill development, coding style |
-| [Minecraft Deployment Guide](docs/scenarios/game/minecraft/en/deployment.md) | Users | Windows bridge + Linux Agent complete deployment |
-| [Minecraft Usage Guide](docs/scenarios/game/minecraft/en/usage.md) | Users | CLI control, chat listener, troubleshooting |
+| [Minecraft Deployment Guide](docs/scenarios/game/minecraft/0_start.md) | Users | Windows bridge + Linux Agent complete deployment |
+| [Minecraft Usage Guide](docs/scenarios/game/minecraft/1_hello.md) | Users | CLI control, action space, troubleshooting |
+| [Minecraft Agent Loop](docs/scenarios/game/minecraft/2_agent_loop.md) | Developers | Agent→Watchdog execution pipeline |
+| [Minecraft Self-Evolution](docs/scenarios/game/minecraft/3_self_evo.md) | Developers | 3-tier hierarchical memory + 9-step reflection loop |
 
 ---
 
