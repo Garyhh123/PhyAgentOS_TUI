@@ -144,6 +144,7 @@ node bridge_server.js
 ```
 [bridge] Bot spawned: paos
 [bridge] HTTP API listening on port 3001
+[bridge] 3D viewer (first-person) on http://localhost:3007
 ```
 
 Bot 生成后会自动传送到你身边（无需 OP，直接移动实体坐标）。

@@ -168,6 +168,7 @@ $env:MC_PORT="25565"
 $env:BOT_NAME="paos"
 $env:MC_VERSION="1.20.4"
 $env:API_PORT="3001"
+$env:VIEWER_PORT="3007"
 node bridge_server.js
 ```
 
@@ -175,6 +176,7 @@ node bridge_server.js
 ```
 [bridge] Bot spawned: paos
 [bridge] HTTP API listening on port 3001
+[bridge] 3D viewer (first-person) on http://localhost:3007
 ```
 
 Bot 生成后会自动传送到你身边（无需 OP，直接移动实体坐标）。
