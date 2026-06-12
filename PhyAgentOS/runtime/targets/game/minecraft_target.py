@@ -267,6 +267,43 @@ class MinecraftTarget(BaseLocalTarget):
             logger.warning("inventory query failed: %s", exc)
             return {"ok": False, "error": str(exc), "by_name": {}, "slots": [], "total_unique": 0}
 
+    def best_tool_query(self, block_name: str) -> dict[str, Any]:
+        """Query the best harvest tool for a block via the bridge data endpoint.
+
+        Returns dict with: ok, block, best_tool, held_tool, has_tool.
+        Falls back to built-in block→tool mapping if bridge unavailable.
+        """
+        client = self._get_http()
+        try:
+            resp = client.get(
+                f"{self._bridge_url}/best-tool",
+                params={"block": block_name},
+                timeout=5.0,
+            )
+            return resp.json()
+        except Exception as exc:
+            logger.warning("best-tool query failed (%s): %s, using built-in map", block_name, exc)
+            return self._fallback_best_tool(block_name)
+
+    @staticmethod
+    def _fallback_best_tool(block_name: str) -> dict[str, Any]:
+        """Built-in block→tool mapping — decoupled from bridge, runs offline."""
+        tool_map = {
+            "stone": "wooden_pickaxe", "cobblestone": "wooden_pickaxe",
+            "granite": "wooden_pickaxe", "diorite": "wooden_pickaxe", "andesite": "wooden_pickaxe",
+            "iron_ore": "stone_pickaxe", "gold_ore": "iron_pickaxe",
+            "coal_ore": "wooden_pickaxe", "diamond_ore": "iron_pickaxe",
+            "oak_log": "wooden_axe", "spruce_log": "wooden_axe",
+            "birch_log": "wooden_axe", "jungle_log": "wooden_axe",
+            "dark_oak_log": "wooden_axe", "acacia_log": "wooden_axe",
+            "oak_planks": "wooden_axe", "spruce_planks": "wooden_axe",
+            "dirt": "wooden_shovel", "grass_block": "wooden_shovel",
+            "sand": "wooden_shovel", "gravel": "wooden_shovel", "snow": "wooden_shovel",
+            "cobweb": "wooden_sword",
+        }
+        best = tool_map.get(block_name)
+        return {"ok": True, "block": block_name, "best_tool": best, "held_tool": None, "has_tool": None, "source": "builtin"}
+
     def _check_done(self) -> bool:
         return False
 

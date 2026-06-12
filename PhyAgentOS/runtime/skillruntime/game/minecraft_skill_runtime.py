@@ -3,12 +3,16 @@
 Supports two execution modes:
   1. TaskPlan mode (hierarchical): subgoals with pre/post checks and retry.
   2. Flat action plan mode (backward compatible): sequential action list.
+
+Supports interrupt: set the `_cancelled` event or call `cancel()` to
+gracefully stop execution between tasks/subgoals.
 """
 
 from __future__ import annotations
 
 import logging
 import math
+import threading
 import time
 from typing import Any
 
@@ -21,22 +25,48 @@ from PhyAgentOS.runtime.watchdog.errors import SessionTimeoutError
 logger = logging.getLogger(__name__)
 
 
+class InterruptedError(Exception):
+    """Raised when a running session is interrupted by user command."""
+
+    def __init__(self, reason: str = "interrupted"):
+        super().__init__(reason)
+        self.reason = reason
+
+
 class MinecraftSkillRuntime(BaseSkillRuntime):
     """Execute a Minecraft episode: TaskPlan → verify → execute → verify.
 
     Falls back to flat action-list execution if no TaskPlan is provided.
+
+    Set `runtime._cancelled` (a threading.Event) or call `runtime.cancel()`
+    to interrupt the current session gracefully.
     """
 
     runtime_kind = "builtin"
 
-    def start(self, skill_ctx) -> None:
-        pass
+    def __init__(self):
+        super().__init__()
+        self._cancelled = threading.Event()
+        self._target = None
 
-    def cancel(self, skill_ctx, reason: str) -> None:
-        pass
+    def start(self, skill_ctx) -> None:
+        self._cancelled.clear()
+
+    def cancel(self, skill_ctx=None, reason: str = "interrupted") -> None:
+        self._cancelled.set()
+        logger.info("session cancelled: %s", reason)
+        if self._target and hasattr(self._target, "cancel"):
+            try:
+                self._target.cancel(reason)
+            except Exception:
+                pass
 
     def snapshot(self, skill_ctx) -> dict:
-        return {"status": "idle"}
+        return {"status": "cancelled" if self._cancelled.is_set() else "idle"}
+
+    def _check_cancel(self) -> None:
+        if self._cancelled.is_set():
+            raise InterruptedError("session interrupted by user")
 
     # ── Main entry point ────────────────────────────────────────────
 
@@ -50,6 +80,8 @@ class MinecraftSkillRuntime(BaseSkillRuntime):
         policy_client,
         adapter_plan: AdapterPlan,
     ) -> SessionResult:
+        self._cancelled.clear()
+        self._target = target
         target.build()
         session_ctx = session.model_dump(mode="json")
         session_ctx["adapter_plan"] = adapter_plan.model_dump(mode="json")
@@ -94,6 +126,7 @@ class MinecraftSkillRuntime(BaseSkillRuntime):
         failed_subgoals: list[str] = []
 
         for sg in plan.subgoals:
+            self._check_cancel()
             if time.monotonic() - start_time > timeout_s:
                 raise SessionTimeoutError(f"session {session.session_id} exceeded {timeout_s}s")
 
@@ -121,6 +154,7 @@ class MinecraftSkillRuntime(BaseSkillRuntime):
 
             logger.info("subgoal: %s (%d tasks)", sg.name, len(sg.tasks))
             for task in sg.tasks:
+                self._check_cancel()
                 if time.monotonic() - start_time > timeout_s:
                     raise SessionTimeoutError(f"session {session.session_id} exceeded {timeout_s}s")
                 if num_steps >= max_steps:
@@ -131,6 +165,7 @@ class MinecraftSkillRuntime(BaseSkillRuntime):
                 task.attempts = 0
 
                 for attempt in range(task.max_retries):
+                    self._check_cancel()
                     task.attempts = attempt + 1
 
                     # Refresh + verify preconditions
@@ -273,6 +308,7 @@ class MinecraftSkillRuntime(BaseSkillRuntime):
         timeout_s = session.timeouts.execute_timeout_s
 
         for step_idx in range(session.execution.max_steps):
+            self._check_cancel()
             if time.monotonic() - start_time > timeout_s:
                 raise SessionTimeoutError(
                     f"session {session.session_id} exceeded {timeout_s}s"
