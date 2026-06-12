@@ -67,8 +67,10 @@ class MinecraftTarget(BaseLocalTarget):
         if self._http is None:
             import httpx
             verify = self.config.get("verify_ssl", True)
+            # Default timeout covers state/health polling; actions override this
+            http_timeout = float(self.config.get("http_timeout", 15.0))
             headers = {"ngrok-skip-browser-warning": "true"}
-            self._http = httpx.Client(timeout=10.0, verify=verify, headers=headers)
+            self._http = httpx.Client(timeout=http_timeout, verify=verify, headers=headers)
         return self._http
 
     def build(self) -> None:
@@ -198,29 +200,72 @@ class MinecraftTarget(BaseLocalTarget):
         obs = self.observe()
         done = self._check_done()
         action_ok = result.get("ok", False)
+        info = {
+            "ok": action_ok,
+            "step_idx": self._step_idx,
+            "result": result.get("result", ""),
+            "action_type": action_type,
+        }
+        # Forward enriched feedback from bridge (block, position, dist_to_goal, goal)
+        for key in ("block", "position", "dist_to_goal", "goal"):
+            val = result.get(key)
+            if val is not None:
+                info[key] = val
         return {
             "obs": obs,
             "reward": 0.0,
             "done": done,
-            "info": {
-                "ok": action_ok,
-                "step_idx": self._step_idx,
-                "result": result.get("result", ""),
-                "action_type": action_type,
-            },
+            "info": info,
         }
 
     def _post_action(self, action_type: str, params: dict[str, Any]) -> dict[str, Any]:
         client = self._get_http()
+        # Action may take up to ACTION_TIMEOUT_MS (default 20s) + queue delay
+        action_timeout = float(self.config.get("action_timeout", 60.0))
         try:
             resp = client.post(
                 f"{self._bridge_url}/action",
                 json={"type": action_type, "params": params},
+                timeout=action_timeout,
             )
             return resp.json()
         except Exception as exc:
-            logger.warning("action post failed: %s", exc)
+            logger.warning("action post failed (type=%s): %s", action_type, exc)
             return {"ok": False, "result": str(exc)}
+
+    def block_query(self, x: int, y: int, z: int) -> dict[str, Any] | None:
+        """Query a specific block at world coordinates (x, y, z).
+
+        Returns the block dict or None if not found / air.
+        Uses GET /block?x=&y=&z= endpoint on the bridge.
+        """
+        client = self._get_http()
+        try:
+            resp = client.get(
+                f"{self._bridge_url}/block",
+                params={"x": x, "y": y, "z": z},
+                timeout=5.0,
+            )
+            data = resp.json()
+            if data.get("ok") and data.get("block"):
+                return data["block"]
+            return None
+        except Exception as exc:
+            logger.warning("block query failed (%d,%d,%d): %s", x, y, z, exc)
+            return None
+
+    def inventory_query(self) -> dict[str, Any]:
+        """Query full bot inventory via GET /inventory on the bridge.
+
+        Returns dict with keys: ok, slots (list), by_name (dict: name→count), total_unique.
+        """
+        client = self._get_http()
+        try:
+            resp = client.get(f"{self._bridge_url}/inventory", timeout=5.0)
+            return resp.json()
+        except Exception as exc:
+            logger.warning("inventory query failed: %s", exc)
+            return {"ok": False, "error": str(exc), "by_name": {}, "slots": [], "total_unique": 0}
 
     def _check_done(self) -> bool:
         return False

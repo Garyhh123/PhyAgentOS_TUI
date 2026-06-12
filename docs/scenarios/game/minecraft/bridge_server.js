@@ -171,13 +171,13 @@ function executeAction(action) {
                 case 'sprint': bot.setControlState('sprint', p.start !== false); resolve({ ok: true, result: 'ok' }); break;
                 case 'dig': {
                     const Vec3 = bot.entity.position.constructor;
-                    const b = bot.blockAt(new Vec3(parseInt(p.x), parseInt(p.y), parseInt(p.z)));
+                    const b = bot.blockAt(new Vec3(Math.floor(p.x), Math.floor(p.y), Math.floor(p.z)));
                     if (!b || b.name === 'air') return resolve({ ok: false, result: 'no block' });
                     bot.dig(b, (e) => resolve(e ? { ok: false, result: e.message } : { ok: true, result: `dug ${b.name}` })); break;
                 }
                 case 'place': {
                     const Vec3 = bot.entity.position.constructor;
-                    const rb = bot.blockAt(new Vec3(parseInt(p.x), parseInt(p.y), parseInt(p.z)));
+                    const rb = bot.blockAt(new Vec3(Math.floor(p.x), Math.floor(p.y), Math.floor(p.z)));
                     if (!rb) return resolve({ ok: false, result: 'no reference block' });
                     const fv = [{ x: 0, y: -1, z: 0 }, { x: 0, y: 1, z: 0 }, { x: 0, y: 0, z: -1 }, { x: 0, y: 0, z: 1 }, { x: -1, y: 0, z: 0 }, { x: 1, y: 0, z: 0 }];
                     bot.placeBlock(rb, fv[parseInt(p.face) || 1], (e) => resolve(e ? { ok: false, result: e.message } : { ok: true, result: 'placed' })); break;

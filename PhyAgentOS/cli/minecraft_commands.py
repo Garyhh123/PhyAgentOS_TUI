@@ -15,25 +15,71 @@ console = Console()
 minecraft_app = typer.Typer(help="Minecraft game agent demo")
 
 _MC_SYSTEM_PROMPT = (
-    "你是 Minecraft 机器人控制器。将用户指令转为 JSON 动作列表。\n"
-    "可用动作: move/look/jump/sneak/sprint/chat/collect/"
-    "dig/place/attack/interact/use/select_slot/drop/equip/craft.\n"
-    "move 参数: {forward: N} — N 步沿面朝方向前进（负值后退），或 {target: \"player\"/\"pig\"/...} 追踪实体\n"
-    "look 参数: {yaw, pitch} — 角度制。0=南 90=西 180=北 -90=东\n"
-    "jump 参数: {}\n"
-    "chat 参数: {message}\n"
-    "dig 参数: {x, y, z} — 需要绝对坐标。不知道坐标时不要用 dig\n"
-    "place 参数: {x, y, z, face} — face: 0=下 1=上 2=北 3=南 4=西 5=东\n"
-    "select_slot 参数: {slot: 0-8}\n"
-    "collect 参数: {block_type, count} — 自动寻找并采集。采集方块请用 collect，不要用 dig\n"
-    "只返回 JSON 数组。示例:\n"
-    '[{"type":"chat","params":{"message":"收到"}},'
-    '{"type":"collect","params":{"block_type":"oak_log","count":5}}]\n'
-    "后退3步: [{\"type\":\"move\",\"params\":{\"forward\":-3}}]\n"
-    "右转走3步: [{\"type\":\"look\",\"params\":{\"yaw\":-90}},"
-    '{"type":"move","params":{"forward":3}}]\n'
-    "赴约: [{\"type\":\"move\",\"params\":{\"target\":\"player\"}},"
-    '{"type":"chat","params":{"message":"我来了"}}]'
+    "你是 Minecraft 机器人控制器。将用户指令转为层级化任务计划 JSON。\n\n"
+    "## 输出格式：TaskPlan\n"
+    "{\n"
+    '  "goal": "任务描述",\n'
+    '  "subgoals": [{\n'
+    '    "id": "唯一ID",\n'
+    '    "name": "子目标名",\n'
+    '    "depends_on": ["依赖的子目标ID"],\n'
+    '    "precheck": ["前置条件断言"],\n'
+    '    "postcheck": ["后验证断言"],\n'
+    '    "tasks": [{\n'
+    '      "id": "唯一ID",\n'
+    '      "name": "任务名",\n'
+    '      "preconditions": ["断言列表"],\n'
+    '      "actions": [{"type":"动作类型","params":{}}],\n'
+    '      "verify": ["断言列表"],\n'
+    '      "on_fail": "retry|skip|abort",\n'
+    '      "max_retries": 3\n'
+    '    }]\n'
+    '  }]\n'
+    "}\n\n"
+    "## 可用动作\n"
+    "move: {forward:N} 沿面朝方向走N步（负值后退）\n"
+    "   或 {dx,dy,dz,absolute:true} 走到绝对坐标\n"
+    "   或 {target:\"player\"/\"pig\"/...} 追踪实体\n"
+    "look: {yaw,pitch} 角度制（0=南 90=西 180=北 -90=东）\n"
+    "jump: {} 跳跃\n"
+    "chat: {message} 在游戏里说话\n"
+    "dig: {x,y,z} 挖绝对坐标的方块\n"
+    "place: {x,y,z,face} 面编号0=下1=上2=北3=南4=西5=东\n"
+    "collect: {block_type,count} 自动寻找并采集\n"
+    "craft: {recipe_id,count} 合成（需附近有工作台）\n"
+    "select_slot: {slot:0-8} 切换快捷键\n"
+    "equip: {item,destination:\"hand\"|\"torso\"|...} 装备物品\n"
+    "drop: {slot} 丢弃物品\n"
+    "attack: {entity_id} 或 {target_type} 攻击实体\n"
+    "interact: {entity_id} 与实体交互\n"
+    "use: {} 使用手持物品\n"
+    "sneak: {start:true|false}\n"
+    "sprint: {start:true|false}\n\n"
+    "## 断言格式（precheck/preconditions/verify/postcheck）\n"
+    "has_item:物品名        — 背包里至少有1个\n"
+    "has_item:物品名×N      — 背包里至少有N个\n"
+    "block_at:x,y,z,物品名  — 指定坐标有指定方块\n"
+    "block_at:x,y,z        — 指定坐标有非空气方块\n"
+    "block_near:物品名,距离  — 附近指定距离内存在该方块\n"
+    "bot_near:x,y,z,距离    — bot在坐标附近指定距离内\n\n"
+    "## 规则\n"
+    "1. 子目标按依赖顺序排列（depends_on 引用前置子目标ID）\n"
+    "2. 每个能独立完成的操作拆为独立子目标\n"
+    "3. 涉及坐标时：已知用绝对坐标，未知用相对目标（如 collect 不需要坐标）\n"
+    "4. 放置方块前必须确保 bot 已走到目标旁（用 bot_near 做 precheck）\n"
+    "5. 挖/放方块后用 block_at 做 verify\n"
+    "6. 合成物品前必须验证材料足够（用 has_item 做 precheck）\n"
+    "7. on_fail: 可重试用 retry，无解用 skip，致命用 abort\n"
+    "8. 只返回 JSON，不要额外文字\n\n"
+    '## 示例：建造工作台\n'
+    '{"goal":"建造工作台","subgoals":[{"id":"sg1","name":"走到空地","tasks":['
+    '{"id":"t1","name":"向前走5步","preconditions":[],'
+    '"actions":[{"type":"move","params":{"forward":5}}],"verify":["bot_near:0,65,0,3"],'
+    '"on_fail":"retry","max_retries":2}]},{"id":"sg2","name":"放置工作台",'
+    '"depends_on":["sg1"],"precheck":["has_item:crafting_table"],'
+    '"tasks":[{"id":"t2","name":"放工作台在地面","preconditions":["bot_near:0,64,0,3"],'
+    '"actions":[{"type":"place","params":{"x":0,"y":64,"z":0,"face":1}}],'
+    '"verify":["block_at:0,65,0,crafting_table"],"on_fail":"retry","max_retries":3}]}]}'
 )
 
 
@@ -62,6 +108,7 @@ def minecraft_say(
 
     raw = asyncio.run(_ask())
 
+    # Parse LLM output: could be TaskPlan or flat action list
     try:
         if "```" in raw:
             plan_raw = raw.split("```")[1]
@@ -70,15 +117,30 @@ def minecraft_say(
             plan = json.loads(plan_raw)
         else:
             plan = json.loads(raw)
-        if not isinstance(plan, list):
-            raise ValueError("not a list")
     except Exception:
         console.print(f"[red]LLM 返回格式错误: {raw[:200]}[/red]")
         raise typer.Exit(1)
 
-    console.print(f"[dim]-> 生成 {len(plan)} 步动作[/dim]")
-    for i, a in enumerate(plan):
-        console.print(f"  {i+1}. {a['type']}: {a.get('params', {})}")
+    is_task_plan = isinstance(plan, dict) and "subgoals" in plan
+    if is_task_plan:
+        subgoal_count = len(plan.get("subgoals", []))
+        total_tasks = sum(len(sg.get("tasks", [])) for sg in plan.get("subgoals", []))
+        console.print(f"[dim]-> 生成任务计划: {subgoal_count} 子目标, {total_tasks} 任务[/dim]")
+        for sg in plan.get("subgoals", []):
+            deps = f" (依赖: {','.join(sg.get('depends_on',[]))})" if sg.get("depends_on") else ""
+            console.print(f"  [{sg.get('id','?')}] {sg.get('name','?')}{deps}")
+            for t in sg.get("tasks", []):
+                acts = ", ".join(f"{a['type']}: {a.get('params',{})}" for a in t.get("actions", []))
+                console.print(f"    ├─ {t.get('name','?')}: {acts}")
+        # Wrap TaskPlan as single-element queries list for backward compat
+        action_plan = [plan]
+    else:
+        if not isinstance(plan, list):
+            raise ValueError("not a list or TaskPlan")
+        console.print(f"[dim]-> 生成 {len(plan)} 步动作[/dim]")
+        for i, a in enumerate(plan):
+            console.print(f"  {i+1}. {a['type']}: {a.get('params', {})}")
+        action_plan = plan
 
     from PhyAgentOS.runtime.schemas import SessionSpec, AdapterPlan
     from PhyAgentOS.runtime.skillruntime.game.minecraft_skill_runtime import MinecraftSkillRuntime
@@ -86,13 +148,23 @@ def minecraft_say(
     from PhyAgentOS.runtime.targets.game.minecraft_target import MinecraftTarget
 
     target = MinecraftTarget({"bridge_url": bridge_url, "verify_ssl": False})
+    # For TaskPlan, estimate steps from total actions; for flat list, use list length
+    if is_task_plan:
+        total_actions = sum(
+            len(t.get("actions", []))
+            for sg in plan.get("subgoals", [])
+            for t in sg.get("tasks", [])
+        )
+        max_steps = total_actions * 3 + 10  # buffer for retries
+    else:
+        max_steps = len(action_plan) + 5
     session = SessionSpec(
         session_id=f"sess_cli_{os.urandom(3).hex()}",
         target_ref="target://minecraft_java_env",
         skillruntime_ref="skillruntime://minecraft_navigate",
         task_description=instruction,
-        execution={"max_steps": len(plan) + 5},
-        runtime_hints={"perception_queries": plan},
+        execution={"max_steps": max_steps},
+        runtime_hints={"perception_queries": action_plan},
     )
 
     console.print()
@@ -206,23 +278,40 @@ def minecraft_listen(
                         plan = json.loads(plan_raw)
                     else:
                         plan = json.loads(raw)
-                    if not isinstance(plan, list):
-                        raise ValueError("not a list")
+
+                    is_task_plan = isinstance(plan, dict) and "subgoals" in plan
+                    if is_task_plan:
+                        subgoal_count = len(plan.get("subgoals", []))
+                        total_tasks = sum(len(sg.get("tasks", [])) for sg in plan.get("subgoals", []))
+                        console.print(f"  → 任务计划: {subgoal_count} 子目标, {total_tasks} 任务")
+                        for sg in plan.get("subgoals", []):
+                            console.print(f"    [{sg.get('id','?')}] {sg.get('name','?')}")
+                        action_plan = [plan]
+                        total_actions = sum(
+                            len(t.get("actions", []))
+                            for sg in plan.get("subgoals", [])
+                            for t in sg.get("tasks", [])
+                        )
+                        max_steps = total_actions * 3 + 10
+                    else:
+                        if not isinstance(plan, list):
+                            raise ValueError("not a list or TaskPlan")
+                        console.print(f"  → 生成 {len(plan)} 步动作")
+                        for i, a in enumerate(plan):
+                            console.print(f"    {i+1}. {a['type']}: {a.get('params', {})}")
+                        action_plan = plan
+                        max_steps = len(plan) + 5
                 except Exception:
                     console.print(f"[red]LLM 返回格式错误: {raw[:200]}[/red]")
                     continue
-
-                console.print(f"  → 生成 {len(plan)} 步动作")
-                for i, a in enumerate(plan):
-                    console.print(f"    {i+1}. {a['type']}: {a.get('params', {})}")
 
                 session = SessionSpec(
                     session_id=f"sess_chat_{os.urandom(3).hex()}",
                     target_ref="target://minecraft_java_env",
                     skillruntime_ref="skillruntime://minecraft_navigate",
                     task_description=instruction,
-                    execution={"max_steps": len(plan) + 5},
-                    runtime_hints={"perception_queries": plan},
+                    execution={"max_steps": max_steps},
+                    runtime_hints={"perception_queries": action_plan},
                 )
                 try:
                     result = MinecraftSkillRuntime().run(

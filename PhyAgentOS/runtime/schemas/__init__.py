@@ -8,7 +8,11 @@ from PhyAgentOS.runtime.schemas.perception import (
     EnvironmentObjectSource,
     PerceptionConfigDocument,
 )
-from PhyAgentOS.runtime.schemas.preflight import MissingItem, RuntimeCompatibilityPreflightResult, TargetToolManifest
+from PhyAgentOS.runtime.schemas.preflight import (
+    MissingItem,
+    RuntimeCompatibilityPreflightResult,
+    TargetToolManifest,
+)
 from PhyAgentOS.runtime.schemas.result import SessionResult
 from PhyAgentOS.runtime.schemas.runtime_contract import (
     ActionChunkSpec,
@@ -32,21 +36,28 @@ from PhyAgentOS.runtime.schemas.skillruntime import (
     SkillObservationContract,
     SkillPolicySpec,
     SkillRequirements,
-    SkillRuntimeSpec,
     SkillRuntimeDocument,
+    SkillRuntimeSpec,
     TargetToolPolicy,
 )
 from PhyAgentOS.runtime.schemas.target import (
     TargetObservationContract,
     TargetPerceptionRefs,
     TargetRuntimeSpec,
-    TargetSpec,
     TargetsDocument,
+    TargetSpec,
+)
+from PhyAgentOS.runtime.schemas.task_plan import (
+    ActionSpec,
+    SubGoal,
+    TaskNode,
+    TaskPlan,
 )
 
 __all__ = [
     "ActionChunkSpec",
     "ActionComponentSpec",
+    "ActionSpec",
     "AdapterPlan",
     "SessionExecution",
     "EnvironmentDelta",
@@ -71,15 +82,18 @@ __all__ = [
     "SkillRequirements",
     "SkillRuntimeSpec",
     "SkillRuntimeDocument",
+    "SubGoal",
     "TargetActionContract",
     "TargetObservationContract",
     "TargetPerceptionRefs",
     "TargetRuntimeContractDocument",
     "TargetRuntimeSpec",
     "TargetSpec",
+    "TargetsDocument",
     "TargetToolManifest",
     "TargetToolPolicy",
-    "TargetsDocument",
+    "TaskNode",
+    "TaskPlan",
     "SkillObservationContract",
     "SkillPolicySpec",
 ]
