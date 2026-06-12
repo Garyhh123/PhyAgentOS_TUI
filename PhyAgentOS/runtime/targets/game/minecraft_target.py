@@ -21,7 +21,7 @@ from typing import Any
 
 import numpy as np
 
-from PhyAgentOS.runtime.targets.local.base import BaseLocalTarget
+from PhyAgentOS.runtime.targets.game.base import BaseGameTarget
 from PhyAgentOS.runtime.watchdog.errors import (
     TargetConnectionError,
     TargetResetError,
@@ -30,14 +30,14 @@ from PhyAgentOS.runtime.watchdog.errors import (
 
 logger = logging.getLogger(__name__)
 
-VALID_ACTION_TYPES = frozenset({
+FALLBACK_ACTION_TYPES = frozenset({
     "move", "look", "jump", "sneak", "sprint", "attack",
     "interact", "place", "dig", "use", "select_slot", "drop",
     "chat", "collect", "equip", "craft",
 })
 
 
-class MinecraftTarget(BaseLocalTarget):
+class MinecraftTarget(BaseGameTarget):
     """Remote target connected to a mineflayer bridge running on the game machine.
 
     The bridge (``game/mc-bridge/bridge_server.js``) runs on the Windows
@@ -45,6 +45,10 @@ class MinecraftTarget(BaseLocalTarget):
     the local Minecraft world and exposes an HTTP API.  This target talks
     to the bridge over HTTP (typically via an ngrok tunnel).
     """
+
+    @property
+    def _current_action_types(self) -> frozenset:
+        return getattr(self, "_valid_action_types", FALLBACK_ACTION_TYPES)
 
     def __init__(self, config: dict[str, Any] | None = None):
         self.config = dict(config or {})
@@ -62,6 +66,13 @@ class MinecraftTarget(BaseLocalTarget):
         self._step_idx: int = 0
         self._step_delay: float = float(self.config.get("step_delay", 0.1))
         self._last_status: dict[str, Any] = {"status": "idle"}
+        self._valid_action_types = FALLBACK_ACTION_TYPES
+
+    def _game_type(self) -> str:
+        return "minecraft_java_bot"
+
+    def reset_step_counter(self) -> None:
+        self._step_idx = 0
 
     def _get_http(self):
         if self._http is None:
@@ -95,6 +106,12 @@ class MinecraftTarget(BaseLocalTarget):
                 f"mineflayer bot not spawned at {bridge_url}. "
                 "Wait for bridge to finish connecting."
             )
+
+        # Dynamic action types from bridge capabilities
+        caps = data.get("capabilities") or data.get("actions")
+        if isinstance(caps, list) and caps:
+            self._valid_action_types = frozenset(caps)
+            logger.info("Loaded %d action types from bridge", len(caps))
 
         self._built = True
         logger.info("MinecraftTarget connected to bridge at %s", bridge_url)
@@ -186,7 +203,7 @@ class MinecraftTarget(BaseLocalTarget):
         else:
             raise TargetStepError(f"action must be a dict, got {type(action).__name__}")
 
-        if action_type not in VALID_ACTION_TYPES:
+        if action_type not in self._current_action_types:
             raise TargetStepError(f"unknown action type: {action_type}")
 
         result = self._post_action(action_type, params)
@@ -307,39 +324,9 @@ class MinecraftTarget(BaseLocalTarget):
     def _check_done(self) -> bool:
         return False
 
-    def describe(self) -> dict[str, Any]:
-        return {"type": "minecraft_java_bot", "actions": sorted(VALID_ACTION_TYPES)}
-
-    def configure_session(self, session_ctx: dict[str, Any]) -> dict[str, Any]:
-        return {"configured": True, "session_id": session_ctx.get("session_id")}
-
-    def start_session(self, session_ctx: dict[str, Any]) -> dict[str, Any]:
-        self._step_idx = 0
-        return self.observe()
-
-    def action_chunk(self, executable_action_chunk: dict[str, Any]) -> dict[str, Any]:
-        actions = executable_action_chunk.get("actions", [executable_action_chunk])
-        if isinstance(actions, dict):
-            actions = [actions]
-        last = {"obs": self.observe(), "done": False, "info": {}}
-        for act in actions:
-            last = self.step(act)
-            if last.get("done"):
-                break
-        self._last_status = {
-            "executed_steps": self._step_idx,
-            "success": bool(last.get("info", {}).get("success")),
-            "done": bool(last.get("done")),
-        }
-        return self._last_status
-
-    def execution_status(self) -> dict[str, Any]:
-        return getattr(self, "_last_status", {"status": "idle"})
-
     def cancel(self, reason: str) -> None:
         logger.info("MinecraftTarget cancelled: %s", reason)
         self._last_status = {"status": "cancelled", "reason": reason}
-
 
     def close(self) -> None:
         if self._http is not None:

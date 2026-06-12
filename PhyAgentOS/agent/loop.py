@@ -51,6 +51,7 @@ class AgentLoop:
     """
 
     _TOOL_RESULT_MAX_CHARS = 16_000
+    _TOOL_RESULT_TAIL_CHARS = 4_000
 
     def __init__(
         self,
@@ -275,6 +276,35 @@ class AgentLoop:
 
         return final_content, tools_used, messages
 
+    async def _wait_for_runtime_signal(self) -> None:
+        """Poll the runtime signal file until a session completes or timeout.
+
+        When the Watchdog finishes a session, it writes RUNTIME_SIGNAL.md.
+        This avoids the blind 3-second sleep that wastes LLM tokens on
+        unnecessary polling of ENVIRONMENT.md.
+        """
+        if not self.context.runtime_enabled:
+            await asyncio.sleep(self.task_continue_cooldown_s)
+            return
+
+        from PhyAgentOS.runtime.watchdog.result_writer import ResultWriter
+
+        max_wait = 60.0
+        poll_interval = 1.0
+        elapsed = 0.0
+        workspace = self.context.runtime_workspace or self.workspace
+
+        while elapsed < max_wait:
+            signal = ResultWriter.read_runtime_signal(workspace)
+            if signal is not None:
+                logger.info("Runtime signal received: session=%s status=%s",
+                            signal.get("session_id"), signal.get("status"))
+                return
+            await asyncio.sleep(poll_interval)
+            elapsed += poll_interval
+
+        logger.info("Runtime signal wait timed out after %.0fs", max_wait)
+
     async def _run_persistent_task_loop(
         self,
         initial_messages: list[dict],
@@ -304,6 +334,9 @@ class AgentLoop:
                     continue_count,
                     self.max_task_continues,
                 )
+                # Wait for the Watchdog to finish any pending sessions
+                # by polling the signal file instead of blindly sleeping.
+                await self._wait_for_runtime_signal()
                 continue_prompt = (
                     "[Auto-continue] The previous iteration reached the tool-call limit "
                     f"({self.max_iterations} calls). Your task may not be finished. "
@@ -313,7 +346,6 @@ class AgentLoop:
                     "If it failed, reflect on why and try a different approach."
                 )
                 messages = self.context.add_system_continue(messages, continue_prompt)
-                await asyncio.sleep(self.task_continue_cooldown_s)
                 continue
 
             return final_content, all_tools_used, messages
@@ -541,22 +573,15 @@ class AgentLoop:
             entry = dict(m)
             role, content = entry.get("role"), entry.get("content")
             if role == "assistant" and not content and not entry.get("tool_calls"):
-                continue  # skip empty assistant messages — they poison session context
+                continue
             if role == "tool" and isinstance(content, str) and len(content) > self._TOOL_RESULT_MAX_CHARS:
-                entry["content"] = content[:self._TOOL_RESULT_MAX_CHARS] + "\n... (truncated)"
+                head = content[:self._TOOL_RESULT_MAX_CHARS - self._TOOL_RESULT_TAIL_CHARS]
+                tail = content[-self._TOOL_RESULT_TAIL_CHARS:]
+                entry["content"] = head + f"\n\n... ({len(content) - self._TOOL_RESULT_MAX_CHARS} chars truncated) ...\n\n" + tail
             elif role == "user":
-                if isinstance(content, str) and content.startswith(ContextBuilder._RUNTIME_CONTEXT_TAG):
-                    # Strip the runtime-context prefix, keep only the user text.
-                    parts = content.split("\n\n", 1)
-                    if len(parts) > 1 and parts[1].strip():
-                        entry["content"] = parts[1]
-                    else:
-                        continue
                 if isinstance(content, list):
                     filtered = []
                     for c in content:
-                        if c.get("type") == "text" and isinstance(c.get("text"), str) and c["text"].startswith(ContextBuilder._RUNTIME_CONTEXT_TAG):
-                            continue  # Strip runtime context from multimodal messages
                         if (c.get("type") == "image_url"
                                 and c.get("image_url", {}).get("url", "").startswith("data:image/")):
                             filtered.append({"type": "text", "text": "[image]"})

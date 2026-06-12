@@ -7,8 +7,19 @@ from typing import Any
 
 from PhyAgentOS.runtime.perception.config_resolver import ResolvedPerceptionPlan
 from PhyAgentOS.runtime.perception.perception_runtime import PerceptionRuntime
-from PhyAgentOS.runtime.schemas import AdapterPlan, SessionSpec, SkillRuntimeSpec, TargetSpec, TargetToolManifest
-from PhyAgentOS.runtime.sessions.models import EnvironmentRequest, EnvironmentSnapshot, RuntimeObservation, SessionState
+from PhyAgentOS.runtime.schemas import (
+    AdapterPlan,
+    SessionSpec,
+    SkillRuntimeSpec,
+    TargetSpec,
+    TargetToolManifest,
+)
+from PhyAgentOS.runtime.sessions.models import (
+    EnvironmentRequest,
+    EnvironmentSnapshot,
+    RuntimeObservation,
+    SessionState,
+)
 
 
 class TargetSessionHandle:
@@ -125,16 +136,28 @@ class TargetSessionHandle:
         )
 
     def _target_info(self) -> dict[str, Any]:
+        target_kind = self.target_spec.target_kind
         action_cfg = self.target_spec.config.get("action", {})
-        return {
+        info: dict[str, Any] = {
             **self.target_spec.config,
             "task_description": self.session.task_description,
             "step_index": self.session_state.step_index,
             "replan_every": self.session.execution.replan_every_steps or self.session.execution.replan_every,
-            "action_dim": self.target_spec.config.get("action_dim", action_cfg.get("action_dim", 7)),
-            "max_chunk_size": action_cfg.get(
-                "max_chunk_size",
-                self.target_spec.config.get("chunk_size", action_cfg.get("chunk_size", 4)),
-            ),
-            "action_contract_id": action_cfg.get("id", "dummy_delta_eef_gripper_v1"),
         }
+        # Physical-agent fields (sim / real_robot)
+        if target_kind in ("simulation", "real_robot"):
+            info.update({
+                "action_dim": self.target_spec.config.get("action_dim", action_cfg.get("action_dim", 7)),
+                "max_chunk_size": action_cfg.get(
+                    "max_chunk_size",
+                    self.target_spec.config.get("chunk_size", action_cfg.get("chunk_size", 4)),
+                ),
+                "action_contract_id": action_cfg.get("id", "dummy_delta_eef_gripper_v1"),
+            })
+        # Game-specific fields
+        if target_kind == "game":
+            info.update({
+                "action_contract_id": action_cfg.get("id") or f"game:{self.target_spec.embodiment or self.target_spec.id}",
+                "action_types": self.target_spec.config.get("action_types", []),
+            })
+        return info

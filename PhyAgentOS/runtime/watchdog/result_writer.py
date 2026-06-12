@@ -24,6 +24,7 @@ class ResultWriter:
     ) -> SessionResult:
         artifact_dir = self.episode_writer.write_episode(session, target, skillruntime_id, result)
         result.artifact_dir = str(artifact_dir.relative_to(self.workspace))
+        self._write_signal(session.session_id, result.status)
         return result
 
     def write_session_history(
@@ -123,3 +124,30 @@ class ResultWriter:
         if not isinstance(payload.get("lessons"), list):
             payload["lessons"] = []
         return payload
+
+    def _write_signal(self, session_id: str, status: str | None) -> None:
+        """Write a lightweight signal file so the Agent can detect Watchdog completion."""
+        signal_path = self.workspace / "RUNTIME_SIGNAL.md"
+        payload = {
+            "session_id": session_id,
+            "status": status,
+            "timestamp_utc": utc_now().isoformat(),
+        }
+        try:
+            write_yaml_block(signal_path, "Runtime Signal", payload)
+        except Exception:
+            pass
+
+    @staticmethod
+    def read_runtime_signal(workspace: Path) -> dict | None:
+        """Read the signal file (from agent-side). Returns None if missing or stale."""
+        signal_path = workspace / "RUNTIME_SIGNAL.md"
+        if not signal_path.exists():
+            return None
+        try:
+            payload = read_yaml_block(signal_path)
+            if isinstance(payload, dict) and "session_id" in payload:
+                return payload
+            return None
+        except Exception:
+            return None

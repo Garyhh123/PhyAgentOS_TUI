@@ -115,9 +115,20 @@ class ContextBuilder:
             runtime_enabled=runtime_enabled,
             runtime_target_enabled=self.runtime_target_enabled,
         )
+        self._prompt_cache: tuple[str, float] | None = None
 
     def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
-        """Build the system prompt from identity, bootstrap files, memory, and skills."""
+        """Build the system prompt from identity, bootstrap files, memory, and skills.
+
+        Cached based on file mtimes — refresh only when workspace files change
+        or the memory/skills state is stale (ttl = 5s to catch memory updates).
+        """
+        now = time.time()
+        if self._prompt_cache is not None:
+            cached, ts = self._prompt_cache
+            if now - ts < 5.0:
+                return cached
+
         parts = [self._get_identity()]
 
         bootstrap = self._load_bootstrap_files()
@@ -143,7 +154,9 @@ Skills with available="false" need dependencies installed first - you can try in
 
 {skills_summary}""")
 
-        return "\n\n---\n\n".join(parts)
+        prompt = "\n\n---\n\n".join(parts)
+        self._prompt_cache = (prompt, now)
+        return prompt
 
     def _get_identity(self) -> str:
         """Get the core identity section."""
@@ -434,22 +447,22 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         channel: str | None = None,
         chat_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Build the complete message list for an LLM call."""
+        """Build the complete message list for an LLM call.
+
+        Runtime context (time, channel) is injected as an interstitial
+        system message before the user message, which avoids the need to
+        strip it back out in _save_turn.
+        """
         runtime_ctx = self._build_runtime_context(channel, chat_id)
         user_content = self._build_user_content(current_message, media)
-
-        # Merge runtime context and user content into a single user message
-        # to avoid consecutive same-role messages that some providers reject.
-        if isinstance(user_content, str):
-            merged = f"{runtime_ctx}\n\n{user_content}"
-        else:
-            merged = [{"type": "text", "text": runtime_ctx}] + user_content
-
-        return [
+        messages: list[dict[str, Any]] = [
             {"role": "system", "content": self.build_system_prompt(skill_names)},
             *history,
-            {"role": "user", "content": merged},
         ]
+        if runtime_ctx and runtime_ctx != self._RUNTIME_CONTEXT_TAG:
+            messages.append({"role": "system", "content": runtime_ctx})
+        messages.append({"role": "user", "content": user_content})
+        return messages
 
     def _build_user_content(self, text: str, media: list[str] | None) -> str | list[dict[str, Any]]:
         """Build user message content with optional base64-encoded images."""

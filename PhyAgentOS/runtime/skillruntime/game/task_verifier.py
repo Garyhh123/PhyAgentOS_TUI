@@ -1,7 +1,4 @@
-"""Task verification primitives: check preconditions and post-conditions.
-
-Each primitive takes a string descriptor and resolves it against the
-current observation + target state, returning True/False.
+"""Minecraft task verification primitives.
 
 Supported descriptors:
     has_item:name        → bot inventory contains item named 'name'
@@ -19,9 +16,9 @@ import math
 import re
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from PhyAgentOS.runtime.skillruntime.game.condition_verifier import GameConditionVerifier
 
-# ── Descriptor parsers ──────────────────────────────────────────────
+logger = logging.getLogger(__name__)
 
 _HAS_ITEM_RE = re.compile(r"has_item:(\w[\w_:]*?)(?:×(\d+))?$")
 _BLOCK_AT_RE = re.compile(r"block_at:(-?\d+),(-?\d+),(-?\d+)(?:,(\w[\w_:]*))?$")
@@ -31,12 +28,11 @@ _BOT_NEAR_RE = re.compile(
 )
 
 
-class TaskVerifier:
-    """Checks task preconditions and post-conditions against target state."""
+class MinecraftTaskVerifier(GameConditionVerifier):
+    """Checks Minecraft task preconditions and post-conditions."""
 
     def __init__(self, target, raw_obs: dict[str, Any]):
-        self._target = target
-        self._obs = raw_obs
+        super().__init__(target, raw_obs)
         self._inv_cache: dict[str, int] | None = None
 
     def _get_inventory(self) -> dict[str, int]:
@@ -51,7 +47,6 @@ class TaskVerifier:
                 count = int(slot.get("count", 0))
                 if name:
                     by_name[name] = by_name.get(name, 0) + count
-        # Also try full inventory query via bridge if available
         if hasattr(self._target, "inventory_query"):
             try:
                 inv = self._target.inventory_query()
@@ -64,7 +59,6 @@ class TaskVerifier:
         return by_name
 
     def verify(self, descriptor: str) -> bool:
-        """Verify a single descriptor. Returns True if the condition holds."""
         m = _HAS_ITEM_RE.match(descriptor)
         if m:
             name = m.group(1)
@@ -92,23 +86,12 @@ class TaskVerifier:
         logger.warning("unknown descriptor: %s", descriptor)
         return False
 
-    def verify_all(self, descriptors: list[str]) -> tuple[bool, list[str]]:
-        """Verify a list of descriptors. Returns (all_ok, failures)."""
-        failures = []
-        for d in descriptors:
-            if not self.verify(d):
-                failures.append(d)
-        return len(failures) == 0, failures
-
-    # ── Primitives ──────────────────────────────────────────────────
-
     def _has_item(self, name: str, count: int = 1) -> bool:
         inv = self._get_inventory()
         return inv.get(name, 0) >= count
 
     def _block_at(self, x: int, y: int, z: int, name: str | None = None) -> bool:
         if not hasattr(self._target, "block_query"):
-            # Fallback: scan nearby_blocks (radius-limited, unreliable for distant coords)
             nearby = self._obs.get("nearby_blocks", [])
             for b in nearby:
                 pos = b.get("position", {})
@@ -149,3 +132,6 @@ class TaskVerifier:
         bz = float(pos.get("z", 0))
         dist = math.sqrt((bx - x) ** 2 + (by - y) ** 2 + (bz - z) ** 2)
         return dist <= max_dist
+
+
+TaskVerifier = MinecraftTaskVerifier
