@@ -10,12 +10,18 @@
  *   GET  /health        → bot status
  *   GET  /state         → bot position, nearby blocks, entities, chat
  *   POST /action        → execute one action
+ * 
+ * 3D viewer on port 3007 (prismarine-viewer).
+ *
+ * Usage:
+ *   $env:MC_HOST="localhost"; $env:MC_PORT="25565"; node bridge_server.js
  */
 
 const express = require('express');
 const mineflayer = require('mineflayer');
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder');
 const collectBlock = require('mineflayer-collectblock');
+const Vec3 = require('vec3'); // bot.blockAt() needs a Vec3; plain {x,y,z} throws "pos.floored is not a function"
 const app = express();
 app.use(express.json());
 
@@ -23,10 +29,12 @@ const HOST = process.env.MC_HOST || 'localhost';
 const PORT = parseInt(process.env.MC_PORT || '25565', 10);
 const BOT_NAME = process.env.BOT_NAME || 'paos';
 const API_PORT = parseInt(process.env.BRIDGE_PORT || '3001', 10);
+const VIEWER_PORT = parseInt(process.env.VIEWER_PORT || '3007', 10);
 const STATE_RADIUS = parseInt(process.env.STATE_RADIUS || '5', 10);
 
 let bot = null, botSpawned = false, spawnTime = 0;
-let recentChats = [];
+let viewerStarted = false; // prismarine-viewer binds a port once; spawn fires again on respawn
+let recentChats = []; // recent chat messages from other players, exposed via /state last_chats
 
 // ── Bot ─────────────────────────────────────────────────────────
 const MC_VERSION = process.env.MC_VERSION || '1.20.4';
@@ -45,6 +53,15 @@ function createBot() {
             if (!bot.collectBlock.chestLocations) bot.collectBlock.chestLocations = new Map();
             if (!bot.collectBlock.chestsToOpen) bot.collectBlock.chestsToOpen = [];
             if (!bot.collectBlock.tempChests) bot.collectBlock.tempChests = new Map();
+        }
+
+        if (!viewerStarted) {
+            try {
+                const { mineflayer: mineflayerViewer } = require('prismarine-viewer');
+                mineflayerViewer(bot, { port: VIEWER_PORT, firstPerson: true });
+                viewerStarted = true;
+                console.log(`[bridge] 3D viewer (first-person) on http://localhost:${VIEWER_PORT}`);
+            } catch (e) { console.log(`[bridge] 3D viewer unavailable: ${e.message}`); }
         }
     });
 

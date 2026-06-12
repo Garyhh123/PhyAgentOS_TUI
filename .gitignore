@@ -23,4 +23,6 @@ nano.*.save
 SECURITY.md
 .kilo
 test
+.vscode
+
 workspaces

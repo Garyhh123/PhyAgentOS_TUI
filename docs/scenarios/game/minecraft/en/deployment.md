@@ -144,6 +144,7 @@ Expected output:
 ```
 [bridge] Bot spawned: paos
 [bridge] HTTP API listening on port 3001
+[bridge] 3D viewer (first-person) on http://localhost:3007
 ```
 
 The bot auto-teleports to you after spawning (no OP needed; moves entity coordinates directly).
