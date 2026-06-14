@@ -1,0 +1,18 @@
+一、在Windows安装星露谷物语＋mod＋Stardojo
+1. SMAPI 官方网站：https://smapi.io/
+2. https://github.com/StarDojo2025/stardojo#:~:text=Download%20StarDojoMod%20from%20Nexus%20Mods
+3. 在Stardojo/env创建文件.env配置STARDEW_APP_PATH 和 OA_OPENAI_KEY
+4. micromamba create -n stardojo python=3.11 并激活环境
+5. requirements.txt中的 stardojo==0.1 注释掉
+6. setup.ps1 中的 Join-Path $PSScriptRoot "agent" "stardojo" 改成 Join-Path (Join-Path $PSScriptRoot "agent") "stardojo"
+7. powershell 运行 powershell -ExecutionPolicy Bypass -File .\setup.ps1 [重要！]
+8. pip install gymnasium/msgpack/opencv-python/backoff/anthropic/google-genai/spacy/mss/scipy/supervision/pyautogui/"ahk[binary]"/pydirectinput/dill/dataclass_wizard/MTM
+
+二、启动游戏和 SMAPI Mod
+启动 StardewModdingAPI.exe
+$env:PYTHONPATH = "$PWD\env;$PWD;$PWD\agent;$PWD\agent\stardojo;$env:PYTHONPATH"
+$env:STARDEW_APP_PATH = "F:\SteamLibrary\steamapps\common\Stardew Valley\StardewModdingAPI.exe"
+监听端口：10783
+测试：
+python -c "from stardew_env import StarDojo; env=StarDojo(port=10783, new_game=False, image_save_path=None); obs=env._get_obs(); print(type(obs)); print(list(obs.keys())[:30]); print('player=', obs.get('player')); print('game_state=', obs.get('gamestate'))"
+python -c "from env.actions import ActionProxy; from env.llm_env import SkillExecutor; p=ActionProxy(10783); s=SkillExecutor(p); s.move(1, 0); print('SkillExecutor move ok')"                  
