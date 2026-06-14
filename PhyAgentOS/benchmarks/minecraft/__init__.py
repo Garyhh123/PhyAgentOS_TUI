@@ -1,0 +1,2 @@
+"""Minecraft benchmark modules."""
+
