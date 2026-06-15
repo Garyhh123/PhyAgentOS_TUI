@@ -54,7 +54,7 @@ targets:
     target_class: remote
     target_kind: real_robot
     enabled: true
-    workspace: workspaces/franka_lab_a
+    workspace: PhyAgentOS/workspaces/franka_lab_a
     supported_skillruntimes:
       - rekep_grasp
       - openpi_pick_place

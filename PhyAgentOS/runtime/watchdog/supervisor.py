@@ -52,18 +52,26 @@ class WatchdogSupervisor:
         self.failure_escalator = FailureEscalator()
         self.preflight = RuntimeCompatibilityPreflight(self.workspace, self.skill_registry)
 
-    def run_once(self) -> bool:
+    def run_once(self, *, session_id: str | None = None) -> bool:
+        if session_id:
+            self.registry.prepare_for_run(session_id)
+            print(f"[runtime-watchdog] prepared {session_id} -> pending", flush=True)
         sessions_doc, targets_doc, skillruntimes_doc = self._load_runtime_documents()
         try:
-            scheduled = self.scheduler.select_next(sessions_doc, targets_doc, skillruntimes_doc)
+            scheduled = self.scheduler.select_next(
+                sessions_doc, targets_doc, skillruntimes_doc, session_id=session_id
+            )
         except SessionScheduleError as exc:
             self.failure_escalator.handle(exc.session_id, exc, self.registry)
             return True
         if scheduled is None:
+            print("[runtime-watchdog] no pending session (check SESSIONS.md status=pending)", flush=True)
             return False
         session_id = scheduled.session.session_id
         if not self.registry.try_claim(session_id, self.worker_id):
+            print(f"[runtime-watchdog] could not claim {session_id}", flush=True)
             return False
+        print(f"[runtime-watchdog] running {session_id} ...", flush=True)
 
         try:
             session = self.registry.get_session(session_id)

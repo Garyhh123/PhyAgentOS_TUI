@@ -85,7 +85,7 @@ def _write_workspace(workspace: Path, args) -> None:
                     "target_class": "remote",
                     "target_kind": "simulation",
                     "enabled": True,
-                    "workspace": "workspaces/libero_real",
+                    "workspace": "PhyAgentOS/workspaces/libero_real",
                     "supported_skillruntimes": ["pi05_libero_remote"],
                     "runtime": {
                         "target_runtime": "LiberoRemoteTargetProxy",

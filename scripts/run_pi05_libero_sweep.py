@@ -97,7 +97,7 @@ def run_one(args, task_id: int, init_id: int):
             "id": "libero_real_remote",
             "target_class": "remote",
             "target_kind": "simulation",
-            "workspace": "workspaces/libero_real",
+            "workspace": "PhyAgentOS/workspaces/libero_real",
             "supported_skillruntimes": ["pi05_libero_remote"],
             "runtime": {
                 "target_runtime": "LiberoRemoteTargetProxy",

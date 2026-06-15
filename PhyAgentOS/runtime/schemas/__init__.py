@@ -19,6 +19,7 @@ from PhyAgentOS.runtime.schemas.runtime_contract import (
 )
 from PhyAgentOS.runtime.schemas.sensor_config import SensorConfigDocument, SensorSpec
 from PhyAgentOS.runtime.schemas.session import (
+    SessionBenchmarkMeta,
     SessionExecution,
     SessionRetry,
     SessionRouting,
@@ -48,6 +49,7 @@ __all__ = [
     "ActionChunkSpec",
     "ActionComponentSpec",
     "AdapterPlan",
+    "SessionBenchmarkMeta",
     "SessionExecution",
     "EnvironmentDelta",
     "EnvironmentDocument",
