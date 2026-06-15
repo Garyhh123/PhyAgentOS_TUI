@@ -230,8 +230,15 @@ t.close()
     "inventory": {
         "hotbar": [{"slot": 0, "name": "stone_pickaxe", "count": 1}],
     },
+    "inventory_items": [
+        {"name": "minecraft:stone_pickaxe", "count": 1},
+    ],
 }
 ```
+
+> `inventory_items` 是完整背包的扁平列表（含 hotbar 以外的槽位），
+> 供 tech-tree benchmark evaluator 直接判分。`inventory.hotbar` 仅含
+> 快捷栏 9 格，供 agent 读取当前手持物。
 
 ---
 
@@ -397,7 +404,7 @@ sessions:
 | `runtime/adapters/factory.py` | +3 | 注册 minecraft_adapter |
 | `tests/runtime/test_minecraft_target.py` | 16 tests | 单元测试（Mock HTTP bridge） |
 | `tests/runtime/test_minecraft_skill_runtime.py` | 3 tests | Skill runtime 测试 |
-| `docs/scenarios/game/minecraft/bridge_server.js` | 162 | mineflayer bridge（部署到 Windows） |
+| `docs/scenarios/game/minecraft/bridge_server.js` | 390 | mineflayer bridge（部署到 Windows；含 `/benchmark/reset`、`/phase` 端点） |
 
 **测试结果**：26 passed, 0 failed。
 

@@ -105,11 +105,11 @@ cd E:\mc_bridge
 
 ### 2.4 获取 bridge_server.js
 
-在 Linux 服务器上，文件位于 `.kilo/project/game/bridge_server.js`。
+在 Linux 服务器上，文件位于 `docs/scenarios/game/minecraft/bridge_server.js`。
 
 用 scp 复制到 Windows：
 ```powershell
-scp user@linux-server:/path/PhyAgentOS/.kilo/project/game/bridge_server.js E:\mc_bridge\
+scp user@linux-server:/path/PhyAgentOS/docs/scenarios/game/minecraft/bridge_server.js E:\mc_bridge\
 ```
 
 ### 2.5 安装 npm 依赖
@@ -272,8 +272,15 @@ t.close()
     "inventory": {
         "hotbar": [{"slot": 0, "name": "stone_pickaxe", "count": 1}],
     },
+    "inventory_items": [
+        {"name": "minecraft:stone_pickaxe", "count": 1},
+    ],
 }
 ```
+
+> `inventory_items` 是完整背包的扁平列表（含 hotbar 以外的槽位），
+> 供 tech-tree benchmark evaluator 直接判分。`inventory.hotbar` 仅含
+> 快捷栏 9 格，供 agent 读取当前手持物。
 
 </details>
 </p>
@@ -516,7 +523,7 @@ curl -s -XPOST https://xxxx.ngrok-free.dev/action \
 |------|------|------|
 | `runtime/targets/game/minecraft_target.py` | 272 | MinecraftTarget（HTTP 客户端，继承 BaseLocalTarget） |
 | `runtime/adapters/minecraft/minecraft_adapter.py` | 83 | Observation/Action 归一化 |
-| `runtime/skills/game/minecraft_skill_runtime.py` | 260 | Episode 驱动循环（含 entity 解析 + 到达检测），继承 BuiltinSkillRuntime |
+| `runtime/skillruntime/game/minecraft_skill_runtime.py` | 260 | Episode 驱动循环（含 entity 解析 + 到达检测），继承 BuiltinSkillRuntime |
 | `runtime/adapters/bridges.py` | +5 | SafetyClampBridge 对 dict-based game action 自动透传 |
 | `runtime/targets/factory.py` | +4 | 注册 MinecraftTargetRuntime |
 | `runtime/adapters/factory.py` | +3 | 注册 minecraft_adapter |
@@ -525,7 +532,9 @@ curl -s -XPOST https://xxxx.ngrok-free.dev/action \
 | `templates/configs/runtime/contracts/minecraft.runtime.yaml` | 34 | 运行时契约文件（safety/action_contract） |
 | `tests/runtime/test_minecraft_target.py` | 16 tests | 单元测试（Mock HTTP bridge） |
 | `tests/runtime/test_minecraft_skill_runtime.py` | 3 tests | Skill runtime 测试 |
-| `.kilo/project/game/bridge_server.js` | 257 | mineflayer bridge（部署到 Windows） |
+| `docs/scenarios/game/minecraft/bridge_server.js` | 390 | mineflayer bridge（部署到 Windows；含 `/benchmark/reset`、`/phase` 端点） |
+| `benchmarks/minecraft/techtree/` | — | 执行器无关 tech-tree benchmark（40 任务 + 程序化判分） |
+| `runtime/benchmark/minecraft_glue.py` | — | 运行时↔benchmark 粘合：`MinecraftTargetWorldAdapter` |
 
 **使用方式**：
 
