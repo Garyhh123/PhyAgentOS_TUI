@@ -7,9 +7,12 @@
  * Env vars: MC_HOST, MC_PORT, BOT_NAME, MC_VERSION, API_PORT, VIEWER_PORT
  *
  * Endpoints:
- *   GET  /health        → bot status
- *   GET  /state         → bot position, nearby blocks, entities, chat
- *   POST /action        → execute one action
+ *   GET  /health           → bot status
+ *   GET  /state            → bot position, nearby blocks, entities, chat, inventory_items
+ *   POST /action           → execute one action
+ *   GET  /phase            → benchmark phase + counters
+ *   POST /phase            → set benchmark phase (optionally reset counters)
+ *   POST /benchmark/reset  → run a full tech-tree benchmark world setup
  * 
  * 3D viewer on port 3007 (prismarine-viewer).
  *
@@ -35,6 +38,13 @@ const STATE_RADIUS = parseInt(process.env.STATE_RADIUS || '5', 10);
 let bot = null, botSpawned = false, spawnTime = 0;
 let viewerStarted = false; // prismarine-viewer binds a port once; spawn fires again on respawn
 let recentChats = []; // recent chat messages from other players, exposed via /state last_chats
+
+// ── Benchmark phase tracking ────────────────────────────────────
+// Mirror of PhyAgentOS/benchmarks/minecraft/techtree phase semantics.
+// The Python adapter posts /phase before/after a benchmark reset so the
+// bridge knows the bot is in a benchmark-driven episode.
+let currentPhase = 'idle';
+let phaseCounters = { resets: 0, steps: 0 };
 
 // ── Bot ─────────────────────────────────────────────────────────
 const MC_VERSION = process.env.MC_VERSION || '1.20.4';
@@ -132,6 +142,15 @@ function getState() {
         count: item.count,
     } : null).filter(Boolean);
 
+    // full inventory flattened into the evaluator-friendly shape:
+    //   [{ name: "minecraft:oak_log", count: 1 }, ...]
+    // so PhyAgentOS.benchmarks.minecraft.techtree.evaluator.inventory_counts
+    // can score the bridge state directly without a second adapter layer.
+    const inventory_items = bot.inventory.items().map((item) => ({
+        name: mcName(item.name),
+        count: item.count,
+    }));
+
     return {
         bot: {
             position: { x: pos.x, y: pos.y, z: pos.z },
@@ -148,6 +167,7 @@ function getState() {
         nearby_entities: nearbyEntities,
         players: players,
         inventory: { hotbar },
+        inventory_items,
         last_chats: recentChats,
     };
 }
@@ -240,6 +260,95 @@ function executeAction(action) {
     });
 }
 
+// ── Benchmark setup ─────────────────────────────────────────────
+// Worlds an executor-independent Minecraft tech-tree benchmark task:
+// arena isolation, inventory reset, item grants (with enchantment NBT),
+// and relative block placement. Mirrors the semantics of
+// PhyAgentOS/benchmarks/minecraft/techtree WorldSetup so the Python
+// adapter can delegate the whole reset to one POST /benchmark/reset.
+
+const DEFAULT_ARENA = {
+    enabled: true,
+    origin: [-2000, 80, -2000],
+    clear_radius: 8,
+    clear_height: 6,
+    floor_block: 'smooth_stone',
+    boundary_block: 'stone_bricks',
+};
+
+function mcName(n) {
+    return String(n).startsWith('minecraft:') ? String(n) : `minecraft:${n}`;
+}
+
+// Build a /give command, including enchantment NBT when requested.
+//   item = { item, count, enchantments: [{ id, level }] }
+function giveCmd(item) {
+    let suffix = '';
+    const enchs = Array.isArray(item.enchantments) ? item.enchantments : [];
+    if (enchs.length) {
+        const entries = enchs.map((en) => {
+            const id = String(en.id || '').replace('minecraft:', '');
+            const lvl = parseInt(en.level || 1, 10);
+            return `{id:"minecraft:${id}",lvl:${lvl}}`;
+        }).join(',');
+        suffix = `{Enchantments:[${entries}]}`;
+    }
+    const count = Math.max(1, parseInt(item.count || 1, 10));
+    return `/give @s ${mcName(item.item)}${suffix} ${count}`;
+}
+
+// Send a Minecraft server command via the bot's chat channel and wait
+// briefly for the server to apply it. Server commands (/tp /fill /give
+// /setblock /clear) are asynchronous, so a short delay between steps
+// keeps multi-step resets from racing (e.g. /tp before /fill).
+const COMMAND_SETTLE_MS = 150;
+function cmd(c) {
+    return new Promise((resolve) => {
+        bot.chat(c);
+        setTimeout(() => resolve({ ok: true, cmd: c }), COMMAND_SETTLE_MS);
+    });
+}
+
+async function benchmarkReset(setup) {
+    if (!bot || !bot.entity) throw new Error('bot not spawned');
+    const arena = { ...DEFAULT_ARENA, ...(setup.arena || {}) };
+    const origin = arena.enabled
+        ? arena.origin.map((v) => parseInt(v, 10))
+        : [
+            Math.floor(bot.entity.position.x),
+            Math.floor(bot.entity.position.y),
+            Math.floor(bot.entity.position.z),
+        ];
+    const [x, y, z] = origin;
+    const seq = [];
+
+    if (arena.enabled === true || arena.enabled === undefined) {
+        const R = Math.max(1, parseInt(arena.clear_radius, 10));
+        const H = Math.max(1, parseInt(arena.clear_height, 10));
+        const fy = y - 1;
+        seq.push(`/tp @s ${x} ${y} ${z} 0 0`);
+        seq.push(`/fill ${x - R} ${y} ${z - R} ${x + R} ${y + H} ${z + R} air`);
+        seq.push(`/fill ${x - R} ${fy} ${z - R} ${x + R} ${fy} ${z + R} ${mcName(arena.floor_block)}`);
+        const b = mcName(arena.boundary_block);
+        seq.push(`/fill ${x - R} ${fy} ${z - R} ${x + R} ${fy} ${z - R} ${b}`);
+        seq.push(`/fill ${x - R} ${fy} ${z + R} ${x + R} ${fy} ${z + R} ${b}`);
+        seq.push(`/fill ${x - R} ${fy} ${z - R} ${x - R} ${fy} ${z + R} ${b}`);
+        seq.push(`/fill ${x + R} ${fy} ${z - R} ${x + R} ${fy} ${z + R} ${b}`);
+    }
+    if (setup.clear_inventory !== false) seq.push('/clear @s');
+    for (const it of (setup.inventory || [])) seq.push(giveCmd(it));
+    for (const blk of (setup.blocks || [])) {
+        const rel = blk.relative || [0, 0, 0];
+        seq.push(`/setblock ${x + parseInt(rel[0], 10)} ${y + parseInt(rel[1], 10)} ${z + parseInt(rel[2], 10)} ${mcName(blk.block)}`);
+    }
+
+    currentPhase = 'reset';
+    phaseCounters = { resets: phaseCounters.resets + 1, steps: 0 };
+    for (const c of seq) await cmd(c);
+    currentPhase = 'idle';
+    return { ok: true, commands: seq.length, phase: currentPhase, counters: phaseCounters };
+}
+
 // ── HTTP ────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => res.json({ ok: true, bot_spawned: botSpawned, uptime_seconds: botSpawned ? Math.floor((Date.now() - spawnTime) / 1000) : 0 }));
 app.get('/state', (_req, res) => res.json(getState()));
@@ -247,6 +356,33 @@ app.post('/action', async (req, res) => {
     if (!req.body?.type) return res.status(400).json({ ok: false, error: 'missing type' });
     res.json(await executeAction(req.body));
 });
+
+// Benchmark phase marker: lets an external benchmark announce that the
+// bot is entering/leaving a benchmark-driven episode, optionally
+// resetting the step counter. Idempotent and safe to call anytime.
+app.post('/phase', (req, res) => {
+    const { phase, reset_counters, source } = req.body || {};
+    currentPhase = phase || 'idle';
+    if (reset_counters) phaseCounters = { resets: phaseCounters.resets + 1, steps: 0 };
+    console.log(`[bridge] phase=${currentPhase} source=${source || '-'}`);
+    res.json({ ok: true, phase: currentPhase, counters: phaseCounters });
+});
+
+// Execute a full tech-tree benchmark reset in one call. The body is a
+// WorldSetup dict (arena, clear_inventory, inventory, blocks). Returns
+// the number of server commands issued and the final phase.
+app.post('/benchmark/reset', async (req, res) => {
+    try {
+        res.json(await benchmarkReset(req.body || {}));
+    } catch (e) {
+        console.log(`[bridge] benchmark/reset failed: ${e.message}`);
+        res.status(500).json({ ok: false, error: e.message });
+    }
+});
+
+// Expose benchmark phase so a benchmark client can confirm the bridge
+// has settled into idle after a reset.
+app.get('/phase', (_req, res) => res.json({ ok: true, phase: currentPhase, counters: phaseCounters }));
 
 // ── Start ───────────────────────────────────────────────────────
 console.log(`[bridge] Starting for Minecraft ${MC_VERSION}`);

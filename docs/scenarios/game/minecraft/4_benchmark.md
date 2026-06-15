@@ -1,100 +1,82 @@
-# PhyAgentOS x Minecraft - Tech-Tree Benchmark
+# PhyAgentOS x Minecraft — Tech-Tree Benchmark
 
-> Reading Path: Minecraft benchmark integration.
-> This page documents the executor-independent Minecraft tech-tree benchmark
-> and how it fits into the PhyAgentOS target, skillruntime, session, and
-> watchdog model.
+> 阅读路径：Minecraft benchmark 集成。
+> 本页介绍执行器无关（executor-independent）的 Minecraft Tech-Tree benchmark，
+> 以及它如何嵌入 PhyAgentOS 的 target / skillruntime / session / watchdog 模型。
 
 ---
 
-## Status
+## 状态
 
-| Component | Status | Notes |
+| 组件 | 状态 | 说明 |
 |---|---|---|
-| Vetted manifest | Ready | 40 obtain-item tasks across six tiers |
-| Programmatic evaluator | Ready | Inventory/state checks, no LLM or VLM judge |
-| Executor-independent harness | Ready | Agent and world adapter are injected |
-| Mineflayer bridge adapter | Example | Optional reference adapter, not core dependency |
-| OS session runner integration | External wrapper | Use `TARGETS.md`, `SKILLRUNTIME.md`, `SESSIONS.md`, and watchdog outside the benchmark core |
+| 审定后的 manifest | Ready | 跨 6 个层级共 40 个 obtain-item 任务 |
+| 程序化 evaluator | Ready | 背包/状态检查，无 LLM/VLM 裁判；与 runtime verifier 共用同一解析器 |
+| 执行器无关 harness | Ready | agent 与 world adapter 均为注入式 |
+| mineflayer bridge adapter | 示例 | 薄 HTTP 转发器；将 setup 委托给 bridge 的 `POST /benchmark/reset` |
+| Runtime 粘合层 | Ready | `MinecraftTargetWorldAdapter` 把真实 OS target 包装成 benchmark `WorldAdapter` |
+| OS session runner 集成 | 外部 wrapper | 在 benchmark 核心之外，用 `TARGETS.md`、`SKILLRUNTIME.md`、`SESSIONS.md` 和 watchdog 包裹 |
 
 ---
 
-## What This Benchmark Is
+## 这个 Benchmark 测什么
 
-The tech-tree benchmark measures whether an agent can obtain standard Minecraft
-items along a progression path:
+Tech-Tree benchmark 衡量 agent 能否沿着一条进阶路径获取标准 Minecraft 物品：
 
 ```
 Wooden -> Stone -> Iron -> Gold/Redstone -> Diamond -> Armor
 ```
 
-Each task has:
+每个任务包含：
 
-- a stable task id, such as `wooden.obtain_oak_log`;
-- a tier and family;
-- a deterministic setup description;
-- a `target_item`;
-- a programmatic success criterion.
+- 稳定的任务 id，如 `wooden.obtain_oak_log`；
+- 一个 tier（层级）和 family（族）；
+- 确定性的 setup 描述；
+- 一个 `target_item`（目标物品）；
+- 一个程序化的成功判据。
 
-The task set is derived from and vetted against MineStudio-style task configs
-and common Minecraft tech-tree milestones, but it is a standalone PhyAgentOS
-reimplementation.  It is not the official MineStudio, MCU, MineEvolve,
-TeamCraft, or VPT benchmark protocol.
+任务集源自 MineStudio 风格的 task configs 和常见 Minecraft 科技树里程碑，经过审定后作为 PhyAgentOS 独立重实现。它**不是** MineStudio、MCU、MineEvolve、TeamCraft 或 VPT 的官方 benchmark 协议。
 
-The benchmark is intentionally narrow.  It is an execution-layer benchmark:
-reference-adapter tasks run in an isolated arena, place required materials or
-target blocks near the agent, expose target coordinates through setup, and give
-prerequisite tools declared by the task.  It measures whether an agent can carry
-out low-level Minecraft actions, including local navigation, digging, pickup,
-crafting, placing, and smelting, once the target is localized and prerequisites
-are staged.
+这个 benchmark 的范围是有意收窄的。它是一个**执行层 benchmark**：在隔离的 arena 中放置所需材料或目标方块、通过 setup 暴露目标坐标、并预置任务声明的前置工具。它衡量 agent 能否在目标已定位、前置条件已就位后，执行低级 Minecraft 动作（局部导航、挖掘、拾取、合成、放置、熔炼）。
 
-It does not measure open-world exploration, resource search, visual target
-localization, high-level planning, long-horizon reasoning, multi-agent
-coordination, or true tech-tree dependency climbing.  The tiers are difficulty
-and category labels, not a dependency chain that the agent must discover or
-execute across tasks.
+它**不**衡量开放世界探索、资源搜索、视觉目标定位、高层规划、长程推理、多智能体协同，也不衡量真正的跨任务科技树依赖攀爬。这里的 tier 只是难度与类别标签，**不是** agent 必须跨越任务去发现或执行的依赖链。
 
 ---
 
-## Architecture
+## 架构
 
 ```
 manifest.json
   -> loader.py
       -> TechTreeTask
           -> world_adapter.reset(task.setup)
-          -> injected agent_fn(task, world_adapter)
+          -> 注入的 agent_fn(task, world_adapter)
           -> world_adapter.observe()
           -> evaluator.py
               -> BenchmarkResult
 ```
 
-The benchmark core does not import PhyAgentOS session or agent machinery.  It
-can be wrapped by OS sessions, a direct script, a policy runner, or another
-project's Minecraft controller.
+benchmark 核心不 import 任何 PhyAgentOS 的 session 或 agent 机制。它可以被 OS session、一个直接脚本、一个 policy runner，或另一个项目的 Minecraft 控制器包裹。
 
 ---
 
-## Relation To PhyAgentOS Runtime Files
+## 与 PhyAgentOS 运行时文件的关系
 
-The benchmark itself is lower-level than `SESSIONS.md`.
+benchmark 本身比 `SESSIONS.md` 更底层。
 
-| Layer | Responsibility |
+| 层 | 职责 |
 |---|---|
-| `TARGETS.md` | Declares the Minecraft target and bridge endpoint |
-| `SKILLRUNTIME.md` | Declares which runtime can execute sessions |
-| `SESSIONS.md` | Queues a concrete benchmark episode for watchdog execution |
-| WatchdogSupervisor | Claims the session and runs the selected runtime |
-| `minecraft_techtree` benchmark | Defines setup, task metadata, and deterministic scoring |
+| `TARGETS.md` | 声明 Minecraft target 和 bridge 端点 |
+| `SKILLRUNTIME.md` | 声明哪个 runtime 可以执行 session |
+| `SESSIONS.md` | 排队一个具体的 benchmark episode 交给 watchdog 执行 |
+| WatchdogSupervisor | 认领 session 并运行所选 runtime |
+| `minecraft_techtree` benchmark | 定义 setup、任务元数据与确定性判分 |
 
-An OS-native benchmark wrapper should create sessions that reference this
-benchmark in `runtime_hints`, but the `minecraft_techtree` package itself should
-remain independent of watchdog and session schemas.
+一个 OS 原生的 benchmark wrapper 应创建 session，并在 `runtime_hints` 中引用本 benchmark；但 `minecraft_techtree` 包本身应保持对 watchdog 和 session schema 的独立。
 
 ---
 
-## Public API
+## 公开 API
 
 ```python
 from PhyAgentOS.benchmarks.minecraft.techtree import (
@@ -111,11 +93,11 @@ verdict = evaluate_task(task, {"inventory": {"furnace": 1}})
 print(verdict.success)
 ```
 
-To run with an arbitrary agent:
+用任意 agent 运行：
 
 ```python
 def agent_fn(task, world):
-    # Any implementation is allowed here: LLM, scripted agent, policy, etc.
+    # 这里允许任何实现：LLM、脚本 agent、policy 等
     return {"ok": True}
 
 
@@ -123,7 +105,7 @@ result = run_task("wooden.obtain_oak_log", agent_fn, world_adapter)
 print(result.success, result.reward)
 ```
 
-The world adapter interface is deliberately small:
+world adapter 的接口被刻意保持得很小：
 
 ```python
 class WorldAdapter:
@@ -136,51 +118,70 @@ class WorldAdapter:
 
 ---
 
-## Optional Mineflayer Bridge Adapter
+## 可选的 mineflayer bridge adapter
 
-The package includes an example adapter:
+包内附带一个示例 adapter：
 
 ```python
-from PhyAgentOS.benchmarks.minecraft.techtree.adapters.mineflayer_bridge import (
+from PhyAgentOS.benchmarks.minecraft.techtree.adapters.adapter import (
     MineflayerBridgeAdapter,
 )
 
 world = MineflayerBridgeAdapter("http://127.0.0.1:3000")
 ```
 
-It uses the bridge `/phase`, `/action`, and `/state` endpoints to perform setup
-and observation.  It is not imported by `loader.py`, `evaluator.py`, or
-`harness.py`.
+它是一个薄 HTTP 转发器：`reset(setup)` 把整个 `WorldSetup` 序列化后 POST 给 bridge 的 `POST /benchmark/reset` 端点，再返回 `GET /state` 的观察。它还会在 reset 前后通过 `POST /phase` 标记阶段。`loader.py`、`evaluator.py`、`harness.py` 均不 import 它。
 
-The reference adapter also provides bounded scene isolation.  During reset it
-teleports the bot to a fixed arena origin, clears a bounded box, lays a fixed
-floor, marks the boundary, and places task blocks at coordinates relative to the
-arena origin.  This avoids reusing arbitrary old terrain near the bot while
-keeping the core benchmark adapter-agnostic.
+有界的场景隔离逻辑位于 bridge 侧，而非 adapter 侧。`POST /benchmark/reset` 会把 bot 传送到固定的 arena 原点、清空一个有界盒、铺设固定地板、标记边界、清空背包、发放 setup 物品（含附魔 NBT），并在相对 arena 原点的坐标处放置任务方块。这避免了在 bot 周围复用任意旧地形，同时保持 benchmark 核心与 adapter 无关。bridge 的 `/state` 响应还会暴露 `inventory_items` 字段，供 evaluator 直接判分。
 
 ---
 
-## Task Tiers
+## 在真实 OS target 上运行 benchmark
 
-| Tier | Count | Examples |
+benchmark 核心是执行器无关的；一个薄的 runtime 粘合模块把生产用的 `MinecraftTarget` 连接到 benchmark 的 `WorldAdapter` 接口，使一个 episode 能跑在真实 OS 栈上，而非手写的 mock：
+
+```python
+from PhyAgentOS.runtime.benchmark.minecraft_glue import (
+    MinecraftTargetWorldAdapter,
+    make_action_agent_fn,
+    task_verify_descriptors,
+)
+from PhyAgentOS.runtime.targets.game.minecraft_target import MinecraftTarget
+from PhyAgentOS.benchmarks.minecraft.techtree import run_task
+
+target = MinecraftTarget({"bridge_url": "http://127.0.0.1:3001"})
+world = MinecraftTargetWorldAdapter(target)
+agent_fn = make_action_agent_fn([{"type": "dig", "params": {"x": 1, "y": 2, "z": 3}}])
+
+result = run_task("wooden.obtain_oak_log", agent_fn, world)
+print(result.success, result.reward)
+```
+
+`MinecraftTargetWorldAdapter.reset` 把 `/benchmark/reset` POST 给 target 已使用的同一个 bridge，然后 observe。`observe` 委托给 `MinecraftTarget.observe()`，其 `inventory.hotbar` 形态可被统一后的 evaluator 直接判分。`task_verify_descriptors` 把任务的成功判据渲染成 runtime verifier 的 `has_item:...` 词汇，使 TaskPlan 能用单一事实模型自我校验，而不是两套。
+
+---
+
+## 任务层级
+
+| 层级 | 数量 | 示例 |
 |---|---:|---|
-| Wooden | 10 | `wooden.obtain_oak_log`, `wooden.craft_crafting_table` |
-| Stone | 8 | `stone.obtain_cobblestone`, `stone.craft_furnace` |
-| Iron | 9 | `iron.obtain_raw_iron`, `iron.smelt_iron_ingot` |
-| Gold-Redstone | 5 | `gold_redstone.obtain_redstone`, `gold_redstone.craft_clock` |
-| Diamond | 4 | `diamond.obtain_diamond`, `diamond.craft_enchanting_table` |
-| Armor | 4 | `armor.craft_iron_chestplate`, `armor.craft_diamond_chestplate` |
+| Wooden | 10 | `wooden.obtain_oak_log`、`wooden.craft_crafting_table` |
+| Stone | 8 | `stone.obtain_cobblestone`、`stone.craft_furnace` |
+| Iron | 9 | `iron.obtain_raw_iron`、`iron.smelt_iron_ingot` |
+| Gold-Redstone | 5 | `gold_redstone.obtain_redstone`、`gold_redstone.craft_clock` |
+| Diamond | 4 | `diamond.obtain_diamond`、`diamond.craft_enchanting_table` |
+| Armor | 4 | `armor.craft_iron_chestplate`、`armor.craft_diamond_chestplate` |
 
-Task families:
+任务族：
 
-| Family | Count | Scoring |
+| 族 | 数量 | 判分 |
 |---|---:|---|
-| `dig_pickup` | 10 | Inventory contains the dropped target item |
-| `crafting_inventory` | 5 | Inventory contains crafted item |
-| `crafting_table` | 23 | Inventory contains crafted item |
-| `smelting` | 2 | Inventory contains smelted item |
+| `dig_pickup` | 10 | 背包含有掉落的目标物品 |
+| `crafting_inventory` | 5 | 背包含有合成出的物品 |
+| `crafting_table` | 23 | 背包含有合成出的物品 |
+| `smelting` | 2 | 背包含有熔炼出的物品 |
 
-The complete task list lives in:
+完整任务列表位于：
 
 ```text
 PhyAgentOS/benchmarks/minecraft/techtree/manifest.json
@@ -188,7 +189,7 @@ PhyAgentOS/benchmarks/minecraft/techtree/manifest.json
 
 ---
 
-## Task Table
+## 任务表
 
 ### Wooden
 
@@ -262,35 +263,32 @@ PhyAgentOS/benchmarks/minecraft/techtree/manifest.json
 
 ---
 
-## Reporting Guidance
+## 报告规范
 
-Reports should include:
+报告应包含：
 
-- benchmark name and manifest version;
-- task ids and tier split;
-- agent or runtime used;
-- world adapter used;
-- number of repetitions per task;
-- success rate and mean reward;
-- failure categories when available;
-- reproducibility notes, including Minecraft version, bridge version, and setup.
+- benchmark 名称与 manifest 版本；
+- 任务 id 与层级拆分；
+- 使用的 agent 或 runtime；
+- 使用的 world adapter；
+- 每个任务的重复次数；
+- 成功率与平均 reward；
+- 失败分类（如有）；
+- 可复现性说明，包括 Minecraft 版本、bridge 版本与 setup。
 
-Do not compare these numbers directly to MineStudio, MCU, MineEvolve, TeamCraft,
-or VPT leaderboards.  This benchmark is a vetted, executor-independent,
-standalone obtain-item reimplementation designed for OS integration and
-repeatable programmatic scoring.
+**不要**把这些数字直接与 MineStudio、MCU、MineEvolve、TeamCraft 或 VPT 的排行榜相比。本 benchmark 是一个经审定的、执行器无关的、独立的 obtain-item 重实现，面向 OS 集成与可重复的程序化判分。
 
 ---
 
-## Limitations
+## 局限
 
-| Limitation | Impact |
+| 局限 | 影响 |
 |---|---|
-| Standalone vetted subset | Derived from MineStudio-style configs and tech-tree tiers, then reimplemented as a standalone programmatic mineflayer benchmark; not an official MineStudio, MCU, MineEvolve, TeamCraft, or VPT protocol, so scores are not comparable to their public numbers |
-| Execution-layer scope | Materials or target blocks are placed near the agent, target coordinates are available through setup, and prerequisite tools are provided; scores measure low-level physical execution after setup |
-| Not an exploration or planning benchmark | Does not measure resource search, visual target localization, high-level planning, long-horizon reasoning, or true tech-tree dependency climbing |
-| Tech-tree tiers are labels | Tiers describe task category and difficulty; tasks are isolated and do not require the agent to traverse a dependency chain across tasks |
-| Programmatic inventory/state scoring | Avoids VLM judgment but misses visual or semantic nuance |
-| Arena-only scene isolation | Reference adapter uses a fixed cleaned arena and relative task placement; it does not regenerate full world seeds or natural terrain |
-| Execution non-determinism | Use repeated trials when reporting results |
-| Reference adapter is mineflayer-specific | Core benchmark remains adapter-agnostic |
+| 独立审定子集 | 源自 MineStudio 风格配置与科技树层级后，重实现为独立的程序化 mineflayer benchmark；非 MineStudio、MCU、MineEvolve、TeamCraft 或 VPT 官方协议，分数不可与它们的公开数字相比 |
+| 执行层范围 | 材料或目标方块放置在 agent 附近，目标坐标通过 setup 提供，前置工具已预置；分数衡量 setup 之后的低级物理执行 |
+| 非探索/规划 benchmark | 不衡量资源搜索、视觉目标定位、高层规划、长程推理或真正的科技树依赖攀爬 |
+| 层级只是标签 | tier 描述任务类别与难度；任务彼此隔离，不要求 agent 跨任务遍历依赖链 |
+| 程序化背包/状态判分 | 规避 VLM 裁判，但会遗漏视觉或语义上的细微差别 |
+| 仅 arena 场景隔离 | bridge reset 使用固定的清理后 arena 与相对任务放置；不重建完整世界种子或自然地形 |
+| 执行不确定性 | 报告结果时请使用重复试验 |
+| bridge reset 绑定 mineflayer | benchmark 核心仍与 adapter 无关；非 mineflayer 的世界可直接实现 `WorldAdapter` |

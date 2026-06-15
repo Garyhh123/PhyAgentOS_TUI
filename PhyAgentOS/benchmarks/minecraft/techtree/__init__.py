@@ -7,7 +7,7 @@ from PhyAgentOS.benchmarks.minecraft.techtree.evaluator import (
     inventory_counts,
 )
 from PhyAgentOS.benchmarks.minecraft.techtree.harness import BenchmarkResult, run_task
-from PhyAgentOS.benchmarks.minecraft.techtree.loader import load_manifest, load_task, list_tasks
+from PhyAgentOS.benchmarks.minecraft.techtree.loader import list_tasks, load_manifest, load_task
 from PhyAgentOS.benchmarks.minecraft.techtree.schema import (
     DEFAULT_ARENA_BOUNDARY_BLOCK,
     DEFAULT_ARENA_CLEAR_HEIGHT,

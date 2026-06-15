@@ -230,8 +230,15 @@ t.close()
     "inventory": {
         "hotbar": [{"slot": 0, "name": "stone_pickaxe", "count": 1}],
     },
+    "inventory_items": [
+        {"name": "minecraft:stone_pickaxe", "count": 1},
+    ],
 }
 ```
+
+> `inventory_items` is the full inventory flattened (all slots, not just the
+> 9 hotbar slots), for the tech-tree benchmark evaluator. `inventory.hotbar`
+> is hotbar-only, for the agent to read the currently held item.
 
 ---
 
@@ -397,7 +404,7 @@ sessions:
 | `runtime/adapters/factory.py` | +3 | Register minecraft_adapter |
 | `tests/runtime/test_minecraft_target.py` | 16 tests | Unit tests (Mock HTTP bridge) |
 | `tests/runtime/test_minecraft_skill_runtime.py` | 3 tests | Skill runtime tests |
-| `docs/scenarios/game/minecraft/bridge_server.js` | 162 | mineflayer bridge (deploy to Windows) |
+| `docs/scenarios/game/minecraft/bridge_server.js` | 390 | mineflayer bridge (deploy to Windows; includes `/benchmark/reset`, `/phase` endpoints) |
 
 **Test results**: 26 passed, 0 failed.
 

@@ -12,8 +12,8 @@ leaderboards.
 
 ## Scope
 
-This is an execution-layer benchmark.  The reference adapter resets each task
-into an isolated arena, places required materials or target blocks near the
+This is an execution-layer benchmark.  The bridge reset endpoint resets each
+task into an isolated arena, places required materials or target blocks near the
 agent, provides target coordinates through the task setup, and gives the
 prerequisite tools declared by the task.  It measures whether an injected agent
 can execute low-level Minecraft actions, including local navigation, digging,
@@ -45,7 +45,7 @@ state is required by the core package.
 | `loader.py` | `load_manifest`, `list_tasks`, `load_task` |
 | `evaluator.py` | Programmatic inventory evaluator |
 | `harness.py` | Executor-independent `run_task` harness |
-| `adapters/mineflayer_bridge.py` | Optional reference adapter for a mineflayer HTTP bridge |
+| `adapters/adapter.py` | Thin HTTP adapter; forwards setup to the bridge `POST /benchmark/reset` |
 
 ## Public API
 
@@ -89,21 +89,24 @@ class WorldAdapter:
         ...
 ```
 
-The optional `MineflayerBridgeAdapter` demonstrates how a mineflayer HTTP bridge
-can implement that interface.  It is deliberately isolated under `adapters/` so
-the benchmark core remains executor-independent.
+The optional `MineflayerBridgeAdapter` is a thin HTTP forwarder.  It does not
+build the arena itself; instead it serializes the whole `WorldSetup` and POSTs
+it to the bridge endpoint `POST /benchmark/reset`, which teleports the bot,
+clears the arena box, lays the floor, marks the boundary, grants setup items,
+and places task blocks server-side.  The adapter is deliberately isolated
+under `adapters/` so the benchmark core remains executor-independent.
 
 ## Reset And Arena Isolation
 
 Task setup describes a fixed local arena in addition to inventory and task
-blocks.  The default arena origin is `[-2000, 80, -2000]`; the reference
-mineflayer adapter teleports the bot there, clears a bounded box, lays a fixed
-floor, marks the boundary, then places task blocks at fixed coordinates relative
-to the arena origin.
+blocks.  The default arena origin is `[-2000, 80, -2000]`; on reset the bridge
+teleports the bot there, clears a bounded box, lays a fixed floor, marks the
+boundary, then places task blocks at fixed coordinates relative to the arena
+origin.  The adapter forwards the full setup dict to the bridge in one call.
 
-This makes reference-adapter runs reproducible inside the arena and avoids
-accidentally using old world terrain around the bot.  The benchmark does not
-claim to recreate a full Minecraft world seed or terrain distribution.
+This makes bridge runs reproducible inside the arena and avoids accidentally
+using old world terrain around the bot.  The benchmark does not claim to
+recreate a full Minecraft world seed or terrain distribution.
 
 ## Scoring
 
@@ -212,9 +215,9 @@ when the initial task definition is fixed.
   climbing.  The tech-tree tiers are difficulty and category labels, not a
   dependency chain that the agent must execute across tasks.
 - It uses programmatic inventory/state checks, not visual judgment.
-- The reference adapter isolates each task inside a fixed, cleaned arena with
-  relative task placement.  It does not regenerate a full world seed or natural
-  terrain distribution.
+- The bridge reset endpoint isolates each task inside a fixed, cleaned arena
+  with relative task placement.  It does not regenerate a full world seed or
+  natural terrain distribution.
 - A task definition can be deterministic while a Minecraft execution loop is
   still non-deterministic.  Use multiple repetitions when reporting scores.
 - The core harness is single-agent by default.  Multi-agent or OS session

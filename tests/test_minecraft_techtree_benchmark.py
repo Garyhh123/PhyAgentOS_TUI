@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Mapping
 
 from PhyAgentOS.benchmarks.minecraft.techtree import (
     DEFAULT_ARENA_BOUNDARY_BLOCK,
@@ -16,7 +16,9 @@ from PhyAgentOS.benchmarks.minecraft.techtree import (
     load_task,
     run_task,
 )
-from PhyAgentOS.benchmarks.minecraft.techtree.adapters.mineflayer_bridge import MineflayerBridgeAdapter
+from PhyAgentOS.benchmarks.minecraft.techtree.adapters.adapter import (
+    MineflayerBridgeAdapter,
+)
 from PhyAgentOS.benchmarks.minecraft.techtree.loader import DEFAULT_MANIFEST_PATH
 from PhyAgentOS.benchmarks.minecraft.techtree.schema import WorldSetup
 
@@ -68,6 +70,20 @@ def test_evaluator_accepts_common_inventory_shapes() -> None:
     assert evaluate_task(task, {"inventory_items": [{"name": "minecraft:oak_log", "count": 1}]}).success
     assert evaluate_task(task, {"info": {"inventory_items": [{"name": "oak_log", "count": 1}]}}).success
     assert not evaluate_task(task, {"inventory": {"dirt": 1}}).success
+
+
+def test_evaluator_accepts_bridge_and_target_observation_shapes() -> None:
+    task = load_task("wooden.obtain_oak_log")
+
+    # mineflayer bridge /state and MinecraftTarget.observe() emit hotbar slots
+    assert evaluate_task(
+        task, {"inventory": {"hotbar": [{"slot": 0, "name": "oak_log", "count": 1}]}}
+    ).success
+    # inventory_query() result shape: top-level by_name / slots
+    assert evaluate_task(task, {"by_name": {"oak_log": 1}}).success
+    assert evaluate_task(task, {"slots": [{"name": "minecraft:oak_log", "count": 2}]}).success
+    # hotbar must not be misread as an item name
+    assert inventory_counts({"inventory": {"hotbar": [{"slot": 0, "name": "dirt", "count": 3}]}}) == {"dirt": 3}
 
 
 def test_evaluator_prefers_slot_item_list_over_summary_counts() -> None:
@@ -132,49 +148,180 @@ def test_harness_reports_agent_error_without_hiding_final_success() -> None:
 
 
 class RecordingBridgeAdapter(MineflayerBridgeAdapter):
+    """Records HTTP calls instead of touching the network."""
+
     def __init__(self) -> None:
         super().__init__("http://example.invalid")
-        self.commands: list[str] = []
-        self.phases: list[tuple[str, bool]] = []
+        self.calls: list[tuple[str, str, Any]] = []  # (method, path, body|None)
 
-    def _set_phase(self, phase: str, *, reset_counters: bool) -> None:
-        self.phases.append((phase, reset_counters))
-
-    def _command(self, command: str) -> dict[str, Any]:
-        self.commands.append(command)
-        return {"ok": True}
-
-    def observe(self) -> dict[str, Any]:
+    def _get(self, path: str) -> dict[str, Any]:
+        self.calls.append(("GET", path, None))
         x, y, z = DEFAULT_ARENA_ORIGIN
         return {"position": {"x": x, "y": y, "z": z}, "inventory": {}}
 
+    def _post(self, path: str, body: Mapping[str, Any]) -> dict[str, Any]:
+        self.calls.append(("POST", path, dict(body)))
+        return {"ok": True, "commands": 1, "phase": "idle"}
 
-def test_mineflayer_adapter_reset_builds_fixed_isolated_arena() -> None:
+
+def test_mineflayer_adapter_reset_delegates_full_setup_to_bridge() -> None:
     task = load_task("wooden.obtain_oak_log")
     adapter = RecordingBridgeAdapter()
 
-    adapter.reset(task.setup)
+    result = adapter.reset(task.setup)
 
-    x, y, z = DEFAULT_ARENA_ORIGIN
-    radius = DEFAULT_ARENA_CLEAR_RADIUS
-    height = DEFAULT_ARENA_CLEAR_HEIGHT
-    floor_y = y - 1
-    assert adapter.phases == [("reset", True), ("idle", False)]
-    assert adapter.commands[0] == f"/tp @s {x} {y} {z} 0 0"
-    assert adapter.commands[1] == (
-        f"/fill {x - radius} {y} {z - radius} {x + radius} {y + height} {z + radius} air"
-    )
-    assert adapter.commands[2] == (
-        f"/fill {x - radius} {floor_y} {z - radius} {x + radius} {floor_y} {z + radius} "
-        f"minecraft:{DEFAULT_ARENA_FLOOR_BLOCK}"
-    )
-    assert any(f"minecraft:{DEFAULT_ARENA_BOUNDARY_BLOCK}" in command for command in adapter.commands[3:7])
-    assert "/clear @s" in adapter.commands
-    assert "/give @s minecraft:wooden_axe 1" in adapter.commands
-    assert f"/setblock {x + 2} {y} {z} minecraft:oak_log" in adapter.commands
+    methods = [(method, path) for method, path, _ in adapter.calls]
+    assert ("POST", "/benchmark/reset") in methods
+    assert ("GET", "/state") in methods
+
+    reset_calls = [body for method, path, body in adapter.calls if path == "/benchmark/reset"]
+    assert len(reset_calls) == 1
+    body = reset_calls[0]
+    assert body["clear_inventory"] is True
+    # the whole arena contract is forwarded, so the bridge (not the adapter)
+    # is responsible for tp/fill/floor/boundary
+    assert body["arena"]["enabled"] is True
+    assert body["arena"]["origin"] == list(DEFAULT_ARENA_ORIGIN)
+    assert body["arena"]["clear_radius"] == DEFAULT_ARENA_CLEAR_RADIUS
+    assert body["arena"]["clear_height"] == DEFAULT_ARENA_CLEAR_HEIGHT
+    assert body["arena"]["floor_block"] == DEFAULT_ARENA_FLOOR_BLOCK
+    assert body["arena"]["boundary_block"] == DEFAULT_ARENA_BOUNDARY_BLOCK
+    # wooden.obtain_oak_log stages a wooden_axe and an oak_log block
+    given = {item["item"]: item["count"] for item in body["inventory"]}
+    assert given.get("wooden_axe") == 1
+    placed = body["blocks"]
+    assert any(block["block"] == "oak_log" for block in placed)
+    assert all(isinstance(block["relative"], list) and len(block["relative"]) == 3 for block in placed)
+
+    # phase ordering: reset-counter phase first, idle phase last
+    phase_calls = [body for method, path, body in adapter.calls if path == "/phase"]
+    assert phase_calls[0]["phase"] == "reset" and phase_calls[0]["reset_counters"] is True
+    assert phase_calls[-1]["phase"] == "idle" and phase_calls[-1]["reset_counters"] is False
+
+    # reset returns the post-reset observation
+    assert result["inventory"] == {}
+
+
+def test_mineflayer_adapter_reset_survives_missing_phase_endpoint() -> None:
+    # A bridge without /phase must not break reset; the benchmark reset
+    # endpoint sets phase internally regardless.
+    task = load_task("wooden.obtain_oak_log")
+    adapter = RecordingBridgeAdapter()
+    original_post = adapter._post
+    forwarded: list[tuple[str, Any]] = []
+
+    def post_without_phase(path: str, body: Mapping[str, Any]) -> dict[str, Any]:
+        forwarded.append((path, dict(body)))
+        if path == "/phase":
+            import httpx
+
+            raise httpx.ConnectError("phase endpoint missing")
+        return original_post(path, body)
+
+    adapter._post = post_without_phase  # type: ignore[method-assign]
+    result = adapter.reset(task.setup)
+
+    # benchmark/reset still ran and observe still ran
+    assert any(path == "/benchmark/reset" for path, _ in forwarded)
+    assert result["inventory"] == {}
 
 
 def test_manifest_file_is_packaged_next_to_loader() -> None:
     assert DEFAULT_MANIFEST_PATH.exists()
     assert DEFAULT_MANIFEST_PATH.name == "manifest.json"
     assert "external MineStudio" in load_manifest().raw["source_notes"]["self_contained_pr_policy"]
+
+
+def test_success_criterion_maps_to_verifier_descriptor() -> None:
+    from PhyAgentOS.benchmarks.minecraft.techtree.schema import SuccessCriterion
+
+    one = SuccessCriterion(type="inventory_contains", item="oak_log", count=1)
+    many = SuccessCriterion(type="inventory_contains", item="oak_log", count=4)
+    assert one.to_descriptor() == "has_item:oak_log"
+    assert many.to_descriptor() == "has_item:oak_log×4"
+
+
+def test_task_verify_descriptors_align_with_runtime_verifier() -> None:
+    from PhyAgentOS.runtime.benchmark.minecraft_glue import task_verify_descriptors
+    from PhyAgentOS.runtime.skillruntime.game.task_verifier import MinecraftTaskVerifier
+
+    task = load_task("iron.smelt_iron_ingot")
+    descriptors = task_verify_descriptors(task)
+    assert descriptors == ["has_item:iron_ingot"]
+
+    # the descriptor must round-trip through the runtime verifier against the
+    # same observation the evaluator would score
+    obs = {"inventory": {"hotbar": [{"slot": 0, "name": "iron_ingot", "count": 1}]}}
+    verifier = MinecraftTaskVerifier(target=None, raw_obs=obs)
+    assert verifier.verify(descriptors[0]) is True
+    # and the evaluator agrees on the same observation → no scoring drift
+    assert evaluate_task(task, obs).success
+
+
+class _FakeTarget:
+    """Minimal MinecraftTarget stand-in for glue tests."""
+
+    def __init__(self) -> None:
+        self.config = {"action_timeout": 5.0}
+        self._built = True
+        self._bridge_url = "http://example.invalid"
+        self._posted: list[tuple[str, dict[str, Any]]] = []
+        self._observe_count = 0
+
+    def build(self) -> None:
+        self._built = True
+
+    def observe(self) -> dict[str, Any]:
+        self._observe_count += 1
+        return {"inventory": {"hotbar": [{"slot": 0, "name": "oak_log", "count": 1}]}}
+
+    def step(self, action: dict[str, Any]) -> dict[str, Any]:
+        self._posted.append(("action", dict(action)))
+        return {"ok": True, "obs": self.observe()}
+
+    class _Resp:
+        def raise_for_status(self) -> None:
+            return None
+
+    class _Client:
+        def __init__(self, posted):
+            self._posted = posted
+
+        def post(self, url, json, timeout):  # noqa: ARG002
+            self._posted.append((url, dict(json)))
+            return _FakeTarget._Resp()
+
+    def _get_http(self):
+        return _FakeTarget._Client(self._posted)
+
+
+def test_minecraft_target_world_adapter_reset_and_observe() -> None:
+    from PhyAgentOS.runtime.benchmark.minecraft_glue import MinecraftTargetWorldAdapter
+
+    task = load_task("wooden.obtain_oak_log")
+    target = _FakeTarget()
+    world = MinecraftTargetWorldAdapter(target)
+
+    initial = world.reset(task.setup)
+    # reset issued one POST /benchmark/reset carrying the full setup
+    posts = [body for url, body in target._posted if url.endswith("/benchmark/reset")]
+    assert len(posts) == 1
+    assert posts[0]["arena"]["enabled"] is True
+    # observe returns the target's rich state
+    assert initial["inventory"]["hotbar"][0]["name"] == "oak_log"
+
+
+def test_action_agent_fn_drives_target_through_adapter() -> None:
+    from PhyAgentOS.runtime.benchmark.minecraft_glue import (
+        MinecraftTargetWorldAdapter,
+        make_action_agent_fn,
+    )
+
+    task = load_task("wooden.obtain_oak_log")
+    target = _FakeTarget()
+    world = MinecraftTargetWorldAdapter(target)
+
+    agent_fn = make_action_agent_fn([{"type": "dig", "params": {"x": 1, "y": 2, "z": 3}}])
+    out = agent_fn(task, world)
+    assert out["actions_executed"] == 1
+    assert target._posted[-1] == ("action", {"type": "dig", "params": {"x": 1, "y": 2, "z": 3}})

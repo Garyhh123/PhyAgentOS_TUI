@@ -16,6 +16,7 @@ import math
 import re
 from typing import Any
 
+from PhyAgentOS.benchmarks.minecraft.techtree.evaluator import inventory_counts, normalize_item_name
 from PhyAgentOS.runtime.skillruntime.game.condition_verifier import GameConditionVerifier
 
 logger = logging.getLogger(__name__)
@@ -38,21 +39,21 @@ class MinecraftTaskVerifier(GameConditionVerifier):
     def _get_inventory(self) -> dict[str, int]:
         if self._inv_cache is not None:
             return self._inv_cache
-        inventory = self._obs.get("inventory", {})
-        hotbar = inventory.get("hotbar", [])
-        by_name: dict[str, int] = {}
-        for slot in hotbar:
-            if isinstance(slot, dict):
-                name = slot.get("name", "")
-                count = int(slot.get("count", 0))
-                if name:
-                    by_name[name] = by_name.get(name, 0) + count
+        # Single source of truth: the benchmark evaluator's inventory parser
+        # already handles every bridge/target observation shape (hotbar,
+        # by_name, slots, inventory_items, flat mappings).
+        by_name = dict(inventory_counts(self._obs))
         if hasattr(self._target, "inventory_query"):
             try:
                 inv = self._target.inventory_query()
-                if inv.get("ok"):
-                    by_name = inv.get("by_name", by_name)
-                    return by_name
+                if inv.get("ok") and inv.get("by_name"):
+                    # a live full-inventory query is authoritative
+                    live = {
+                        normalize_item_name(name): int(count or 0)
+                        for name, count in inv["by_name"].items()
+                    }
+                    if live:
+                        by_name = live
             except Exception as e:
                 logger.debug("full inventory query failed: %s", e)
         self._inv_cache = by_name
@@ -88,7 +89,7 @@ class MinecraftTaskVerifier(GameConditionVerifier):
 
     def _has_item(self, name: str, count: int = 1) -> bool:
         inv = self._get_inventory()
-        return inv.get(name, 0) >= count
+        return inv.get(normalize_item_name(name), 0) >= count
 
     def _block_at(self, x: int, y: int, z: int, name: str | None = None) -> bool:
         if not hasattr(self._target, "block_query"):

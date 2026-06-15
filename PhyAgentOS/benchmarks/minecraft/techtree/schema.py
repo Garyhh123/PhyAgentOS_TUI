@@ -141,6 +141,21 @@ class SuccessCriterion:
         payload["count"] = self.count
         return payload
 
+    def to_descriptor(self) -> str:
+        """Render as a runtime verifier descriptor.
+
+        ``inventory_contains`` criteria map to the ``has_item:<item>[×N]``
+        vocabulary understood by ``MinecraftTaskVerifier``.  This keeps the
+        benchmark success criterion and the runtime verify descriptor as two
+        views of one fact instead of two parallel data models.
+        """
+        if self.type != "inventory_contains":
+            raise ValueError(f"success criterion type {self.type!r} has no verifier descriptor")
+        item = self.item or ""
+        if self.count <= 1:
+            return f"has_item:{item}"
+        return f"has_item:{item}×{self.count}"
+
 
 @dataclass(frozen=True)
 class TechTreeTask:

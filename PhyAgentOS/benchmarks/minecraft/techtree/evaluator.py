@@ -66,11 +66,20 @@ def inventory_counts(observation: Mapping[str, Any]) -> dict[str, int]:
         if not name:
             return
         key = normalize_item_name(str(name))
+        add_pair(key, count)
+
+    def add_pair(key: str, count: Any) -> None:
+        if isinstance(count, Mapping):
+            count = count.get("count", 1)
         try:
             amount = int(count or 0)
         except (TypeError, ValueError):
             amount = 1
         counts[key] = counts.get(key, 0) + max(0, amount)
+
+    def read_counts_mapping(mapping: Mapping[str, Any]) -> None:
+        for name, count in mapping.items():
+            add(name, count)
 
     def read_item_list(items: Any) -> bool:
         if not isinstance(items, list):
@@ -91,14 +100,32 @@ def inventory_counts(observation: Mapping[str, Any]) -> dict[str, int]:
 
     inventory = observation.get("inventory")
     if isinstance(inventory, Mapping):
-        raw_counts = inventory.get("counts") if isinstance(inventory.get("counts"), Mapping) else inventory
-        for name, count in raw_counts.items():
-            if isinstance(count, Mapping):
-                add(name, count.get("count", 1))
-            else:
-                add(name, count)
+        # Structured inventory shapes emitted by the mineflayer bridge and
+        # MinecraftTarget.observe(): {hotbar:[...]}, {counts:{...}},
+        # {by_name:{...}}, {slots:[...]}. A bare {name:count} mapping is the
+        # fallback only when none of those sub-keys are present, so a bridge
+        # state like {"inventory": {"hotbar": [...]}} is scored correctly.
+        if isinstance(inventory.get("hotbar"), list):
+            read_item_list(inventory["hotbar"])
+        elif isinstance(inventory.get("counts"), Mapping):
+            read_counts_mapping(inventory["counts"])
+        elif isinstance(inventory.get("by_name"), Mapping):
+            read_counts_mapping(inventory["by_name"])
+        elif isinstance(inventory.get("slots"), list):
+            read_item_list(inventory["slots"])
+        else:
+            read_counts_mapping(inventory)
     elif isinstance(inventory, list):
         read_item_list(inventory)
+
+    # Top-level inventory_query() result shape: {ok, by_name:{...}, slots:[...]}.
+    # by_name is the aggregate and slots is the per-slot breakdown of the same
+    # inventory, so they are mutually exclusive here — parsing both would
+    # double-count every item.
+    if isinstance(observation.get("by_name"), Mapping):
+        read_counts_mapping(observation["by_name"])
+    elif isinstance(observation.get("slots"), list):
+        read_item_list(observation["slots"])
 
     return counts
 
