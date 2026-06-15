@@ -1,0 +1,964 @@
+{
+  "version": "minecraft_techtree_benchmark_v1",
+  "name": "minecraft_techtree",
+  "description": "Executor-independent Minecraft tech-tree benchmark with vetted obtain-item tasks and programmatic inventory/state scoring.",
+  "status": "phase1_vetted_manifest",
+  "source_notes": {
+    "mine_studio_root_used_for_vetting": "E:/xm_phyagentos/benchmarks_external/MineStudio/minestudio/benchmark/task_configs",
+    "external_taxonomy": [
+      "MineStudio task_configs simple/hard",
+      "MCU/MineEvolve-style tiers: Wooden, Stone, Iron, Gold-Redstone, Diamond, Armor"
+    ],
+    "self_contained_pr_policy": "Task definitions below do not require the external MineStudio files at runtime. MineStudio task ids are provenance only."
+  },
+  "vetting_policy": {
+    "target_item_required": true,
+    "non_degenerate_setup": "setup must not place the target item in inventory before the agent acts",
+    "programmatic_success": "success is checked from inventory or simple world state; no VLM and no LLM judging",
+    "executor_independent": "tasks describe setup and success only; benchmark core must not import or require a specific agent, runtime, watchdog, governance, or workspace",
+    "allowed_mechanics": [
+      "dig and pickup",
+      "inventory crafting",
+      "crafting table crafting",
+      "furnace smelting",
+      "simple block placement for setup"
+    ],
+    "excluded_mechanics": [
+      "pixel-only exploration",
+      "trading",
+      "shearing or entity-specific behavior unless separately modeled",
+      "combat-only goals",
+      "complex redstone construction",
+      "tasks that are already complete after reset"
+    ]
+  },
+  "success_defaults": {
+    "type": "inventory_contains",
+    "count": 1
+  },
+  "tasks": [
+    {
+      "id": "wooden.obtain_oak_log",
+      "tier": "Wooden",
+      "family": "dig_pickup",
+      "title": "Obtain oak log",
+      "target_item": "oak_log",
+      "success_criterion": {"type": "inventory_contains", "item": "oak_log", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "wooden_axe", "count": 1}],
+        "blocks": [{"block": "oak_log", "relative": [2, 0, 0]}]
+      },
+      "source_refs": [{"kind": "MineStudio", "task": "collect_wood", "difficulty": "simple"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "MineStudio collect_wood gives an axe and expects oak_log collection; setup makes a nearby target explicit."
+      }
+    },
+    {
+      "id": "wooden.obtain_dirt",
+      "tier": "Wooden",
+      "family": "dig_pickup",
+      "title": "Obtain dirt",
+      "target_item": "dirt",
+      "success_criterion": {"type": "inventory_contains", "item": "dirt", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "wooden_shovel", "count": 1}],
+        "blocks": [{"block": "dirt", "relative": [2, 0, 0]}]
+      },
+      "source_refs": [{"kind": "MineStudio", "task": "mine_dirt", "difficulty": "simple"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "Uses mine_dirt instead of collect_dirt because collect_dirt reset gives dirt in inventory."
+      }
+    },
+    {
+      "id": "wooden.obtain_grass_block",
+      "tier": "Wooden",
+      "family": "dig_pickup",
+      "title": "Obtain grass block",
+      "target_item": "grass_block",
+      "success_criterion": {"type": "inventory_contains", "item": "grass_block", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "diamond_shovel", "count": 1, "enchantments": [{"id": "silk_touch", "level": 1}]}],
+        "blocks": [{"block": "grass_block", "relative": [2, 0, 0]}]
+      },
+      "source_refs": [{"kind": "MineStudio", "task": "collect_grass", "difficulty": "simple"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "Requires silk touch; ordinary mine_grass is excluded because it drops dirt."
+      }
+    },
+    {
+      "id": "wooden.craft_oak_planks",
+      "tier": "Wooden",
+      "family": "crafting_inventory",
+      "title": "Craft oak planks",
+      "target_item": "oak_planks",
+      "success_criterion": {"type": "inventory_contains", "item": "oak_planks", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "oak_log", "count": 1}]
+      },
+      "source_refs": [{"kind": "MineStudio", "task": "craft_the_crafting_table", "difficulty": "simple"}, {"kind": "TechTree", "tier": "Wooden"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "Standard log-to-planks recipe; no planks are pre-given."
+      }
+    },
+    {
+      "id": "wooden.craft_stick",
+      "tier": "Wooden",
+      "family": "crafting_inventory",
+      "title": "Craft sticks",
+      "target_item": "stick",
+      "success_criterion": {"type": "inventory_contains", "item": "stick", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "oak_planks", "count": 2}]
+      },
+      "source_refs": [{"kind": "MineStudio", "task": "tool_bow", "difficulty": "simple"}, {"kind": "TechTree", "tier": "Wooden"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "Standard planks-to-sticks recipe."
+      }
+    },
+    {
+      "id": "wooden.craft_crafting_table",
+      "tier": "Wooden",
+      "family": "crafting_inventory",
+      "title": "Craft crafting table",
+      "target_item": "crafting_table",
+      "success_criterion": {"type": "inventory_contains", "item": "crafting_table", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "oak_planks", "count": 4}]
+      },
+      "source_refs": [{"kind": "MineStudio", "task": "craft_table", "difficulty": "simple"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "craft_table target is minecraft:crafting_table, not table."
+      }
+    },
+    {
+      "id": "wooden.craft_chest",
+      "tier": "Wooden",
+      "family": "crafting_table",
+      "title": "Craft chest",
+      "target_item": "chest",
+      "success_criterion": {"type": "inventory_contains", "item": "chest", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "oak_planks", "count": 8}, {"item": "crafting_table", "count": 1}]
+      },
+      "source_refs": [{"kind": "MineStudio", "task": "prepare_a_birthday_present_for_your_neighbor", "difficulty": "simple"}, {"kind": "TechTree", "tier": "Wooden"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "MineStudio uses chests in a broader task; this isolates the standard chest recipe."
+      }
+    },
+    {
+      "id": "wooden.craft_ladder",
+      "tier": "Wooden",
+      "family": "crafting_table",
+      "title": "Craft ladder",
+      "target_item": "ladder",
+      "success_criterion": {"type": "inventory_contains", "item": "ladder", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "stick", "count": 7}, {"item": "crafting_table", "count": 1}]
+      },
+      "source_refs": [{"kind": "MineStudio", "task": "craft_ladder", "difficulty": "simple"}, {"kind": "MineStudio", "task": "craft_to_ladder", "difficulty": "simple"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "Existing MineStudio ladder tasks pre-give sticks, not ladders."
+      }
+    },
+    {
+      "id": "wooden.craft_bow",
+      "tier": "Wooden",
+      "family": "crafting_table",
+      "title": "Craft bow",
+      "target_item": "bow",
+      "success_criterion": {"type": "inventory_contains", "item": "bow", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "stick", "count": 3}, {"item": "string", "count": 3}, {"item": "crafting_table", "count": 1}]
+      },
+      "source_refs": [{"kind": "MineStudio", "task": "tool_bow", "difficulty": "simple"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "tool_bow gives stick and string; target is bow."
+      }
+    },
+    {
+      "id": "wooden.craft_wooden_pickaxe",
+      "tier": "Wooden",
+      "family": "crafting_table",
+      "title": "Craft wooden pickaxe",
+      "target_item": "wooden_pickaxe",
+      "success_criterion": {"type": "inventory_contains", "item": "wooden_pickaxe", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "oak_planks", "count": 3}, {"item": "stick", "count": 2}, {"item": "crafting_table", "count": 1}]
+      },
+      "source_refs": [{"kind": "TechTree", "tier": "Wooden"}, {"kind": "MineStudio", "task": "survive_plant", "difficulty": "simple"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "Standard wooden tool milestone; MineStudio uses wooden_pickaxe as a provided prerequisite in survive_plant."
+      }
+    },
+    {
+      "id": "stone.obtain_cobblestone",
+      "tier": "Stone",
+      "family": "dig_pickup",
+      "title": "Obtain cobblestone",
+      "target_item": "cobblestone",
+      "success_criterion": {"type": "inventory_contains", "item": "cobblestone", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "wooden_pickaxe", "count": 1}],
+        "blocks": [{"block": "stone", "relative": [2, 0, 0]}]
+      },
+      "source_refs": [{"kind": "MineStudio", "task": "cut_stone", "difficulty": "simple"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "Mining stone yields cobblestone."
+      }
+    },
+    {
+      "id": "stone.craft_stone_pickaxe",
+      "tier": "Stone",
+      "family": "crafting_table",
+      "title": "Craft stone pickaxe",
+      "target_item": "stone_pickaxe",
+      "success_criterion": {"type": "inventory_contains", "item": "stone_pickaxe", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "cobblestone", "count": 3}, {"item": "stick", "count": 2}, {"item": "crafting_table", "count": 1}]
+      },
+      "source_refs": [{"kind": "TechTree", "tier": "Stone"}, {"kind": "MineStudio", "task": "cut_stone", "difficulty": "hard"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "Standard prerequisite for iron ore mining."
+      }
+    },
+    {
+      "id": "stone.craft_stone_axe",
+      "tier": "Stone",
+      "family": "crafting_table",
+      "title": "Craft stone axe",
+      "target_item": "stone_axe",
+      "success_criterion": {"type": "inventory_contains", "item": "stone_axe", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "cobblestone", "count": 3}, {"item": "stick", "count": 2}, {"item": "crafting_table", "count": 1}]
+      },
+      "source_refs": [{"kind": "TechTree", "tier": "Stone"}, {"kind": "MineStudio", "task": "collect_wood", "difficulty": "hard"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "Standard stone tool; MineStudio hard collect_wood provides stone_axe as a prerequisite."
+      }
+    },
+    {
+      "id": "stone.craft_stone_shovel",
+      "tier": "Stone",
+      "family": "crafting_table",
+      "title": "Craft stone shovel",
+      "target_item": "stone_shovel",
+      "success_criterion": {"type": "inventory_contains", "item": "stone_shovel", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "cobblestone", "count": 1}, {"item": "stick", "count": 2}, {"item": "crafting_table", "count": 1}]
+      },
+      "source_refs": [{"kind": "TechTree", "tier": "Stone"}, {"kind": "MineStudio", "task": "mine_dirt", "difficulty": "hard"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "Standard shovel recipe."
+      }
+    },
+    {
+      "id": "stone.craft_stone_sword",
+      "tier": "Stone",
+      "family": "crafting_table",
+      "title": "Craft stone sword",
+      "target_item": "stone_sword",
+      "success_criterion": {"type": "inventory_contains", "item": "stone_sword", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "cobblestone", "count": 2}, {"item": "stick", "count": 1}, {"item": "crafting_table", "count": 1}]
+      },
+      "source_refs": [{"kind": "TechTree", "tier": "Stone"}, {"kind": "MineStudio", "task": "survive_combat", "difficulty": "hard"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "Standard weapon milestone; combat variants are excluded, this only scores inventory."
+      }
+    },
+    {
+      "id": "stone.craft_furnace",
+      "tier": "Stone",
+      "family": "crafting_table",
+      "title": "Craft furnace",
+      "target_item": "furnace",
+      "success_criterion": {"type": "inventory_contains", "item": "furnace", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "cobblestone", "count": 8}, {"item": "crafting_table", "count": 1}]
+      },
+      "source_refs": [{"kind": "MineStudio", "task": "craft_smelting", "difficulty": "simple"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "MineStudio craft_smelting text is furnace crafting; target is furnace."
+      }
+    },
+    {
+      "id": "stone.craft_stonecutter",
+      "tier": "Stone",
+      "family": "crafting_table",
+      "title": "Craft stonecutter",
+      "target_item": "stonecutter",
+      "success_criterion": {"type": "inventory_contains", "item": "stonecutter", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "stone", "count": 3}, {"item": "iron_ingot", "count": 1}, {"item": "crafting_table", "count": 1}]
+      },
+      "source_refs": [{"kind": "MineStudio", "task": "craft_stonecut", "difficulty": "simple"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "Isolated standard stonecutter recipe."
+      }
+    },
+    {
+      "id": "stone.craft_torch",
+      "tier": "Stone",
+      "family": "crafting_inventory",
+      "title": "Craft torch",
+      "target_item": "torch",
+      "success_criterion": {"type": "inventory_contains", "item": "torch", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "coal", "count": 1}, {"item": "stick", "count": 1}]
+      },
+      "source_refs": [{"kind": "MineStudio", "task": "find_diamond", "difficulty": "hard"}, {"kind": "TechTree", "tier": "Stone"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "Torch is a standard mining support item; MineStudio hard find_diamond provides torches as prerequisites."
+      }
+    },
+    {
+      "id": "iron.obtain_coal",
+      "tier": "Iron",
+      "family": "dig_pickup",
+      "title": "Obtain coal",
+      "target_item": "coal",
+      "success_criterion": {"type": "inventory_contains", "item": "coal", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "stone_pickaxe", "count": 1}],
+        "blocks": [{"block": "coal_ore", "relative": [2, 0, 0]}]
+      },
+      "source_refs": [{"kind": "TechTree", "tier": "Iron"}, {"kind": "MineStudio", "task": "mine_iron_ore", "difficulty": "hard"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "No exact collect_coal YAML exists; this is a standard ore-drop task."
+      }
+    },
+    {
+      "id": "iron.obtain_raw_iron",
+      "tier": "Iron",
+      "family": "dig_pickup",
+      "title": "Obtain raw iron",
+      "target_item": "raw_iron",
+      "success_criterion": {"type": "inventory_contains", "item": "raw_iron", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "stone_pickaxe", "count": 1}],
+        "blocks": [{"block": "iron_ore", "relative": [2, 0, 0]}]
+      },
+      "source_refs": [{"kind": "MineStudio", "task": "mine_iron_ore", "difficulty": "simple"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "Mining iron_ore yields raw_iron in modern Minecraft."
+      }
+    },
+    {
+      "id": "iron.smelt_iron_ingot",
+      "tier": "Iron",
+      "family": "smelting",
+      "title": "Smelt iron ingot",
+      "target_item": "iron_ingot",
+      "success_criterion": {"type": "inventory_contains", "item": "iron_ingot", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "raw_iron", "count": 1}, {"item": "coal", "count": 1}, {"item": "furnace", "count": 1}]
+      },
+      "source_refs": [{"kind": "MineStudio", "task": "craft_smelting", "difficulty": "hard"}, {"kind": "TechTree", "tier": "Iron"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "Furnace and ingredients are prerequisites; target ingot is not pre-given."
+      }
+    },
+    {
+      "id": "iron.craft_iron_pickaxe",
+      "tier": "Iron",
+      "family": "crafting_table",
+      "title": "Craft iron pickaxe",
+      "target_item": "iron_pickaxe",
+      "success_criterion": {"type": "inventory_contains", "item": "iron_pickaxe", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "iron_ingot", "count": 3}, {"item": "stick", "count": 2}, {"item": "crafting_table", "count": 1}]
+      },
+      "source_refs": [{"kind": "TechTree", "tier": "Iron"}, {"kind": "MineStudio", "task": "mine_obsidian", "difficulty": "simple"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "Standard iron tool milestone."
+      }
+    },
+    {
+      "id": "iron.craft_iron_axe",
+      "tier": "Iron",
+      "family": "crafting_table",
+      "title": "Craft iron axe",
+      "target_item": "iron_axe",
+      "success_criterion": {"type": "inventory_contains", "item": "iron_axe", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "iron_ingot", "count": 3}, {"item": "stick", "count": 2}, {"item": "crafting_table", "count": 1}]
+      },
+      "source_refs": [{"kind": "TechTree", "tier": "Iron"}, {"kind": "MineStudio", "task": "clean_up", "difficulty": "simple"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "Standard iron tool; clean_up demonstrates tool use but is not used as a benchmark task."
+      }
+    },
+    {
+      "id": "iron.craft_iron_shovel",
+      "tier": "Iron",
+      "family": "crafting_table",
+      "title": "Craft iron shovel",
+      "target_item": "iron_shovel",
+      "success_criterion": {"type": "inventory_contains", "item": "iron_shovel", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "iron_ingot", "count": 1}, {"item": "stick", "count": 2}, {"item": "crafting_table", "count": 1}]
+      },
+      "source_refs": [{"kind": "MineStudio", "task": "dig_three_down_and_fill_one_up", "difficulty": "simple"}, {"kind": "TechTree", "tier": "Iron"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "Standard iron shovel recipe."
+      }
+    },
+    {
+      "id": "iron.craft_iron_sword",
+      "tier": "Iron",
+      "family": "crafting_table",
+      "title": "Craft iron sword",
+      "target_item": "iron_sword",
+      "success_criterion": {"type": "inventory_contains", "item": "iron_sword", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "iron_ingot", "count": 2}, {"item": "stick", "count": 1}, {"item": "crafting_table", "count": 1}]
+      },
+      "source_refs": [{"kind": "MineStudio", "task": "enchant_sword", "difficulty": "hard"}, {"kind": "TechTree", "tier": "Iron"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "Combat tasks are excluded; this isolates the inventory craft."
+      }
+    },
+    {
+      "id": "iron.craft_bucket",
+      "tier": "Iron",
+      "family": "crafting_table",
+      "title": "Craft bucket",
+      "target_item": "bucket",
+      "success_criterion": {"type": "inventory_contains", "item": "bucket", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "iron_ingot", "count": 3}, {"item": "crafting_table", "count": 1}]
+      },
+      "source_refs": [{"kind": "MineStudio", "task": "craft_to_cake", "difficulty": "simple"}, {"kind": "TechTree", "tier": "Iron"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "craft_to_cake uses buckets as prerequisites; this isolates bucket crafting."
+      }
+    },
+    {
+      "id": "iron.craft_shears",
+      "tier": "Iron",
+      "family": "crafting_inventory",
+      "title": "Craft shears",
+      "target_item": "shears",
+      "success_criterion": {"type": "inventory_contains", "item": "shears", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "iron_ingot", "count": 2}]
+      },
+      "source_refs": [{"kind": "MineStudio", "task": "collect_wool", "difficulty": "simple"}, {"kind": "TechTree", "tier": "Iron"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "Shearing wool is excluded; shears crafting itself is deterministic and inventory-scored."
+      }
+    },
+    {
+      "id": "gold_redstone.obtain_raw_gold",
+      "tier": "Gold-Redstone",
+      "family": "dig_pickup",
+      "title": "Obtain raw gold",
+      "target_item": "raw_gold",
+      "success_criterion": {"type": "inventory_contains", "item": "raw_gold", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "iron_pickaxe", "count": 1}],
+        "blocks": [{"block": "gold_ore", "relative": [2, 0, 0]}]
+      },
+      "source_refs": [{"kind": "TechTree", "tier": "Gold-Redstone"}, {"kind": "MineStudio", "task": "craft_to_clock", "difficulty": "simple"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "No exact MineStudio gold mining task exists; included as standard tech-tree ore step."
+      }
+    },
+    {
+      "id": "gold_redstone.smelt_gold_ingot",
+      "tier": "Gold-Redstone",
+      "family": "smelting",
+      "title": "Smelt gold ingot",
+      "target_item": "gold_ingot",
+      "success_criterion": {"type": "inventory_contains", "item": "gold_ingot", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "raw_gold", "count": 1}, {"item": "coal", "count": 1}, {"item": "furnace", "count": 1}]
+      },
+      "source_refs": [{"kind": "MineStudio", "task": "craft_to_clock", "difficulty": "simple"}, {"kind": "TechTree", "tier": "Gold-Redstone"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "Standard ore smelting step before clock crafting."
+      }
+    },
+    {
+      "id": "gold_redstone.obtain_redstone",
+      "tier": "Gold-Redstone",
+      "family": "dig_pickup",
+      "title": "Obtain redstone",
+      "target_item": "redstone",
+      "success_criterion": {"type": "inventory_contains", "item": "redstone", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "iron_pickaxe", "count": 1}],
+        "blocks": [{"block": "redstone_ore", "relative": [2, 0, 0]}]
+      },
+      "source_refs": [{"kind": "MineStudio", "task": "craft_to_clock", "difficulty": "simple"}, {"kind": "TechTree", "tier": "Gold-Redstone"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "No exact redstone mining YAML exists; redstone is used by MineStudio clock task."
+      }
+    },
+    {
+      "id": "gold_redstone.craft_clock",
+      "tier": "Gold-Redstone",
+      "family": "crafting_table",
+      "title": "Craft clock",
+      "target_item": "clock",
+      "success_criterion": {"type": "inventory_contains", "item": "clock", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "gold_ingot", "count": 4}, {"item": "redstone", "count": 1}, {"item": "crafting_table", "count": 1}]
+      },
+      "source_refs": [{"kind": "MineStudio", "task": "craft_to_clock", "difficulty": "simple"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "MineStudio craft_to_clock pre-gives ingredients, not clock."
+      }
+    },
+    {
+      "id": "gold_redstone.craft_compass",
+      "tier": "Gold-Redstone",
+      "family": "crafting_table",
+      "title": "Craft compass",
+      "target_item": "compass",
+      "success_criterion": {"type": "inventory_contains", "item": "compass", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "iron_ingot", "count": 4}, {"item": "redstone", "count": 1}, {"item": "crafting_table", "count": 1}]
+      },
+      "source_refs": [{"kind": "MineStudio", "task": "find_village", "difficulty": "simple"}, {"kind": "TechTree", "tier": "Gold-Redstone"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "MineStudio exploration tasks use compass as an item; this isolates the standard recipe."
+      }
+    },
+    {
+      "id": "diamond.obtain_diamond",
+      "tier": "Diamond",
+      "family": "dig_pickup",
+      "title": "Obtain diamond",
+      "target_item": "diamond",
+      "success_criterion": {"type": "inventory_contains", "item": "diamond", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "iron_pickaxe", "count": 1}],
+        "blocks": [{"block": "diamond_ore", "relative": [2, -1, 0]}]
+      },
+      "source_refs": [{"kind": "MineStudio", "task": "find_diamond", "difficulty": "simple"}, {"kind": "MineStudio", "task": "mine_diamond_ore", "difficulty": "simple"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "Diamond ore mined with iron pickaxe yields diamond."
+      }
+    },
+    {
+      "id": "diamond.obtain_obsidian",
+      "tier": "Diamond",
+      "family": "dig_pickup",
+      "title": "Obtain obsidian",
+      "target_item": "obsidian",
+      "success_criterion": {"type": "inventory_contains", "item": "obsidian", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "diamond_pickaxe", "count": 1}],
+        "blocks": [{"block": "obsidian", "relative": [2, 0, 0]}]
+      },
+      "source_refs": [{"kind": "MineStudio", "task": "mine_obsidian", "difficulty": "simple"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "Obsidian requires diamond pickaxe; target is not pre-given."
+      }
+    },
+    {
+      "id": "diamond.craft_diamond_pickaxe",
+      "tier": "Diamond",
+      "family": "crafting_table",
+      "title": "Craft diamond pickaxe",
+      "target_item": "diamond_pickaxe",
+      "success_criterion": {"type": "inventory_contains", "item": "diamond_pickaxe", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "diamond", "count": 3}, {"item": "stick", "count": 2}, {"item": "crafting_table", "count": 1}]
+      },
+      "source_refs": [{"kind": "MineStudio", "task": "mine_obsidian", "difficulty": "simple"}, {"kind": "TechTree", "tier": "Diamond"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "Standard diamond tool milestone."
+      }
+    },
+    {
+      "id": "diamond.craft_enchanting_table",
+      "tier": "Diamond",
+      "family": "crafting_table",
+      "title": "Craft enchanting table",
+      "target_item": "enchanting_table",
+      "success_criterion": {"type": "inventory_contains", "item": "enchanting_table", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "obsidian", "count": 4}, {"item": "diamond", "count": 2}, {"item": "book", "count": 1}, {"item": "crafting_table", "count": 1}]
+      },
+      "source_refs": [{"kind": "MineStudio", "task": "craft_enchantment", "difficulty": "simple"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "MineStudio craft_enchantment gives ingredients, not enchanting_table."
+      }
+    },
+    {
+      "id": "armor.craft_iron_helmet",
+      "tier": "Armor",
+      "family": "crafting_table",
+      "title": "Craft iron helmet",
+      "target_item": "iron_helmet",
+      "success_criterion": {"type": "inventory_contains", "item": "iron_helmet", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "iron_ingot", "count": 5}, {"item": "crafting_table", "count": 1}]
+      },
+      "source_refs": [{"kind": "TechTree", "tier": "Armor"}, {"kind": "MineStudio", "task": "survive_combat", "difficulty": "simple"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "Armor crafting isolated from combat tasks."
+      }
+    },
+    {
+      "id": "armor.craft_iron_chestplate",
+      "tier": "Armor",
+      "family": "crafting_table",
+      "title": "Craft iron chestplate",
+      "target_item": "iron_chestplate",
+      "success_criterion": {"type": "inventory_contains", "item": "iron_chestplate", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "iron_ingot", "count": 8}, {"item": "crafting_table", "count": 1}]
+      },
+      "source_refs": [{"kind": "TechTree", "tier": "Armor"}, {"kind": "MineStudio", "task": "survive_combat", "difficulty": "hard"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "Inventory-scored armor milestone."
+      }
+    },
+    {
+      "id": "armor.craft_diamond_helmet",
+      "tier": "Armor",
+      "family": "crafting_table",
+      "title": "Craft diamond helmet",
+      "target_item": "diamond_helmet",
+      "success_criterion": {"type": "inventory_contains", "item": "diamond_helmet", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "diamond", "count": 5}, {"item": "crafting_table", "count": 1}]
+      },
+      "source_refs": [{"kind": "TechTree", "tier": "Armor"}, {"kind": "MineStudio", "task": "enchant_diamond_sword", "difficulty": "simple"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "Diamond armor milestone; source task demonstrates diamond equipment tier."
+      }
+    },
+    {
+      "id": "armor.craft_diamond_chestplate",
+      "tier": "Armor",
+      "family": "crafting_table",
+      "title": "Craft diamond chestplate",
+      "target_item": "diamond_chestplate",
+      "success_criterion": {"type": "inventory_contains", "item": "diamond_chestplate", "count": 1},
+      "setup": {
+        "clear_inventory": true,
+        "inventory": [{"item": "diamond", "count": 8}, {"item": "crafting_table", "count": 1}]
+      },
+      "source_refs": [{"kind": "TechTree", "tier": "Armor"}, {"kind": "MineStudio", "task": "enchant_diamond_sword", "difficulty": "hard"}],
+      "vetting": {
+        "target_item_correct": true,
+        "non_degenerate_setup": true,
+        "mineflayer_executable": true,
+        "programmatic_scorable": true,
+        "notes": "Diamond armor milestone; no target item is pre-given."
+      }
+    }
+  ],
+  "excluded_source_groups": [
+    {
+      "reason": "reset_already_contains_or_directly_gives_target_item",
+      "tasks": ["collect_dirt", "craft_the_crafting_table", "tool_lead", "tool_trident"],
+      "notes": "These are unsuitable as direct obtain-item tasks when the desired item is already present after setup."
+    },
+    {
+      "reason": "drop_or_mechanic_ambiguous_for_inventory_target",
+      "tasks": ["mine_grass", "tool_flint", "tool_pumpkin"],
+      "notes": "Examples include grass blocks mined without silk touch or chance-based gravel-to-flint behavior."
+    },
+    {
+      "reason": "entity_or_combat_goal_not_inventory_techtree",
+      "tasks": [
+        "collect_seagrass",
+        "collect_wool",
+        "combat_enderman",
+        "combat_enemies",
+        "combat_skeletons",
+        "combat_spider",
+        "combat_spiders",
+        "combat_zombies",
+        "hunt_a_sheep",
+        "hunt_animals",
+        "lead_animals",
+        "shoot_phantom",
+        "survive_combat",
+        "survive_hunt",
+        "survive_shield",
+        "use_bow",
+        "use_shield",
+        "use_trident"
+      ],
+      "notes": "These require entity state, combat outcome, shearing, leading, or projectile hit criteria rather than pure obtain-item scoring."
+    },
+    {
+      "reason": "exploration_or_navigation_goal_not_programmatic_item_success",
+      "tasks": [
+        "clean_up",
+        "climb_the_mountain",
+        "explore_boat",
+        "explore_chest",
+        "explore_climb",
+        "explore_mine",
+        "explore_run",
+        "explore_the_treasure",
+        "find_forest",
+        "find_village",
+        "run_and_explore",
+        "travel_by_boat"
+      ],
+      "notes": "These are useful scenarios but not clean inventory/state obtain-item benchmark tasks."
+    },
+    {
+      "reason": "structure_or_world_edit_goal_not_obtain_item",
+      "tasks": [
+        "build_a_waterfall",
+        "build_dig3fill1",
+        "build_gate",
+        "build_golems",
+        "build_nether_portal",
+        "build_obsidian",
+        "build_pillar",
+        "build_snow_golem",
+        "dig_three_down_and_fill_one_up",
+        "make_fire_with_flint_and_steel",
+        "make_obsidian_by_wate",
+        "mine_horizontally",
+        "plant_wheats",
+        "prepare_a_birthday_present_for_your_neighbor",
+        "set_fires",
+        "sleep_in_bed",
+        "survive_plant",
+        "survive_sleep"
+      ],
+      "notes": "These are place/use/world-state scenarios. They may become a separate state benchmark, but they are not part of this obtain-item tech-tree manifest."
+    },
+    {
+      "reason": "gui_or_special_system_state_not_inventory_item",
+      "tasks": ["carve_pumpkins", "drink_harming_potion", "enchant_diamond_sword", "enchant_sword", "smelt_food"],
+      "notes": "These need potion effects, enchantment metadata, carved block state, or food-specific outputs; kept out of the clean v1 manifest."
+    },
+    {
+      "reason": "included_as_related_source_but_not_as_original_task_id",
+      "tasks": [
+        "collect_grass",
+        "collect_wood",
+        "craft_enchantment",
+        "craft_ladder",
+        "craft_smelting",
+        "craft_stonecut",
+        "craft_table",
+        "craft_to_clock",
+        "craft_to_ladder",
+        "cut_stone",
+        "find_diamond",
+        "mine_diamond_ore",
+        "mine_dirt",
+        "mine_iron_ore",
+        "mine_obsidian",
+        "tool_bow"
+      ],
+      "notes": "The new PR-ready task ids are normalized tech-tree ids; these MineStudio names are preserved in source_refs."
+    }
+  ],
+  "phase1_summary": {
+    "active_task_count": 40,
+    "tiers": ["Wooden", "Stone", "Iron", "Gold-Redstone", "Diamond", "Armor"],
+    "families": ["dig_pickup", "crafting_inventory", "crafting_table", "smelting"],
+    "requires_llm": false,
+    "requires_minecraft_server_for_manifest_validation": false,
+    "agent_execution_in_phase1": false
+  }
+}
