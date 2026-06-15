@@ -1,4 +1,4 @@
-"""Stardew Valley runtime adapter backed by bundled StarDojo."""
+"""Stardew Valley runtime adapter backed by a local StarDojo checkout."""
 
 from .bridge.action_parser import ActionParseError, allowed_skill_names, execute_skill_expression, parse_skill_expression
 from .bridge.bridge_server import create_app

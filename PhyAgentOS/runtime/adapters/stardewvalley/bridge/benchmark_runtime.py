@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import socket
 from threading import Lock
 from typing import Any, Callable
 
@@ -182,7 +183,7 @@ def _make_task_proxy(port: int) -> Any:
         from env.tasks.utils.init_task import InitTaskProxy
     except Exception as exc:
         raise RuntimeError("Failed to import StarDojo InitTaskProxy.") from exc
-    return InitTaskProxy(port)
+    return TimeoutInitTaskProxy(port)
 
 
 def _default_max_steps(task: Any) -> int:
@@ -227,3 +228,34 @@ def _validate_action(action: Any) -> str:
     if not isinstance(action, str) or not action.strip():
         raise BenchmarkError("Missing non-empty string field: action")
     return action.strip()
+
+
+class TimeoutInitTaskProxy:
+    """InitTaskProxy-compatible wrapper with socket receive timeouts."""
+
+    def __init__(self, port: int, timeout: float = 30.0) -> None:
+        self.port = port
+        self.timeout = timeout
+
+    def _post_message(self, message: str, print_message: bool = False) -> str:
+        with socket.create_connection(("127.0.0.1", self.port), timeout=self.timeout) as client_socket:
+            client_socket.settimeout(self.timeout)
+            client_socket.sendall(message.encode("utf-8"))
+            response: list[str] = []
+            while True:
+                try:
+                    data = client_socket.recv(1024)
+                except socket.timeout as exc:
+                    raise TimeoutError("Timed out waiting for StardojoMod response to %r" % (message,)) from exc
+                if not data:
+                    break
+                response.append(data.decode("utf-8"))
+                if "".join(response).endswith("<EOF>"):
+                    break
+            return "".join(response)[:-5]
+
+    def __getattr__(self, name: str) -> Any:
+        def call(*args):
+            message = "%".join([name, *(str(arg) for arg in args)])
+            return self._post_message(message)
+        return call

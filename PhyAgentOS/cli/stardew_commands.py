@@ -49,7 +49,7 @@ def stardew_benchmark(
         help="Stardew bridge HTTP base URL",
     ),
     max_steps: int = typer.Option(30, "--max-steps", "-n", help="Maximum benchmark steps"),
-    timeout: float = typer.Option(60.0, "--timeout", help="HTTP timeout in seconds"),
+    timeout: float = typer.Option(180.0, "--timeout", help="HTTP timeout in seconds"),
     agent_timeout: float = typer.Option(900.0, "--agent-timeout", help="Maximum seconds to wait for paos agent"),
     config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
     workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),

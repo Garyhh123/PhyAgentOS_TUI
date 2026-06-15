@@ -23,7 +23,7 @@
 
 **关键设计**：
 - Stardew bridge 已放入 OS 内部：`runtime/adapters/stardewvalley/bridge/`
-- StarDojo 源码已随 adapter 一起放入：`runtime/adapters/stardewvalley/stardojo/`
+- StarDojo 需要从官方仓库下载至：`runtime/adapters/stardewvalley/`
 - OS 当前通过 HTTP 调用 bridge，不直接嵌入 SMAPI 协议
 - 手动控制可以让 Agent 通过 exec/curl 调 bridge
 - benchmark supervisor 启动正常 `paos agent`，由正式 Track A tools 驱动 bridge
@@ -57,7 +57,6 @@ PhyAgentOS/PhyAgentOS/runtime/adapters/stardewvalley/
     obs_compact.py         # 压缩 StarDojo observation，转 JSON-safe
     stardew_runtime.py     # StarDojo runtime wrapper，串行 observe/execute
     bridge_server.py       # Starlette/uvicorn HTTP API
-  stardojo/                # 内置 StarDojo 源码、Mod、game data
   target_adapter.py        # PhyAgentOS adapter，注册为 stardewvalley_adapter
   tests/                   # bridge 单元测试
   Stardew Valley README.md # 本部署文档
@@ -92,11 +91,9 @@ Stardew Valley.exe
 ### 3.2 安装 StardojoMod
 
 下载编译好的 StardojoMod ，然后放入 Stardew Valley 的 `Mods` 目录。
-
-本仓库内置 StarDojo 位置：
-
+下载链接：
 ```text
-下载链接：https://github.com/StarDojo2025/stardojo#:~:text=Download%20StarDojoMod%20from%20Nexus%20Mods
+https://github.com/StarDojo2025/stardojo#:~:text=Download%20StarDojoMod%20from%20Nexus%20Mods
 ```
 
 启动游戏后，SMAPI 控制台应显示 StardojoMod 已加载，并监听：
@@ -118,10 +115,12 @@ micromamba activate stardojo
 pip install starlette uvicorn
 ```
 
-安装 StarDojo 依赖：
+安装 StarDojo 仓库和依赖：
 
 ```powershell
-cd "E:\Project\Stardew Valley\PhyAgentOS\PhyAgentOS\runtime\adapters\stardewvalley\stardojo"
+cd ".\PhyAgentOS\runtime\adapters\stardewvalley"
+git clone https://github.com/StarDojo2025/stardojo.git
+cd ./stardojo
 pip install -r requirements.txt
 powershell -ExecutionPolicy Bypass -File .\setup.ps1
 ```
@@ -148,7 +147,6 @@ powershell -ExecutionPolicy Bypass -File .\setup.ps1
 
 ```powershell
 micromamba activate stardojo
-cd "E:\Project\Stardew Valley\PhyAgentOS"
 python -m PhyAgentOS.runtime.adapters.stardewvalley --host 0.0.0.0 --port 8765 --stardojo-port 10783
 ```
 
@@ -408,7 +406,6 @@ choose_option(option_index, quantity, "in"|"out")
 确保 Windows bridge 已启动后，在 WSL/PhyAgentOS 环境运行：
 
 ```bash
-cd /mnt/e/project/stardew\ valley/PhyAgentOS
 micromamba activate phyagentos
 paos stardew benchmark farming_lite 0 --max-steps 30 --bridge-url http://127.0.0.1:8765
 ```

@@ -48,7 +48,17 @@ def create_app(runtime: Any, benchmark_runtime: Any | None = None):
 
     async def health(_request: Request) -> JSONResponse:
         stardojo_port = getattr(runtime, "stardojo_port", None)
-        return JSONResponse({"ok": True, "stardojo_port": stardojo_port})
+        action_proxy = getattr(runtime, "env", None)
+        action_proxy = getattr(action_proxy, "action_proxy", None)
+        action_proxy_class = type(action_proxy) if action_proxy is not None else None
+        return JSONResponse(
+            {
+                "ok": True,
+                "stardojo_port": stardojo_port,
+                "fast_recv": bool(getattr(action_proxy_class, "_phyagentos_fast_recv", False)),
+                "action_proxy_class": str(action_proxy_class) if action_proxy_class is not None else None,
+            }
+        )
 
     async def observe(request: Request) -> JSONResponse:
         try:
@@ -174,7 +184,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--stardojo-root",
         default=None,
-        help="Path to the StarDojo repo. Defaults to the bundled stardojo directory.",
+        help="Path to the StarDojo repo. Defaults to runtime/adapters/stardewvalley/stardojo.",
+    )
+    parser.add_argument(
+        "--stardew-app-path",
+        default=None,
+        help="Optional path to StardewModdingAPI.exe. Usually not needed when the bridge attaches to an already-running SMAPI instance.",
     )
     parser.add_argument(
         "--image-save-path",
@@ -195,6 +210,7 @@ def main(argv: list[str] | None = None) -> None:
     runtime = StardewRuntime(
         stardojo_port=args.stardojo_port,
         stardojo_root=args.stardojo_root,
+        stardew_app_path=args.stardew_app_path,
         image_save_path=image_save_path,
         compact=not args.full_obs,
     )

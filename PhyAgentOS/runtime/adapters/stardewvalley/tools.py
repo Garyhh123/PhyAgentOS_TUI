@@ -29,7 +29,7 @@ class StardewActionTool(Tool):
         *,
         bridge_url: str = _DEFAULT_BRIDGE_URL,
         mode: str = "normal",
-        timeout: float = 60.0,
+        timeout: float = 180.0,
         run_dir: str | Path | None = None,
     ) -> None:
         self.bridge_url = bridge_url.rstrip("/")
@@ -141,7 +141,7 @@ class StardewObserveTool(Tool):
         self,
         *,
         bridge_url: str = _DEFAULT_BRIDGE_URL,
-        timeout: float = 60.0,
+        timeout: float = 180.0,
         run_dir: str | Path | None = None,
     ) -> None:
         self.bridge_url = bridge_url.rstrip("/")
@@ -189,7 +189,7 @@ def register_stardew_tools_from_env(registry: ToolRegistry) -> bool:
     bridge_url = os.environ.get("PHYAGENTOS_STARDEW_BRIDGE_URL", _DEFAULT_BRIDGE_URL)
     mode = os.environ.get("PHYAGENTOS_STARDEW_MODE", "normal").strip().lower() or "normal"
     run_dir = os.environ.get("PHYAGENTOS_STARDEW_RUN_DIR") or None
-    timeout = _float_env("PHYAGENTOS_STARDEW_TIMEOUT", 60.0)
+    timeout = _float_env("PHYAGENTOS_STARDEW_TIMEOUT", 180.0)
 
     registry.register(StardewActionTool(bridge_url=bridge_url, mode=mode, timeout=timeout, run_dir=run_dir))
     registry.register(StardewObserveTool(bridge_url=bridge_url, timeout=timeout, run_dir=run_dir))
