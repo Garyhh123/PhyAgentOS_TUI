@@ -157,6 +157,12 @@ class AgentLoop:
             self.tools.register(ImageTool(self.provider, send_callback=self.bus.publish_outbound))
 
         self.tools.register(SceneGraphQueryTool(workspace=self.workspace))
+        try:
+            from PhyAgentOS.runtime.adapters.stardewvalley.tools import register_stardew_tools_from_env
+
+            register_stardew_tools_from_env(self.tools)
+        except Exception as exc:
+            logger.warning("Failed to register Stardew tools: {}", exc)
 
     async def _connect_mcp(self) -> None:
         """Connect to configured MCP servers (one-time, lazy)."""

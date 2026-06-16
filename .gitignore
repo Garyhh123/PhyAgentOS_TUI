@@ -26,3 +26,8 @@ test
 .vscode
 
 workspaces
+
+# External StarDojo checkout used by the Stardew adapter. Do not commit upstream code.
+PhyAgentOS/runtime/adapters/stardewvalley/stardojo/
+
+screen_shot_buffer/

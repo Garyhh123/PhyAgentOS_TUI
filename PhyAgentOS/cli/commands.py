@@ -992,5 +992,14 @@ from PhyAgentOS.cli.minecraft_commands import minecraft_app
 app.add_typer(minecraft_app, name="minecraft")
 
 
+# ============================================================================
+# Stardew Valley Commands
+# ============================================================================
+
+from PhyAgentOS.cli.stardew_commands import stardew_app
+
+app.add_typer(stardew_app, name="stardew")
+
+
 if __name__ == "__main__":
     app()
