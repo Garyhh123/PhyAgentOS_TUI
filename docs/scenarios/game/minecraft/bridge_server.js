@@ -182,6 +182,13 @@ function eyeToBlockDistance(block) {
     return block.position.offset(0.5, 0.5, 0.5).distanceTo(bot.entity.position.offset(0, bot.entity.eyeHeight, 0));
 }
 
+function isPlacementCollidingWithBot(placeTarget) {
+    if (!bot?.entity || !placeTarget) return false;
+    const feet = bot.entity.position.floored();
+    const head = feet.offset(0, 1, 0);
+    return placeTarget.equals(feet) || placeTarget.equals(head);
+}
+
 async function digBlockWithTimeout(block, timeoutMs) {
     const digPromise = bot.dig(block, true);
     const timeoutPromise = new Promise((_, reject) => {
@@ -224,8 +231,14 @@ function executeAction(action) {
                 case 'look': {
                     const yaw = p.yaw != null ? parseFloat(p.yaw) * Math.PI / 180 : bot.entity.yaw;
                     const pitch = p.pitch != null ? parseFloat(p.pitch) * Math.PI / 180 : bot.entity.pitch;
-                    bot.look(yaw, pitch, true);
-                    resolve({ ok: true, result: 'ok' });
+                    (async () => {
+                        try {
+                            await bot.look(yaw, pitch, true);
+                            resolve({ ok: true, result: 'ok' });
+                        } catch (e) {
+                            resolve({ ok: false, result: e?.message || String(e) });
+                        }
+                    })();
                     break;
                 }
                 case 'jump': bot.setControlState('jump', true); setTimeout(() => bot.setControlState('jump', false), parseInt(p.duration_ms || 500)); resolve({ ok: true, result: 'ok' }); break;
@@ -243,7 +256,7 @@ function executeAction(action) {
                     if (!b.diggable) return resolve({ ok: false, result: `${b.name} is not diggable` });
                     const distance = eyeToBlockDistance(b);
                     if (distance > 5.1 || !bot.canDigBlock(b)) {
-                        return resolve({ ok: false, result: `block out of reach (${distance.toFixed(2)} > 5.10)` });
+                        return resolve({ ok: false, result: `dig failed: too far (${distance.toFixed(2)} > 5.10)` });
                     }
                     activeDig = { position: b.position.clone(), startedAt: Date.now() };
                     (async () => {
@@ -268,7 +281,48 @@ function executeAction(action) {
                     const rb = bot.blockAt(new Vec3(Math.floor(p.x), Math.floor(p.y), Math.floor(p.z)));
                     if (!rb) return resolve({ ok: false, result: 'no reference block' });
                     const fv = [{ x: 0, y: -1, z: 0 }, { x: 0, y: 1, z: 0 }, { x: 0, y: 0, z: -1 }, { x: 0, y: 0, z: 1 }, { x: -1, y: 0, z: 0 }, { x: 1, y: 0, z: 0 }];
-                    bot.placeBlock(rb, fv[parseInt(p.face) || 1], (e) => resolve(e ? { ok: false, result: e.message } : { ok: true, result: 'placed' })); break;
+                    const faceIndex = parseInt(p.face) || 1;
+                    const placeTarget = rb.position.offset(fv[faceIndex].x, fv[faceIndex].y, fv[faceIndex].z);
+                    const targetBlock = bot.blockAt(placeTarget);
+                    if (isPlacementCollidingWithBot(placeTarget)) {
+                        return resolve({
+                            ok: false,
+                            result: 'place failed: collision with bot',
+                            placed_at: { x: placeTarget.x, y: placeTarget.y, z: placeTarget.z },
+                            reference_block: { x: rb.position.x, y: rb.position.y, z: rb.position.z },
+                            face: faceIndex
+                        });
+                    }
+                    if (targetBlock && targetBlock.name !== 'air') {
+                        return resolve({
+                            ok: false,
+                            result: `place failed: target occupied by ${targetBlock.name}`,
+                            placed_at: { x: placeTarget.x, y: placeTarget.y, z: placeTarget.z },
+                            reference_block: { x: rb.position.x, y: rb.position.y, z: rb.position.z },
+                            face: faceIndex
+                        });
+                    }
+                    (async () => {
+                        try {
+                            await bot.placeBlock(rb, fv[faceIndex]);
+                            resolve({
+                                ok: true,
+                                result: 'placed',
+                                placed_at: { x: placeTarget.x, y: placeTarget.y, z: placeTarget.z },
+                                reference_block: { x: rb.position.x, y: rb.position.y, z: rb.position.z },
+                                face: faceIndex
+                            });
+                        } catch (e) {
+                            resolve({
+                                ok: false,
+                                result: e?.message || String(e),
+                                placed_at: { x: placeTarget.x, y: placeTarget.y, z: placeTarget.z },
+                                reference_block: { x: rb.position.x, y: rb.position.y, z: rb.position.z },
+                                face: faceIndex
+                            });
+                        }
+                    })();
+                    break;
                 }
                 case 'attack': {
                     let target = p.entity_id ? bot.entities[p.entity_id] : null;
@@ -276,34 +330,102 @@ function executeAction(action) {
                     if (!target) return resolve({ ok: false, result: 'no target' });
                     bot.attack(target); resolve({ ok: true, result: 'attacked' }); break;
                 }
-                case 'interact': { const e = bot.entities[p.entity_id]; if (!e) return resolve({ ok: false, result: 'entity not found' }); bot.activateEntity(e); resolve({ ok: true, result: 'ok' }); break; }
+                case 'interact': {
+                    const e = bot.entities[p.entity_id];
+                    if (!e) return resolve({ ok: false, result: 'entity not found' });
+                    (async () => {
+                        try {
+                            await bot.activateEntity(e);
+                            resolve({ ok: true, result: 'ok' });
+                        } catch (e2) {
+                            resolve({ ok: false, result: e2?.message || String(e2) });
+                        }
+                    })();
+                    break;
+                }
                 case 'use': bot.activateItem(); resolve({ ok: true, result: 'ok' }); break;
                 case 'select_slot': { const s = Math.max(0, Math.min(8, parseInt(p.slot || 0))); bot.setQuickBarSlot(s); resolve({ ok: true, result: `slot ${s}` }); break; }
-                case 'drop': { const it = p.slot != null ? bot.inventory.slots[parseInt(p.slot)] : bot.inventory.slots[bot.quickBarSlot]; if (!it) return resolve({ ok: false, result: 'nothing to drop' }); bot.tossStack(it); resolve({ ok: true, result: `dropped ${it.name}` }); break; }
+                case 'drop': {
+                    const it = p.slot != null ? bot.inventory.slots[parseInt(p.slot)] : bot.inventory.slots[bot.quickBarSlot];
+                    if (!it) return resolve({ ok: false, result: 'nothing to drop' });
+                    (async () => {
+                        try {
+                            await bot.tossStack(it);
+                            resolve({ ok: true, result: `dropped ${it.name}` });
+                        } catch (e) {
+                            resolve({ ok: false, result: e?.message || String(e) });
+                        }
+                    })();
+                    break;
+                }
                 case 'chat': { const m = String(p.message || ''); if (!m) return resolve({ ok: false, result: 'empty' }); bot.chat(m); resolve({ ok: true, result: `sent: ${m}` }); break; }
                 case 'collect': {
                     const mcData = require('minecraft-data')(bot.version);
-                    const it = mcData.itemsByName[p.block_type] || mcData.blocksByName[p.block_type];
-                    if (!it) return resolve({ ok: false, result: `unknown: ${p.block_type}` });
-                    console.log(`[bridge] collect: ${p.block_type} x${p.count} (id=${it.id})`);
-                    try {
-                        bot.collectBlock.collect(it, { count: parseInt(p.count || 1) }, (e) => {
-                            if (e) console.log(`[bridge] collect failed: ${e.message}`);
-                            else console.log(`[bridge] collect done: ${p.count}x ${p.block_type}`);
-                            resolve(e ? { ok: false, result: e.message } : { ok: true, result: `collected ${p.count}x ${p.block_type}` });
-                        });
-                    } catch (e2) {
-                        console.log(`[bridge] collectBlock threw: ${e2.message}`);
-                        resolve({ ok: false, result: `collectBlock error: ${e2.message}` });
-                    }
+                    const blockDef = mcData.blocksByName[p.block_type];
+                    if (!blockDef) return resolve({ ok: false, result: `unknown or unsupported block_type: ${p.block_type}` });
+                    const requestedCount = Math.max(1, parseInt(p.count || 1, 10));
+                    const found = bot.findBlocks({
+                        matching: blockDef.id,
+                        maxDistance: parseInt(p.max_distance || 64, 10),
+                        count: requestedCount
+                    });
+                    if (!found.length) return resolve({ ok: false, result: `no matching block found: ${p.block_type}` });
+                    const targets = found
+                        .map((pos) => bot.blockAt(pos))
+                        .filter((block) => block && block.name !== 'air');
+                    if (!targets.length) return resolve({ ok: false, result: `no collectable target found: ${p.block_type}` });
+                    console.log(`[bridge] collect: ${p.block_type} x${requestedCount} (targets=${targets.length})`);
+                    (async () => {
+                        try {
+                            await bot.collectBlock.collect(targets.slice(0, requestedCount));
+                            console.log(`[bridge] collect done: ${requestedCount}x ${p.block_type}`);
+                            resolve({ ok: true, result: `collected ${targets.slice(0, requestedCount).length}x ${p.block_type}` });
+                        } catch (e2) {
+                            console.log(`[bridge] collect failed: ${e2.message}`);
+                            resolve({ ok: false, result: e2?.message || String(e2) });
+                        }
+                    })();
                     break;
                 }
-                case 'equip': { const item = bot.inventory.items().find(i => i.name === p.item); if (!item) return resolve({ ok: false, result: `no ${p.item}` }); bot.equip(item, p.destination || 'hand', (e) => resolve(e ? { ok: false, result: e.message } : { ok: true, result: 'ok' })); break; }
+                case 'equip': {
+                    const item = bot.inventory.items().find(i => i.name === p.item);
+                    if (!item) return resolve({ ok: false, result: `no ${p.item}` });
+                    (async () => {
+                        try {
+                            await bot.equip(item, p.destination || 'hand');
+                            resolve({ ok: true, result: 'ok' });
+                        } catch (e) {
+                            resolve({ ok: false, result: e?.message || String(e) });
+                        }
+                    })();
+                    break;
+                }
                 case 'craft': {
                     const mcData = require('minecraft-data')(bot.version);
                     const id = mcData.itemsByName[p.recipe_id]; if (!id) return resolve({ ok: false, result: `unknown: ${p.recipe_id}` });
-                    const recipes = bot.recipesFor(id.id, null, 1, null); if (!recipes.length) return resolve({ ok: false, result: 'no recipe' });
-                    bot.craft(recipes[0], parseInt(p.count || 1), null, (e) => resolve(e ? { ok: false, result: e.message } : { ok: true, result: `crafted ${p.count}x ${p.recipe_id}` })); break;
+                    let craftingTable = null;
+                    let recipes = bot.recipesFor(id.id, null, 1, null);
+                    if (!recipes.length) {
+                        const tableId = mcData.blocksByName.crafting_table?.id;
+                        if (tableId != null) {
+                            const tablePos = bot.findBlock({ matching: tableId, maxDistance: parseInt(p.max_distance || 8, 10) });
+                            if (tablePos) {
+                                craftingTable = tablePos;
+                                recipes = bot.recipesFor(id.id, null, 1, craftingTable);
+                            }
+                        }
+                    }
+                    if (!recipes.length) return resolve({ ok: false, result: 'no recipe' });
+                    if (recipes[0].requiresTable && !craftingTable) return resolve({ ok: false, result: 'recipe requires crafting table' });
+                    (async () => {
+                        try {
+                            await bot.craft(recipes[0], parseInt(p.count || 1, 10), craftingTable);
+                            resolve({ ok: true, result: `crafted ${p.count}x ${p.recipe_id}` });
+                        } catch (e) {
+                            resolve({ ok: false, result: e?.message || String(e) });
+                        }
+                    })();
+                    break;
                 }
                 default: resolve({ ok: false, result: `unknown type: ${t}` });
             }
