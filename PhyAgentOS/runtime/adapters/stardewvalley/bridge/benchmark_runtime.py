@@ -194,10 +194,8 @@ def _load_task(task_name: str, task_id: int) -> Any:
 
 
 def _make_task_proxy(port: int) -> Any:
-    try:
-        from env.tasks.utils.init_task import InitTaskProxy
-    except Exception as exc:
-        raise RuntimeError("Failed to import StarDojo InitTaskProxy.") from exc
+    # StarDojo import availability is already validated by _load_task above;
+    # this factory only builds our timeout-hardened proxy wrapper.
     return TimeoutInitTaskProxy(port)
 
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 import sys
 from datetime import datetime
@@ -14,12 +13,6 @@ from typing import Any
 import httpx
 import typer
 from rich.console import Console
-
-from PhyAgentOS.runtime.adapters.stardewvalley.bridge.action_parser import (
-    ActionParseError,
-    allowed_skill_names,
-    parse_skill_expression,
-)
 
 console = Console()
 stardew_app = typer.Typer(help="Stardew Valley benchmark runner")
@@ -352,59 +345,3 @@ def _print_benchmark_state(label: str, benchmark: dict[str, Any]) -> None:
             label=label,
         )
     )
-
-
-
-# Compatibility helper for older CLI parser tests. The Track A benchmark supervisor
-# no longer uses ACTION text parsing in the execution path.
-def _extract_action(raw: str) -> str:
-    text = _strip_think(raw).strip()
-    text = _strip_code_fence(text).strip()
-
-    for line in reversed(text.splitlines()):
-        stripped = line.strip()
-        if stripped.upper().startswith("ACTION:"):
-            action = stripped.split(":", 1)[1].strip()
-            parse_skill_expression(action)
-            return action
-
-    try:
-        parsed = json.loads(text)
-        if isinstance(parsed, dict) and isinstance(parsed.get("action"), str):
-            text = parsed["action"].strip()
-    except Exception:
-        pass
-
-    candidates = [text]
-    candidates.extend(line.strip().strip("`") for line in text.splitlines())
-    for skill in allowed_skill_names():
-        pattern = rf"\b{re.escape(skill)}\s*\([^\n]*\)"
-        candidates.extend(match.group(0) for match in re.finditer(pattern, text))
-
-    for candidate in candidates:
-        candidate = candidate.strip()
-        if not candidate:
-            continue
-        try:
-            parse_skill_expression(candidate)
-        except ActionParseError:
-            continue
-        return candidate
-
-    raise ActionParseError("LLM output did not contain a valid Stardew action.")
-
-
-def _strip_think(text: str) -> str:
-    return re.sub(r"<think>[\s\S]*?</think>", "", text).strip()
-
-
-def _strip_code_fence(text: str) -> str:
-    if "```" not in text:
-        return text
-    parts = text.split("```")
-    if len(parts) < 3:
-        return text
-    block = parts[1].strip()
-    if block.startswith(("python", "text", "json")):
-        block = block.split("\n", 1)[1] if "\n" in block else ""
-    return block.strip()

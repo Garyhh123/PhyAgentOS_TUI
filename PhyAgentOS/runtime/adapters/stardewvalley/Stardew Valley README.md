@@ -615,9 +615,9 @@ supervisor 负责停止和汇总
 | `runtime/adapters/stardewvalley/bridge/stardew_runtime.py` | StarDojo runtime wrapper |
 | `runtime/adapters/stardewvalley/bridge/bridge_server.py` | HTTP bridge API |
 | `runtime/adapters/stardewvalley/target_adapter.py` | PhyAgentOS target adapter |
-| `runtime/adapters/stardewvalley/stardojo/` | 内置 StarDojo 代码和 Mod |
+| `runtime/adapters/stardewvalley/stardojo/` | 外部 git clone 的 StarDojo 代码（已 gitignore，不入库） |
 | `runtime/adapters/factory.py` | 注册 `stardewvalley_adapter` |
-| `pyproject.toml` | include 内置 StarDojo 资源 |
+| `pyproject.toml` | OS 包配置（不再打包 StarDojo，运行时从外部 clone 加载） |
 | `runtime/adapters/stardewvalley/tests/` | bridge 单元测试 |
 
 ---
