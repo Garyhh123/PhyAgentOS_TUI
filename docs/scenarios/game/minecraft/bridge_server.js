@@ -38,6 +38,7 @@ const STATE_RADIUS = parseInt(process.env.STATE_RADIUS || '5', 10);
 let bot = null, botSpawned = false, spawnTime = 0;
 let viewerStarted = false; // prismarine-viewer binds a port once; spawn fires again on respawn
 let recentChats = []; // recent chat messages from other players, exposed via /state last_chats
+let activeDig = null; // prevent overlapping digs from aborting each other
 
 // ── Benchmark phase tracking ────────────────────────────────────
 // Mirror of PhyAgentOS/benchmarks/minecraft/techtree phase semantics.
@@ -172,6 +173,30 @@ function getState() {
     };
 }
 
+function clearActiveDig() {
+    activeDig = null;
+}
+
+function eyeToBlockDistance(block) {
+    if (!bot?.entity || !block?.position) return Infinity;
+    return block.position.offset(0.5, 0.5, 0.5).distanceTo(bot.entity.position.offset(0, bot.entity.eyeHeight, 0));
+}
+
+async function digBlockWithTimeout(block, timeoutMs) {
+    const digPromise = bot.dig(block, true);
+    const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error(`dig timeout after ${timeoutMs}ms`)), timeoutMs);
+    });
+    try {
+        await Promise.race([digPromise, timeoutPromise]);
+    } catch (e) {
+        if (String(e?.message || e).includes('dig timeout')) {
+            try { bot.stopDigging(); } catch (_) {}
+        }
+        throw e;
+    }
+}
+
 // ── Actions ─────────────────────────────────────────────────────
 function executeAction(action) {
     return new Promise((resolve) => {
@@ -208,9 +233,35 @@ function executeAction(action) {
                 case 'sprint': bot.setControlState('sprint', p.start !== false); resolve({ ok: true, result: 'ok' }); break;
                 case 'dig': {
                     const Vec3 = bot.entity.position.constructor;
+                    const timeoutMs = Math.max(500, parseInt(p.timeout_ms || 8000, 10));
                     const b = bot.blockAt(new Vec3(Math.floor(p.x), Math.floor(p.y), Math.floor(p.z)));
                     if (!b || b.name === 'air') return resolve({ ok: false, result: 'no block' });
-                    bot.dig(b, (e) => resolve(e ? { ok: false, result: e.message } : { ok: true, result: `dug ${b.name}` })); break;
+                    if (activeDig) {
+                        const sameTarget = activeDig.position?.equals?.(b.position);
+                        return resolve({ ok: false, result: sameTarget ? 'dig already in progress for target' : 'another dig already in progress' });
+                    }
+                    if (!b.diggable) return resolve({ ok: false, result: `${b.name} is not diggable` });
+                    const distance = eyeToBlockDistance(b);
+                    if (distance > 5.1 || !bot.canDigBlock(b)) {
+                        return resolve({ ok: false, result: `block out of reach (${distance.toFixed(2)} > 5.10)` });
+                    }
+                    activeDig = { position: b.position.clone(), startedAt: Date.now() };
+                    (async () => {
+                        try {
+                            await digBlockWithTimeout(b, timeoutMs);
+                            resolve({ ok: true, result: `dug ${b.name}` });
+                        } catch (e) {
+                            const message = e?.message || String(e);
+                            if (message === 'Digging aborted') {
+                                resolve({ ok: false, result: 'dig aborted' });
+                            } else {
+                                resolve({ ok: false, result: message });
+                            }
+                        } finally {
+                            clearActiveDig();
+                        }
+                    })();
+                    break;
                 }
                 case 'place': {
                     const Vec3 = bot.entity.position.constructor;
