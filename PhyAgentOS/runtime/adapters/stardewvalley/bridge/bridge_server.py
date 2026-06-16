@@ -14,11 +14,11 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[5]))
     from PhyAgentOS.runtime.adapters.stardewvalley.bridge.action_parser import ActionParseError
     from PhyAgentOS.runtime.adapters.stardewvalley.bridge.benchmark_runtime import BenchmarkError, BenchmarkRuntime
-    from PhyAgentOS.runtime.adapters.stardewvalley.bridge.stardew_runtime import StardewRuntime
+    from PhyAgentOS.runtime.adapters.stardewvalley.bridge.stardew_runtime import RuntimeBusyError, StardewRuntime
 else:
     from .action_parser import ActionParseError
     from .benchmark_runtime import BenchmarkError, BenchmarkRuntime
-    from .stardew_runtime import StardewRuntime
+    from .stardew_runtime import RuntimeBusyError, StardewRuntime
 
 
 def create_app(runtime: Any, benchmark_runtime: Any | None = None):
@@ -46,24 +46,27 @@ def create_app(runtime: Any, benchmark_runtime: Any | None = None):
             obs["latest_image_url"] = None
         return obs
 
-    async def health(_request: Request) -> JSONResponse:
+    async def health(request: Request) -> JSONResponse:
         stardojo_port = getattr(runtime, "stardojo_port", None)
-        action_proxy = getattr(runtime, "env", None)
-        action_proxy = getattr(action_proxy, "action_proxy", None)
-        action_proxy_class = type(action_proxy) if action_proxy is not None else None
-        return JSONResponse(
-            {
-                "ok": True,
-                "stardojo_port": stardojo_port,
-                "fast_recv": bool(getattr(action_proxy_class, "_phyagentos_fast_recv", False)),
-                "action_proxy_class": str(action_proxy_class) if action_proxy_class is not None else None,
-            }
-        )
+        payload = {"ok": True, "stardojo_port": stardojo_port}
+        if request.query_params.get("debug") in {"1", "true", "yes", "on"}:
+            action_proxy = getattr(runtime, "env", None)
+            action_proxy = getattr(action_proxy, "action_proxy", None)
+            action_proxy_class = type(action_proxy) if action_proxy is not None else None
+            payload.update(
+                {
+                    "fast_recv": bool(getattr(action_proxy_class, "_phyagentos_fast_recv", False)),
+                    "action_proxy_class": str(action_proxy_class) if action_proxy_class is not None else None,
+                }
+            )
+        return JSONResponse(payload)
 
     async def observe(request: Request) -> JSONResponse:
         try:
             obs = await _call_runtime(runtime.observe)
             obs = prepare_obs(obs, request)
+        except RuntimeBusyError as exc:
+            return _error_response(exc, status_code=409)
         except Exception as exc:
             return _error_response(exc, status_code=500)
         return JSONResponse({"ok": True, "obs": obs})
@@ -86,6 +89,8 @@ def create_app(runtime: Any, benchmark_runtime: Any | None = None):
             obs = prepare_obs(obs, request)
         except ActionParseError as exc:
             return _error_response(exc, status_code=400)
+        except RuntimeBusyError as exc:
+            return _error_response(exc, status_code=409)
         except Exception as exc:
             return _error_response(exc, status_code=500)
         return JSONResponse({"ok": True, "action": action, "obs": obs})
@@ -109,6 +114,8 @@ def create_app(runtime: Any, benchmark_runtime: Any | None = None):
             obs = prepare_obs(result["obs"], request)
         except BenchmarkError as exc:
             return _error_response(exc, status_code=400)
+        except RuntimeBusyError as exc:
+            return _error_response(exc, status_code=409)
         except Exception as exc:
             return _error_response(exc, status_code=500)
         return JSONResponse({"ok": True, "obs": obs, "benchmark": result["benchmark"]})
@@ -135,6 +142,8 @@ def create_app(runtime: Any, benchmark_runtime: Any | None = None):
             obs = prepare_obs(result["obs"], request)
         except (ActionParseError, BenchmarkError) as exc:
             return _error_response(exc, status_code=400)
+        except RuntimeBusyError as exc:
+            return _error_response(exc, status_code=409)
         except Exception as exc:
             return _error_response(exc, status_code=500)
         return JSONResponse({"ok": True, "action": action, "obs": obs, "benchmark": result["benchmark"]})

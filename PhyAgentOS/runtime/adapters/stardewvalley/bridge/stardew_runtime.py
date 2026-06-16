@@ -15,6 +15,10 @@ from .action_parser import execute_skill_expression
 from .obs_compact import compact_obs, image_paths_from_obs, to_jsonable
 
 
+class RuntimeBusyError(RuntimeError):
+    """Raised when a previous StarDojo call is still running."""
+
+
 class StardewRuntime:
     """Long-lived StarDojo runtime used by the HTTP bridge."""
 
@@ -88,7 +92,7 @@ class StardewRuntime:
     def _runtime_lock(self, timeout: float | None = None):
         acquired = self._lock.acquire(timeout=self.lock_timeout if timeout is None else timeout)
         if not acquired:
-            raise RuntimeError("Stardew runtime is busy. A previous game call may still be waiting for SMAPI.")
+            raise RuntimeBusyError("Stardew runtime is busy. A previous game call may still be waiting for SMAPI; do not issue another Stardew action yet.")
         try:
             yield
         finally:
@@ -208,10 +212,13 @@ def _patch_action_proxy_post_message(action_proxy_class: Any) -> None:
         response: list[bytes] = []
         try:
             client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            if "move" in message or "observe" in message or "get_surroundings" in message or "wait_for_server" in message:
-                client_socket.settimeout(30)
+            if "observe" in message or "get_surroundings" in message or "wait_for_server" in message:
+                client_socket.settimeout(120)
             else:
-                client_socket.settimeout(getattr(self, "timeout", 5))
+                # Small actions such as choose_item can still wait for the SMAPI
+                # main thread. Five seconds is too aggressive and causes false
+                # timeouts that make the agent retry while the old call is alive.
+                client_socket.settimeout(max(float(getattr(self, "timeout", 5)), 30.0))
 
             result = client_socket.connect_ex(("127.0.0.1", self.port))
             reconnect_time = 0

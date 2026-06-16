@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 import socket
 from threading import Lock
 from typing import Any, Callable
 
 from .obs_compact import to_jsonable
+from .stardew_runtime import RuntimeBusyError
 
 
 class BenchmarkError(RuntimeError):
@@ -61,7 +63,7 @@ class BenchmarkRuntime:
         if max_steps is not None:
             max_steps = _validate_max_steps(max_steps)
 
-        with self._lock:
+        with self._session_lock(timeout=1.0):
             task = self.task_loader(task_name, task_id)
             if task is None:
                 raise BenchmarkError(f"Unknown benchmark task: {task_name}[{task_id}]")
@@ -85,14 +87,14 @@ class BenchmarkRuntime:
     def status(self) -> dict[str, Any]:
         """Return the current benchmark session status."""
 
-        with self._lock:
+        with self._session_lock(timeout=1.0):
             return self._status_unlocked()
 
     def execute(self, action: str) -> dict[str, Any]:
         """Execute one action and evaluate the active benchmark task."""
 
         action = _validate_action(action)
-        with self._lock:
+        with self._session_lock(timeout=1.0):
             session = self._require_session()
             if session.completed:
                 raise BenchmarkError("Benchmark session is already completed.")
@@ -119,12 +121,25 @@ class BenchmarkRuntime:
     def stop(self) -> dict[str, Any]:
         """Stop the active session and return its final status."""
 
-        with self._lock:
+        with self._session_lock(timeout=1.0):
             status = self._status_unlocked()
             self._session = None
             status["active"] = False
             status["stopped"] = True
             return status
+
+
+    @contextmanager
+    def _session_lock(self, timeout: float | None = None):
+        acquired = self._lock.acquire(timeout=1.0 if timeout is None else timeout)
+        if not acquired:
+            raise RuntimeBusyError(
+                "Stardew benchmark runtime is busy. A previous benchmark call is still running."
+            )
+        try:
+            yield
+        finally:
+            self._lock.release()
 
     def _evaluate(self, task: Any, raw_obs: dict[str, Any], task_proxy: Any) -> dict[str, Any]:
         result = task.evaluate(raw_obs, task_proxy)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from datetime import datetime
@@ -19,6 +20,11 @@ from PhyAgentOS.runtime.adapters.stardewvalley.bridge.action_parser import (
 
 
 _DEFAULT_BRIDGE_URL = "http://127.0.0.1:8765"
+_BUSY_RETRY_DELAYS = (2.0, 5.0, 10.0)
+
+
+class BridgeBusyError(RuntimeError):
+    """Raised when the bridge reports an in-flight Stardew call."""
 
 
 class StardewActionTool(Tool):
@@ -83,8 +89,27 @@ class StardewActionTool(Tool):
         path = "/benchmark/execute" if self.mode == "benchmark" else "/execute"
         try:
             async with httpx.AsyncClient(base_url=self.bridge_url, timeout=self.timeout, trust_env=False) as client:
-                response = await client.post(path, json={"action": action})
-            payload = _response_json(response)
+                payload = await _request_json_with_busy_retry(client, "POST", path, json={"action": action})
+        except BridgeBusyError as exc:
+            record = {
+                "timestamp": _now_iso(),
+                "tool": self.name,
+                "type": "bridge_busy",
+                "mode": self.mode,
+                "action": action,
+                "error": str(exc),
+            }
+            self._append_log(record)
+            return json.dumps(
+                {
+                    "ok": False,
+                    "busy": True,
+                    "action": action,
+                    "error": str(exc),
+                    "instruction": "The bridge is still processing a previous Stardew call. Do not issue another different Stardew action immediately; wait briefly and retry or summarize the environment issue.",
+                },
+                ensure_ascii=False,
+            )
         except Exception as exc:
             record = {
                 "timestamp": _now_iso(),
@@ -163,8 +188,18 @@ class StardewObserveTool(Tool):
     async def execute(self) -> str:
         try:
             async with httpx.AsyncClient(base_url=self.bridge_url, timeout=self.timeout, trust_env=False) as client:
-                response = await client.get("/observe")
-            payload = _response_json(response)
+                payload = await _request_json_with_busy_retry(client, "GET", "/observe")
+        except BridgeBusyError as exc:
+            self._append_log({"timestamp": _now_iso(), "tool": self.name, "type": "bridge_busy", "error": str(exc)})
+            return json.dumps(
+                {
+                    "ok": False,
+                    "busy": True,
+                    "error": str(exc),
+                    "instruction": "The bridge is still processing a previous Stardew call. Wait briefly before observing again.",
+                },
+                ensure_ascii=False,
+            )
         except Exception as exc:
             self._append_log({"timestamp": _now_iso(), "tool": self.name, "type": "tool_error", "error": str(exc)})
             return f"Error: {exc}"
@@ -196,11 +231,36 @@ def register_stardew_tools_from_env(registry: ToolRegistry) -> bool:
     return True
 
 
+
+async def _request_json_with_busy_retry(
+    client: httpx.AsyncClient,
+    method: str,
+    path: str,
+    *,
+    json: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    last_busy: BridgeBusyError | None = None
+    for attempt, delay in enumerate((*_BUSY_RETRY_DELAYS, 0.0), start=1):
+        response = await client.request(method, path, json=json)
+        try:
+            return _response_json(response)
+        except BridgeBusyError as exc:
+            last_busy = exc
+            if delay <= 0:
+                break
+            await asyncio.sleep(delay)
+    if last_busy is not None:
+        raise last_busy
+    raise RuntimeError("Bridge request failed without a response payload.")
+
+
 def _response_json(response: httpx.Response) -> dict[str, Any]:
     try:
         payload = response.json()
     except ValueError as exc:
         raise RuntimeError(f"Bridge returned non-JSON response: HTTP {response.status_code}") from exc
+    if response.status_code == 409:
+        raise BridgeBusyError(payload.get("error") or "Stardew bridge is busy.")
     if response.status_code >= 400 or payload.get("ok") is False:
         raise RuntimeError(payload.get("error") or f"Bridge returned HTTP {response.status_code}")
     return payload
