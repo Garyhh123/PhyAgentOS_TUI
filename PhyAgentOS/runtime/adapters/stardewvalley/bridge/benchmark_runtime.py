@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass, field
+import socket
 from threading import Lock
 from typing import Any, Callable
 
 from .obs_compact import to_jsonable
+from .stardew_runtime import RuntimeBusyError
 
 
 class BenchmarkError(RuntimeError):
@@ -60,7 +63,7 @@ class BenchmarkRuntime:
         if max_steps is not None:
             max_steps = _validate_max_steps(max_steps)
 
-        with self._lock:
+        with self._session_lock(timeout=1.0):
             task = self.task_loader(task_name, task_id)
             if task is None:
                 raise BenchmarkError(f"Unknown benchmark task: {task_name}[{task_id}]")
@@ -84,14 +87,14 @@ class BenchmarkRuntime:
     def status(self) -> dict[str, Any]:
         """Return the current benchmark session status."""
 
-        with self._lock:
+        with self._session_lock(timeout=1.0):
             return self._status_unlocked()
 
     def execute(self, action: str) -> dict[str, Any]:
         """Execute one action and evaluate the active benchmark task."""
 
         action = _validate_action(action)
-        with self._lock:
+        with self._session_lock(timeout=1.0):
             session = self._require_session()
             if session.completed:
                 raise BenchmarkError("Benchmark session is already completed.")
@@ -127,24 +130,25 @@ class BenchmarkRuntime:
     def stop(self) -> dict[str, Any]:
         """Stop the active session and return its final status."""
 
-        with self._lock:
+        with self._session_lock(timeout=1.0):
             status = self._status_unlocked()
             self._session = None
             status["active"] = False
             status["stopped"] = True
             return status
 
-    @staticmethod
-    def _normalize_obs_keys(obs: dict[str, Any]) -> dict[str, Any]:
-        inv = obs.get("inventory")
-        if isinstance(inv, list):
-            for item in inv:
-                if isinstance(item, dict):
-                    if "Name" not in item and "name" in item:
-                        item["Name"] = item["name"]
-                    if "Quantity" not in item and "quantity" in item:
-                        item["Quantity"] = item["quantity"]
-        return obs
+
+    @contextmanager
+    def _session_lock(self, timeout: float | None = None):
+        acquired = self._lock.acquire(timeout=1.0 if timeout is None else timeout)
+        if not acquired:
+            raise RuntimeBusyError(
+                "Stardew benchmark runtime is busy. A previous benchmark call is still running."
+            )
+        try:
+            yield
+        finally:
+            self._lock.release()
 
     def _evaluate(self, task: Any, raw_obs: dict[str, Any], task_proxy: Any) -> dict[str, Any]:
         self._normalize_obs_keys(raw_obs)
@@ -224,11 +228,9 @@ def _load_task(task_name: str, task_id: int) -> Any:
 
 
 def _make_task_proxy(port: int) -> Any:
-    try:
-        from env.tasks.utils.init_task import InitTaskProxy
-    except Exception as exc:
-        raise RuntimeError("Failed to import StarDojo InitTaskProxy.") from exc
-    return InitTaskProxy(port)
+    # StarDojo import availability is already validated by _load_task above;
+    # this factory only builds our timeout-hardened proxy wrapper.
+    return TimeoutInitTaskProxy(port)
 
 
 def _default_max_steps(task: Any) -> int:
@@ -273,3 +275,34 @@ def _validate_action(action: Any) -> str:
     if not isinstance(action, str) or not action.strip():
         raise BenchmarkError("Missing non-empty string field: action")
     return action.strip()
+
+
+class TimeoutInitTaskProxy:
+    """InitTaskProxy-compatible wrapper with socket receive timeouts."""
+
+    def __init__(self, port: int, timeout: float = 30.0) -> None:
+        self.port = port
+        self.timeout = timeout
+
+    def _post_message(self, message: str, print_message: bool = False) -> str:
+        with socket.create_connection(("127.0.0.1", self.port), timeout=self.timeout) as client_socket:
+            client_socket.settimeout(self.timeout)
+            client_socket.sendall(message.encode("utf-8"))
+            response: list[str] = []
+            while True:
+                try:
+                    data = client_socket.recv(1024)
+                except socket.timeout as exc:
+                    raise TimeoutError("Timed out waiting for StardojoMod response to %r" % (message,)) from exc
+                if not data:
+                    break
+                response.append(data.decode("utf-8"))
+                if "".join(response).endswith("<EOF>"):
+                    break
+            return "".join(response)[:-5]
+
+    def __getattr__(self, name: str) -> Any:
+        def call(*args):
+            message = "%".join([name, *(str(arg) for arg in args)])
+            return self._post_message(message)
+        return call
