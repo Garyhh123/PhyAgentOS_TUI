@@ -1,0 +1,35 @@
+version: runtime_target_contract_v1
+target_id: stardewvalley_smapi
+target_adapter: target_adapter://stardewvalley_adapter
+observation:
+  schema_source: target.describe
+  require_describe_observation_schema: false
+  allow_extra_channels: true
+  timestamp_required: false
+action_contract:
+  id: stardewvalley_tool_action_v1
+  accepted_representations:
+    - target_tool_call
+  shape:
+    - 1
+    - 1
+  dtype: object
+  normalized: false
+  frame: world
+  control_mode: target_tool_call
+  control_hz: 5
+  components:
+    - {name: command, unit: tool_call}
+  chunk:
+    max_chunk_size: 1
+    preferred_chunk_size: 1
+    preferred_replan_after_steps: 1
+    switch_policy: hard_switch
+safety:
+  require_target_side_validation: true
+  stop_on_nan: true
+  stop_on_timeout: true
+capabilities:
+  available_bridges: []
+  tool_surface:
+    - stardewvalley_navigate

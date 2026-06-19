@@ -17,6 +17,7 @@ from PhyAgentOS.runtime.adapters.stardewvalley.bridge.action_parser import (
     parse_skill_expression,
 )
 from PhyAgentOS.runtime.adapters.stardewvalley.bridge.obs_compact import COMPACT_OBS_KEYS
+from PhyAgentOS.runtime.targets.game.stardewvalley_target import action_dict_to_string
 from PhyAgentOS.runtime.watchdog.errors import AdapterError
 
 
@@ -55,6 +56,7 @@ class StardewValleyTargetAdapter(BaseTargetAdapter):
         target_info = dict(target_info)
         step_index = target_info.get("step_index", 0)
 
+        stardew_data = {key: obs.get(key) for key in COMPACT_OBS_KEYS}
         return {
             "observation_id": obs.get("observation_id", f"stardew_obs_{step_index}"),
             "sensors": {
@@ -72,7 +74,8 @@ class StardewValleyTargetAdapter(BaseTargetAdapter):
                 },
             },
             "target_info": target_info,
-            "stardew": {key: obs.get(key) for key in COMPACT_OBS_KEYS},
+            "info": stardew_data,
+            "stardew": stardew_data,
         }
 
     def to_executable_action_chunk(
@@ -111,10 +114,21 @@ def _unwrap_bridge_observation(raw_obs: dict[str, Any]) -> dict[str, Any]:
 def _normalize_action(action: Any) -> dict[str, Any]:
     if isinstance(action, str):
         expression = action
-    elif isinstance(action, dict) and isinstance(action.get("action"), str):
-        expression = action["action"]
+    elif isinstance(action, dict):
+        if action.get("type") and action.get("params") is not None:
+            expression = action_dict_to_string(action)
+        elif isinstance(action.get("action"), str):
+            expression = action["action"]
+        else:
+            raise AdapterError(
+                "Stardew actions must be strings, {type,params} dicts, "
+                "or dicts with an 'action' string"
+            )
     else:
-        raise AdapterError("Stardew actions must be strings or dicts with an action string")
+        raise AdapterError(
+            "Stardew actions must be strings or dicts, "
+            f"got {type(action).__name__}"
+        )
 
     try:
         skill_name, args, kwargs = parse_skill_expression(expression)

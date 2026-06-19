@@ -62,17 +62,16 @@ class StardewRuntime:
             return self._observe_raw_unlocked()
 
     def start_benchmark_task(self, task: Any, task_proxy: Any) -> dict[str, Any]:
-        """Initialize a StarDojo benchmark task and return its raw baseline obs."""
+        """Run init_commands only (save already loaded during bridge startup)."""
 
         with self._lock:
             action_proxy = getattr(self.env, "action_proxy", None)
             wait_for_server = getattr(action_proxy, "wait_for_server", None)
             if callable(wait_for_server):
                 wait_for_server()
-            task.init_task(task_proxy)
-            # The bridge uses StarDojo observe_v2 over TCP. The original LLM runner
-            # initializes an mmap reader here, but some Windows installs do not
-            # create shared_memory_<port>.bin, while /observe still works fine.
+            init_commands = getattr(task, "init_commands", None) or []
+            if init_commands:
+                execute_skills(self.skill_executor, init_commands)
             return self._observe_raw_unlocked()
 
     def format_observation(self, obs: dict[str, Any]) -> dict[str, Any]:
@@ -130,8 +129,8 @@ class StardewRuntime:
 
     def _build_stardojo(self):
         try:
-            from env.llm_env import SkillExecutor
             from stardew_env import StarDojo
+            from .skill_executor import SkillExecutor
         except Exception as exc:
             raise RuntimeError(
                 "Failed to import StarDojo. Start the bridge from the Windows "

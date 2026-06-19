@@ -223,7 +223,7 @@ paos agent --workspace workspaces/minecraft
 | `templates/configs/runtime/embodied/minecraft.md` | 16 种动作 + Critic Guidance |
 | `templates/configs/runtime/contracts/minecraft.runtime.yaml` | 运行时契约 |
 | `runtime/adapters/bridges.py` | SafetyClampBridge — dict action 透传修复 |
-| `.kilo/project/game/bridge_server.js` | mineflayer bridge（部署到 Windows） |
+| `docs/scenarios/game/minecraft/bridge_server.js` | mineflayer bridge（部署到 Windows） |
 | `workspaces/minecraft/skills/minecraft-navigation/SKILL.md` | Agent 技能：导航工作流 |
 
 <p>

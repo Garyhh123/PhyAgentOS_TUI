@@ -8,6 +8,7 @@ from PhyAgentOS.runtime.communication.target_ws_client import TargetWSClient
 from PhyAgentOS.runtime.schemas import TargetSpec
 from PhyAgentOS.runtime.skillruntime.base import BaseSkillRuntime
 from PhyAgentOS.runtime.skillruntime.game.minecraft_skill_runtime import MinecraftSkillRuntime
+from PhyAgentOS.runtime.skillruntime.game.stardewvalley_skill_runtime import StardewValleySkillRuntime
 from PhyAgentOS.runtime.skillruntime.policy import OpenPISkillRuntime
 from PhyAgentOS.runtime.targets.base import BaseRolloutTarget
 from PhyAgentOS.runtime.targets.factory import (
@@ -59,3 +60,4 @@ class SkillRuntimeRegistry:
 
 register_skill_runtime("OpenPISkillRuntime", OpenPISkillRuntime)
 register_skill_runtime("MinecraftSkillRuntime", MinecraftSkillRuntime)
+register_skill_runtime("StardewValleySkillRuntime", StardewValleySkillRuntime)

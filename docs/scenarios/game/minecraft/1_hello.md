@@ -210,4 +210,4 @@ t.step({"type": "equip",   "params": {"item": "stone_pickaxe", "destination": "h
 | `test/test_2.py` | 完整 Pipeline 演示 | `python test/test_2.py` — 见 0_start §7 |
 | `test/tp_bot.py` | 传送 bot | 改坐标后 `python test/tp_bot.py` |
 | CLI `agent` | 标准 Agent 交互 | `paos agent --workspace workspaces/minecraft` |
-| 计划 | 未来功能 | 见 `.kilo/project/game/todo_list.md` |
+| 计划 | 未来功能 | 见 `docs/scenarios/game/minecraft/todo_list.md` |

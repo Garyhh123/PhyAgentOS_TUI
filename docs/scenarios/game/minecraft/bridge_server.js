@@ -7,9 +7,12 @@
  * Env vars: MC_HOST, MC_PORT, BOT_NAME, MC_VERSION, API_PORT, VIEWER_PORT
  *
  * Endpoints:
- *   GET  /health        → bot status
- *   GET  /state         → bot position, nearby blocks, entities, chat
- *   POST /action        → execute one action
+ *   GET  /health           → bot status
+ *   GET  /state            → bot position, nearby blocks, entities, chat, inventory_items
+ *   POST /action           → execute one action
+ *   GET  /phase            → benchmark phase + counters
+ *   POST /phase            → set benchmark phase (optionally reset counters)
+ *   POST /benchmark/reset  → run a full tech-tree benchmark world setup
  * 
  * 3D viewer on port 3007 (prismarine-viewer).
  *
@@ -35,6 +38,14 @@ const STATE_RADIUS = parseInt(process.env.STATE_RADIUS || '5', 10);
 let bot = null, botSpawned = false, spawnTime = 0;
 let viewerStarted = false; // prismarine-viewer binds a port once; spawn fires again on respawn
 let recentChats = []; // recent chat messages from other players, exposed via /state last_chats
+let activeDig = null; // prevent overlapping digs from aborting each other
+
+// ── Benchmark phase tracking ────────────────────────────────────
+// Mirror of PhyAgentOS/benchmarks/minecraft/techtree phase semantics.
+// The Python adapter posts /phase before/after a benchmark reset so the
+// bridge knows the bot is in a benchmark-driven episode.
+let currentPhase = 'idle';
+let phaseCounters = { resets: 0, steps: 0 };
 
 // ── Bot ─────────────────────────────────────────────────────────
 const MC_VERSION = process.env.MC_VERSION || '1.20.4';
@@ -132,6 +143,15 @@ function getState() {
         count: item.count,
     } : null).filter(Boolean);
 
+    // full inventory flattened into the evaluator-friendly shape:
+    //   [{ name: "minecraft:oak_log", count: 1 }, ...]
+    // so PhyAgentOS.benchmarks.minecraft.techtree.evaluator.inventory_counts
+    // can score the bridge state directly without a second adapter layer.
+    const inventory_items = bot.inventory.items().map((item) => ({
+        name: mcName(item.name),
+        count: item.count,
+    }));
+
     return {
         bot: {
             position: { x: pos.x, y: pos.y, z: pos.z },
@@ -148,8 +168,40 @@ function getState() {
         nearby_entities: nearbyEntities,
         players: players,
         inventory: { hotbar },
+        inventory_items,
         last_chats: recentChats,
     };
+}
+
+function clearActiveDig() {
+    activeDig = null;
+}
+
+function eyeToBlockDistance(block) {
+    if (!bot?.entity || !block?.position) return Infinity;
+    return block.position.offset(0.5, 0.5, 0.5).distanceTo(bot.entity.position.offset(0, bot.entity.eyeHeight, 0));
+}
+
+function isPlacementCollidingWithBot(placeTarget) {
+    if (!bot?.entity || !placeTarget) return false;
+    const feet = bot.entity.position.floored();
+    const head = feet.offset(0, 1, 0);
+    return placeTarget.equals(feet) || placeTarget.equals(head);
+}
+
+async function digBlockWithTimeout(block, timeoutMs) {
+    const digPromise = bot.dig(block, true);
+    const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error(`dig timeout after ${timeoutMs}ms`)), timeoutMs);
+    });
+    try {
+        await Promise.race([digPromise, timeoutPromise]);
+    } catch (e) {
+        if (String(e?.message || e).includes('dig timeout')) {
+            try { bot.stopDigging(); } catch (_) {}
+        }
+        throw e;
+    }
 }
 
 // ── Actions ─────────────────────────────────────────────────────
@@ -179,8 +231,14 @@ function executeAction(action) {
                 case 'look': {
                     const yaw = p.yaw != null ? parseFloat(p.yaw) * Math.PI / 180 : bot.entity.yaw;
                     const pitch = p.pitch != null ? parseFloat(p.pitch) * Math.PI / 180 : bot.entity.pitch;
-                    bot.look(yaw, pitch, true);
-                    resolve({ ok: true, result: 'ok' });
+                    (async () => {
+                        try {
+                            await bot.look(yaw, pitch, true);
+                            resolve({ ok: true, result: 'ok' });
+                        } catch (e) {
+                            resolve({ ok: false, result: e?.message || String(e) });
+                        }
+                    })();
                     break;
                 }
                 case 'jump': bot.setControlState('jump', true); setTimeout(() => bot.setControlState('jump', false), parseInt(p.duration_ms || 500)); resolve({ ok: true, result: 'ok' }); break;
@@ -188,16 +246,83 @@ function executeAction(action) {
                 case 'sprint': bot.setControlState('sprint', p.start !== false); resolve({ ok: true, result: 'ok' }); break;
                 case 'dig': {
                     const Vec3 = bot.entity.position.constructor;
+                    const timeoutMs = Math.max(500, parseInt(p.timeout_ms || 8000, 10));
                     const b = bot.blockAt(new Vec3(Math.floor(p.x), Math.floor(p.y), Math.floor(p.z)));
                     if (!b || b.name === 'air') return resolve({ ok: false, result: 'no block' });
-                    bot.dig(b, (e) => resolve(e ? { ok: false, result: e.message } : { ok: true, result: `dug ${b.name}` })); break;
+                    if (activeDig) {
+                        const sameTarget = activeDig.position?.equals?.(b.position);
+                        return resolve({ ok: false, result: sameTarget ? 'dig already in progress for target' : 'another dig already in progress' });
+                    }
+                    if (!b.diggable) return resolve({ ok: false, result: `${b.name} is not diggable` });
+                    const distance = eyeToBlockDistance(b);
+                    if (distance > 5.1 || !bot.canDigBlock(b)) {
+                        return resolve({ ok: false, result: `dig failed: too far (${distance.toFixed(2)} > 5.10)` });
+                    }
+                    activeDig = { position: b.position.clone(), startedAt: Date.now() };
+                    (async () => {
+                        try {
+                            await digBlockWithTimeout(b, timeoutMs);
+                            resolve({ ok: true, result: `dug ${b.name}` });
+                        } catch (e) {
+                            const message = e?.message || String(e);
+                            if (message === 'Digging aborted') {
+                                resolve({ ok: false, result: 'dig aborted' });
+                            } else {
+                                resolve({ ok: false, result: message });
+                            }
+                        } finally {
+                            clearActiveDig();
+                        }
+                    })();
+                    break;
                 }
                 case 'place': {
                     const Vec3 = bot.entity.position.constructor;
                     const rb = bot.blockAt(new Vec3(Math.floor(p.x), Math.floor(p.y), Math.floor(p.z)));
                     if (!rb) return resolve({ ok: false, result: 'no reference block' });
                     const fv = [{ x: 0, y: -1, z: 0 }, { x: 0, y: 1, z: 0 }, { x: 0, y: 0, z: -1 }, { x: 0, y: 0, z: 1 }, { x: -1, y: 0, z: 0 }, { x: 1, y: 0, z: 0 }];
-                    bot.placeBlock(rb, fv[parseInt(p.face) || 1], (e) => resolve(e ? { ok: false, result: e.message } : { ok: true, result: 'placed' })); break;
+                    const faceIndex = parseInt(p.face) || 1;
+                    const placeTarget = rb.position.offset(fv[faceIndex].x, fv[faceIndex].y, fv[faceIndex].z);
+                    const targetBlock = bot.blockAt(placeTarget);
+                    if (isPlacementCollidingWithBot(placeTarget)) {
+                        return resolve({
+                            ok: false,
+                            result: 'place failed: collision with bot',
+                            placed_at: { x: placeTarget.x, y: placeTarget.y, z: placeTarget.z },
+                            reference_block: { x: rb.position.x, y: rb.position.y, z: rb.position.z },
+                            face: faceIndex
+                        });
+                    }
+                    if (targetBlock && targetBlock.name !== 'air') {
+                        return resolve({
+                            ok: false,
+                            result: `place failed: target occupied by ${targetBlock.name}`,
+                            placed_at: { x: placeTarget.x, y: placeTarget.y, z: placeTarget.z },
+                            reference_block: { x: rb.position.x, y: rb.position.y, z: rb.position.z },
+                            face: faceIndex
+                        });
+                    }
+                    (async () => {
+                        try {
+                            await bot.placeBlock(rb, fv[faceIndex]);
+                            resolve({
+                                ok: true,
+                                result: 'placed',
+                                placed_at: { x: placeTarget.x, y: placeTarget.y, z: placeTarget.z },
+                                reference_block: { x: rb.position.x, y: rb.position.y, z: rb.position.z },
+                                face: faceIndex
+                            });
+                        } catch (e) {
+                            resolve({
+                                ok: false,
+                                result: e?.message || String(e),
+                                placed_at: { x: placeTarget.x, y: placeTarget.y, z: placeTarget.z },
+                                reference_block: { x: rb.position.x, y: rb.position.y, z: rb.position.z },
+                                face: faceIndex
+                            });
+                        }
+                    })();
+                    break;
                 }
                 case 'attack': {
                     let target = p.entity_id ? bot.entities[p.entity_id] : null;
@@ -205,39 +330,196 @@ function executeAction(action) {
                     if (!target) return resolve({ ok: false, result: 'no target' });
                     bot.attack(target); resolve({ ok: true, result: 'attacked' }); break;
                 }
-                case 'interact': { const e = bot.entities[p.entity_id]; if (!e) return resolve({ ok: false, result: 'entity not found' }); bot.activateEntity(e); resolve({ ok: true, result: 'ok' }); break; }
+                case 'interact': {
+                    const e = bot.entities[p.entity_id];
+                    if (!e) return resolve({ ok: false, result: 'entity not found' });
+                    (async () => {
+                        try {
+                            await bot.activateEntity(e);
+                            resolve({ ok: true, result: 'ok' });
+                        } catch (e2) {
+                            resolve({ ok: false, result: e2?.message || String(e2) });
+                        }
+                    })();
+                    break;
+                }
                 case 'use': bot.activateItem(); resolve({ ok: true, result: 'ok' }); break;
                 case 'select_slot': { const s = Math.max(0, Math.min(8, parseInt(p.slot || 0))); bot.setQuickBarSlot(s); resolve({ ok: true, result: `slot ${s}` }); break; }
-                case 'drop': { const it = p.slot != null ? bot.inventory.slots[parseInt(p.slot)] : bot.inventory.slots[bot.quickBarSlot]; if (!it) return resolve({ ok: false, result: 'nothing to drop' }); bot.tossStack(it); resolve({ ok: true, result: `dropped ${it.name}` }); break; }
+                case 'drop': {
+                    const it = p.slot != null ? bot.inventory.slots[parseInt(p.slot)] : bot.inventory.slots[bot.quickBarSlot];
+                    if (!it) return resolve({ ok: false, result: 'nothing to drop' });
+                    (async () => {
+                        try {
+                            await bot.tossStack(it);
+                            resolve({ ok: true, result: `dropped ${it.name}` });
+                        } catch (e) {
+                            resolve({ ok: false, result: e?.message || String(e) });
+                        }
+                    })();
+                    break;
+                }
                 case 'chat': { const m = String(p.message || ''); if (!m) return resolve({ ok: false, result: 'empty' }); bot.chat(m); resolve({ ok: true, result: `sent: ${m}` }); break; }
                 case 'collect': {
                     const mcData = require('minecraft-data')(bot.version);
-                    const it = mcData.itemsByName[p.block_type] || mcData.blocksByName[p.block_type];
-                    if (!it) return resolve({ ok: false, result: `unknown: ${p.block_type}` });
-                    console.log(`[bridge] collect: ${p.block_type} x${p.count} (id=${it.id})`);
-                    try {
-                        bot.collectBlock.collect(it, { count: parseInt(p.count || 1) }, (e) => {
-                            if (e) console.log(`[bridge] collect failed: ${e.message}`);
-                            else console.log(`[bridge] collect done: ${p.count}x ${p.block_type}`);
-                            resolve(e ? { ok: false, result: e.message } : { ok: true, result: `collected ${p.count}x ${p.block_type}` });
-                        });
-                    } catch (e2) {
-                        console.log(`[bridge] collectBlock threw: ${e2.message}`);
-                        resolve({ ok: false, result: `collectBlock error: ${e2.message}` });
-                    }
+                    const blockDef = mcData.blocksByName[p.block_type];
+                    if (!blockDef) return resolve({ ok: false, result: `unknown or unsupported block_type: ${p.block_type}` });
+                    const requestedCount = Math.max(1, parseInt(p.count || 1, 10));
+                    const found = bot.findBlocks({
+                        matching: blockDef.id,
+                        maxDistance: parseInt(p.max_distance || 64, 10),
+                        count: requestedCount
+                    });
+                    if (!found.length) return resolve({ ok: false, result: `no matching block found: ${p.block_type}` });
+                    const targets = found
+                        .map((pos) => bot.blockAt(pos))
+                        .filter((block) => block && block.name !== 'air');
+                    if (!targets.length) return resolve({ ok: false, result: `no collectable target found: ${p.block_type}` });
+                    console.log(`[bridge] collect: ${p.block_type} x${requestedCount} (targets=${targets.length})`);
+                    (async () => {
+                        try {
+                            await bot.collectBlock.collect(targets.slice(0, requestedCount));
+                            console.log(`[bridge] collect done: ${requestedCount}x ${p.block_type}`);
+                            resolve({ ok: true, result: `collected ${targets.slice(0, requestedCount).length}x ${p.block_type}` });
+                        } catch (e2) {
+                            console.log(`[bridge] collect failed: ${e2.message}`);
+                            resolve({ ok: false, result: e2?.message || String(e2) });
+                        }
+                    })();
                     break;
                 }
-                case 'equip': { const item = bot.inventory.items().find(i => i.name === p.item); if (!item) return resolve({ ok: false, result: `no ${p.item}` }); bot.equip(item, p.destination || 'hand', (e) => resolve(e ? { ok: false, result: e.message } : { ok: true, result: 'ok' })); break; }
+                case 'equip': {
+                    const item = bot.inventory.items().find(i => i.name === p.item);
+                    if (!item) return resolve({ ok: false, result: `no ${p.item}` });
+                    (async () => {
+                        try {
+                            await bot.equip(item, p.destination || 'hand');
+                            resolve({ ok: true, result: 'ok' });
+                        } catch (e) {
+                            resolve({ ok: false, result: e?.message || String(e) });
+                        }
+                    })();
+                    break;
+                }
                 case 'craft': {
                     const mcData = require('minecraft-data')(bot.version);
                     const id = mcData.itemsByName[p.recipe_id]; if (!id) return resolve({ ok: false, result: `unknown: ${p.recipe_id}` });
-                    const recipes = bot.recipesFor(id.id, null, 1, null); if (!recipes.length) return resolve({ ok: false, result: 'no recipe' });
-                    bot.craft(recipes[0], parseInt(p.count || 1), null, (e) => resolve(e ? { ok: false, result: e.message } : { ok: true, result: `crafted ${p.count}x ${p.recipe_id}` })); break;
+                    let craftingTable = null;
+                    let recipes = bot.recipesFor(id.id, null, 1, null);
+                    if (!recipes.length) {
+                        const tableId = mcData.blocksByName.crafting_table?.id;
+                        if (tableId != null) {
+                            const tablePos = bot.findBlock({ matching: tableId, maxDistance: parseInt(p.max_distance || 8, 10) });
+                            if (tablePos) {
+                                craftingTable = tablePos;
+                                recipes = bot.recipesFor(id.id, null, 1, craftingTable);
+                            }
+                        }
+                    }
+                    if (!recipes.length) return resolve({ ok: false, result: 'no recipe' });
+                    if (recipes[0].requiresTable && !craftingTable) return resolve({ ok: false, result: 'recipe requires crafting table' });
+                    (async () => {
+                        try {
+                            await bot.craft(recipes[0], parseInt(p.count || 1, 10), craftingTable);
+                            resolve({ ok: true, result: `crafted ${p.count}x ${p.recipe_id}` });
+                        } catch (e) {
+                            resolve({ ok: false, result: e?.message || String(e) });
+                        }
+                    })();
+                    break;
                 }
                 default: resolve({ ok: false, result: `unknown type: ${t}` });
             }
         } catch (e) { resolve({ ok: false, result: e.message }); }
     });
+}
+
+// ── Benchmark setup ─────────────────────────────────────────────
+// Worlds an executor-independent Minecraft tech-tree benchmark task:
+// arena isolation, inventory reset, item grants (with enchantment NBT),
+// and relative block placement. Mirrors the semantics of
+// PhyAgentOS/benchmarks/minecraft/techtree WorldSetup so the Python
+// adapter can delegate the whole reset to one POST /benchmark/reset.
+
+const DEFAULT_ARENA = {
+    enabled: true,
+    origin: [-2000, 80, -2000],
+    clear_radius: 8,
+    clear_height: 6,
+    floor_block: 'smooth_stone',
+    boundary_block: 'stone_bricks',
+};
+
+function mcName(n) {
+    return String(n).startsWith('minecraft:') ? String(n) : `minecraft:${n}`;
+}
+
+// Build a /give command, including enchantment NBT when requested.
+//   item = { item, count, enchantments: [{ id, level }] }
+function giveCmd(item) {
+    let suffix = '';
+    const enchs = Array.isArray(item.enchantments) ? item.enchantments : [];
+    if (enchs.length) {
+        const entries = enchs.map((en) => {
+            const id = String(en.id || '').replace('minecraft:', '');
+            const lvl = parseInt(en.level || 1, 10);
+            return `{id:"minecraft:${id}",lvl:${lvl}}`;
+        }).join(',');
+        suffix = `{Enchantments:[${entries}]}`;
+    }
+    const count = Math.max(1, parseInt(item.count || 1, 10));
+    return `/give @s ${mcName(item.item)}${suffix} ${count}`;
+}
+
+// Send a Minecraft server command via the bot's chat channel and wait
+// briefly for the server to apply it. Server commands (/tp /fill /give
+// /setblock /clear) are asynchronous, so a short delay between steps
+// keeps multi-step resets from racing (e.g. /tp before /fill).
+const COMMAND_SETTLE_MS = 150;
+function cmd(c) {
+    return new Promise((resolve) => {
+        bot.chat(c);
+        setTimeout(() => resolve({ ok: true, cmd: c }), COMMAND_SETTLE_MS);
+    });
+}
+
+async function benchmarkReset(setup) {
+    if (!bot || !bot.entity) throw new Error('bot not spawned');
+    const arena = { ...DEFAULT_ARENA, ...(setup.arena || {}) };
+    const origin = arena.enabled
+        ? arena.origin.map((v) => parseInt(v, 10))
+        : [
+            Math.floor(bot.entity.position.x),
+            Math.floor(bot.entity.position.y),
+            Math.floor(bot.entity.position.z),
+        ];
+    const [x, y, z] = origin;
+    const seq = [];
+
+    if (arena.enabled === true || arena.enabled === undefined) {
+        const R = Math.max(1, parseInt(arena.clear_radius, 10));
+        const H = Math.max(1, parseInt(arena.clear_height, 10));
+        const fy = y - 1;
+        seq.push(`/tp @s ${x} ${y} ${z} 0 0`);
+        seq.push(`/fill ${x - R} ${y} ${z - R} ${x + R} ${y + H} ${z + R} air`);
+        seq.push(`/fill ${x - R} ${fy} ${z - R} ${x + R} ${fy} ${z + R} ${mcName(arena.floor_block)}`);
+        const b = mcName(arena.boundary_block);
+        seq.push(`/fill ${x - R} ${fy} ${z - R} ${x + R} ${fy} ${z - R} ${b}`);
+        seq.push(`/fill ${x - R} ${fy} ${z + R} ${x + R} ${fy} ${z + R} ${b}`);
+        seq.push(`/fill ${x - R} ${fy} ${z - R} ${x - R} ${fy} ${z + R} ${b}`);
+        seq.push(`/fill ${x + R} ${fy} ${z - R} ${x + R} ${fy} ${z + R} ${b}`);
+    }
+    if (setup.clear_inventory !== false) seq.push('/clear @s');
+    for (const it of (setup.inventory || [])) seq.push(giveCmd(it));
+    for (const blk of (setup.blocks || [])) {
+        const rel = blk.relative || [0, 0, 0];
+        seq.push(`/setblock ${x + parseInt(rel[0], 10)} ${y + parseInt(rel[1], 10)} ${z + parseInt(rel[2], 10)} ${mcName(blk.block)}`);
+    }
+
+    currentPhase = 'reset';
+    phaseCounters = { resets: phaseCounters.resets + 1, steps: 0 };
+    for (const c of seq) await cmd(c);
+    currentPhase = 'idle';
+    return { ok: true, commands: seq.length, phase: currentPhase, counters: phaseCounters };
 }
 
 // ── HTTP ────────────────────────────────────────────────────────
@@ -247,6 +529,33 @@ app.post('/action', async (req, res) => {
     if (!req.body?.type) return res.status(400).json({ ok: false, error: 'missing type' });
     res.json(await executeAction(req.body));
 });
+
+// Benchmark phase marker: lets an external benchmark announce that the
+// bot is entering/leaving a benchmark-driven episode, optionally
+// resetting the step counter. Idempotent and safe to call anytime.
+app.post('/phase', (req, res) => {
+    const { phase, reset_counters, source } = req.body || {};
+    currentPhase = phase || 'idle';
+    if (reset_counters) phaseCounters = { resets: phaseCounters.resets + 1, steps: 0 };
+    console.log(`[bridge] phase=${currentPhase} source=${source || '-'}`);
+    res.json({ ok: true, phase: currentPhase, counters: phaseCounters });
+});
+
+// Execute a full tech-tree benchmark reset in one call. The body is a
+// WorldSetup dict (arena, clear_inventory, inventory, blocks). Returns
+// the number of server commands issued and the final phase.
+app.post('/benchmark/reset', async (req, res) => {
+    try {
+        res.json(await benchmarkReset(req.body || {}));
+    } catch (e) {
+        console.log(`[bridge] benchmark/reset failed: ${e.message}`);
+        res.status(500).json({ ok: false, error: e.message });
+    }
+});
+
+// Expose benchmark phase so a benchmark client can confirm the bridge
+// has settled into idle after a reset.
+app.get('/phase', (_req, res) => res.json({ ok: true, phase: currentPhase, counters: phaseCounters }));
 
 // ── Start ───────────────────────────────────────────────────────
 console.log(`[bridge] Starting for Minecraft ${MC_VERSION}`);

@@ -14,7 +14,13 @@ class SafetyClampBridge(BaseActionBridge):
     """Validate numeric action chunks without changing action semantics."""
 
     def apply(self, action_chunk: dict[str, Any], target_info: dict[str, Any]) -> dict[str, Any]:
-        actions = np.asarray(action_chunk.get("actions"), dtype=np.float32)
+        raw_actions = action_chunk.get("actions")
+        if raw_actions is None:
+            raise AdapterError("action_chunk missing 'actions'")
+        first = raw_actions[0] if isinstance(raw_actions, list) and raw_actions else raw_actions
+        if isinstance(first, dict):
+            return action_chunk
+        actions = np.asarray(raw_actions, dtype=np.float32)
         if actions.ndim != 2:
             raise AdapterError(f"actions must have shape [T,A], got {actions.shape}")
         if not np.isfinite(actions).all():

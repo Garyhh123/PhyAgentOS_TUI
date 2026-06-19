@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 import sys
 from datetime import datetime
@@ -14,12 +13,6 @@ from typing import Any
 import httpx
 import typer
 from rich.console import Console
-
-from PhyAgentOS.runtime.adapters.stardewvalley.bridge.action_parser import (
-    ActionParseError,
-    allowed_skill_names,
-    parse_skill_expression,
-)
 
 console = Console()
 stardew_app = typer.Typer(help="Stardew Valley benchmark runner")
@@ -49,7 +42,7 @@ def stardew_benchmark(
         help="Stardew bridge HTTP base URL",
     ),
     max_steps: int = typer.Option(30, "--max-steps", "-n", help="Maximum benchmark steps"),
-    timeout: float = typer.Option(60.0, "--timeout", help="HTTP timeout in seconds"),
+    timeout: float = typer.Option(180.0, "--timeout", help="HTTP timeout in seconds"),
     agent_timeout: float = typer.Option(900.0, "--agent-timeout", help="Maximum seconds to wait for paos agent"),
     config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
     workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
@@ -60,8 +53,12 @@ def stardew_benchmark(
     ),
     log_dir: str | None = typer.Option(None, "--log-dir", help="Directory for benchmark run logs"),
     no_log: bool = typer.Option(False, "--no-log", help="Disable benchmark run log files"),
+    runtime: bool = typer.Option(False, "--runtime", help="Use full runtime pipeline with SESSIONS.md and Watchdog"),
 ):
     """Run a Stardew benchmark task through the normal Track A paos agent."""
+    if runtime:
+        _run_benchmark_runtime(task_name, task_id, bridge_url, max_steps, timeout, agent_timeout, config, workspace, log_dir, no_log)
+        return
 
     from PhyAgentOS.cli.commands import _load_runtime_config
 
@@ -339,6 +336,105 @@ def _format_summary(result: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _run_benchmark_runtime(task_name, task_id, bridge_url, max_steps, timeout, agent_timeout, config, workspace, log_dir, no_log):
+    """Run benchmark through Runtime pipeline: SESSIONS.md -> Watchdog -> Target -> SkillRuntime."""
+    import httpx as _httpx
+    import uuid as _uuid
+    from PhyAgentOS.config.schema import Config
+    from PhyAgentOS.cli.commands import _load_runtime_config
+
+    console.print(f"[cyan]Runtime benchmark[/cyan] task={task_name}[{task_id}] bridge={bridge_url}")
+
+    runtime_config = _load_runtime_config(config, workspace)
+    client = _httpx.Client(base_url=bridge_url, timeout=timeout, trust_env=False)
+
+    # Clean + start benchmark on bridge
+    try:
+        client.post("/benchmark/stop", timeout=5)
+    except Exception:
+        pass
+    start_payload = client.post("/benchmark/start", json={"task_name": task_name, "task_id": task_id, "max_steps": max_steps}, timeout=30).json()
+    initial_benchmark = start_payload["benchmark"]
+    _print_benchmark_state("start", initial_benchmark)
+    task_description = initial_benchmark.get("description") or f"{task_name}[{task_id}]"
+
+    # Generate TaskPlan via LLM
+    from PhyAgentOS.cli.commands import _make_provider
+    provider = _make_provider(runtime_config)
+    import asyncio as _asyncio
+    initial_obs = start_payload["obs"]
+    prompt = f"""Generate a TaskPlan for this Stardew Valley goal: {task_description}
+Current state: pos={initial_obs.get('position')} inv={[i.get('Name') for i in initial_obs.get('inventory',[]) if i.get('Name')][:5]}
+Actions: move(dx,dy), use(direction), choose_item(slot), craft(name), interact(direction)
+Verify: has_item:NamexN, has_tool:Name, bot_near:x,y,dist
+Each task should have 1-2 actions max. Precheck=[] (empty). Return ONLY JSON."""
+    loop = _asyncio.get_event_loop()
+    if loop.is_running():
+        import nest_asyncio; nest_asyncio.apply()
+    resp = loop.run_until_complete(provider.chat([{"role": "user", "content": prompt}]))
+    raw = (resp.content or "").strip()
+    if raw.startswith("```"): raw = "\n".join(raw.split("\n")[1:]).rsplit("```", 1)[0]
+    try:
+        task_plan = __import__("json").loads(raw)
+    except Exception:
+        task_plan = {"goal": task_description, "subgoals": []}
+    console.print(f"[dim]TaskPlan: {len(task_plan.get('subgoals', []))} subgoals[/dim]")
+
+    # Start Watchdog + write SESSIONS.md
+    overrides = {"runtime": {"enabled": True, "autostart_watchdog": True, "target_enabled": {"stardewvalley_smapi": True}}}
+    new_config = Config.model_validate({**runtime_config.model_dump(mode="json"), **overrides})
+    from PhyAgentOS.runtime.workspace import RuntimeWorkspaceManager
+    mgr = RuntimeWorkspaceManager(new_config)
+    mgr.start_watchdog()
+
+    sid = f"stardew-runtime-{_uuid.uuid4().hex[:8]}"
+    import yaml as _yaml
+    data = {"version": "runtime_sessions_v1", "sessions": [{
+        "session_id": sid, "target_ref": "stardewvalley_smapi", "skillruntime_ref": "stardewvalley_navigate",
+        "task_description": task_description, "status": "pending",
+        "timeouts": {"execute_timeout_s": min(agent_timeout, 600), "preflight_timeout_s": 30, "queue_timeout_s": 60, "policy_timeout_s": 5},
+        "execution": {"action_chunk_mode": "single_step", "max_steps": max_steps},
+        "safety_profile": {"profile": "default"},
+        "runtime_hints": {"perception_queries": [task_plan]},
+    }]}
+    sp = new_config.runtime_workspace_path / "SESSIONS.md"
+    sp.write_text("```yaml\n" + _yaml.dump(data, allow_unicode=True, default_flow_style=False) + "```", encoding="utf-8")
+    console.print(f"[dim]SESSIONS.md written[/dim]")
+
+    # Wait for execution
+    import time as _time
+    start = _time.monotonic()
+    while _time.monotonic() - start < agent_timeout:
+        _time.sleep(2)
+        if sp.exists():
+            text = sp.read_text(encoding="utf-8")
+            import re as _re
+            m = _re.search(r'status: (\w+)', text)
+            if m and m.group(1) in ("succeeded", "failed", "rejected", "timed_out"):
+                console.print(f"[cyan]Session status: {m.group(1)}[/cyan]")
+                for kw in ("num_steps", "subgoals_done", "error_message"):
+                    mk = _re.search(rf'{kw}: (.*)', text)
+                    if mk: console.print(f"[dim]{kw}={mk.group(1).strip()}[/dim]")
+                break
+        ep = new_config.runtime_workspace_path / "ENVIRONMENT.md"
+        if ep.exists() and "Stardew Snapshot" in ep.read_text(encoding="utf-8"):
+            break
+    else:
+        console.print("[yellow]Runtime timeout[/yellow]")
+
+    # Final benchmark status
+    try:
+        final = client.get("/benchmark/status", timeout=10).json()
+        fb = final.get("benchmark", {})
+        status = "completed" if fb.get("completed") else "truncated"
+        qty = (fb.get("eval") or {}).get("quantity", 0)
+        console.print(f"\n[bold]Result: {status}[/bold] steps={fb.get('step')} quantity={qty}")
+    except Exception:
+        console.print("[yellow]Failed to get benchmark status[/yellow]")
+
+    client.close()
+
+
 def _print_benchmark_state(label: str, benchmark: dict[str, Any]) -> None:
     eval_result = benchmark.get("eval") or {}
     console.print(
@@ -352,59 +448,3 @@ def _print_benchmark_state(label: str, benchmark: dict[str, Any]) -> None:
             label=label,
         )
     )
-
-
-
-# Compatibility helper for older CLI parser tests. The Track A benchmark supervisor
-# no longer uses ACTION text parsing in the execution path.
-def _extract_action(raw: str) -> str:
-    text = _strip_think(raw).strip()
-    text = _strip_code_fence(text).strip()
-
-    for line in reversed(text.splitlines()):
-        stripped = line.strip()
-        if stripped.upper().startswith("ACTION:"):
-            action = stripped.split(":", 1)[1].strip()
-            parse_skill_expression(action)
-            return action
-
-    try:
-        parsed = json.loads(text)
-        if isinstance(parsed, dict) and isinstance(parsed.get("action"), str):
-            text = parsed["action"].strip()
-    except Exception:
-        pass
-
-    candidates = [text]
-    candidates.extend(line.strip().strip("`") for line in text.splitlines())
-    for skill in allowed_skill_names():
-        pattern = rf"\b{re.escape(skill)}\s*\([^\n]*\)"
-        candidates.extend(match.group(0) for match in re.finditer(pattern, text))
-
-    for candidate in candidates:
-        candidate = candidate.strip()
-        if not candidate:
-            continue
-        try:
-            parse_skill_expression(candidate)
-        except ActionParseError:
-            continue
-        return candidate
-
-    raise ActionParseError("LLM output did not contain a valid Stardew action.")
-
-
-def _strip_think(text: str) -> str:
-    return re.sub(r"<think>[\s\S]*?</think>", "", text).strip()
-
-
-def _strip_code_fence(text: str) -> str:
-    if "```" not in text:
-        return text
-    parts = text.split("```")
-    if len(parts) < 3:
-        return text
-    block = parts[1].strip()
-    if block.startswith(("python", "text", "json")):
-        block = block.split("\n", 1)[1] if "\n" in block else ""
-    return block.strip()

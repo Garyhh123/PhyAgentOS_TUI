@@ -89,4 +89,29 @@ targets:
     config:
       bridge_url: "https://carucated-kattie-cryptogamic.ngrok-free.dev"   # ← ngrok 公网地址
       step_delay: 0.1
+  - id: stardewvalley_smapi
+    target_class: local
+    target_kind: game
+    workspace: workspaces/stardewvalley
+    enabled: true
+    supported_skillruntimes:
+      - stardewvalley_navigate
+    runtime:
+      target_runtime: StardewValleyTargetRuntime
+      target_endpoint: targetws://local/stardewvalley_smapi
+      target_adapter: target_adapter://stardewvalley_adapter
+      runtime_contract_ref: configs/runtime/contracts/stardewvalley.runtime.yaml
+    observation:
+      observation_type: structured
+      empty_observation_allowed: false
+    perception:
+      enabled: false
+      strict_preflight: true
+      sensor_config_ref: null
+      perception_config_ref: null
+      artifact_dir: null
+    config:
+      bridge_url: "http://127.0.0.1:8765"
+      step_delay: 0.2
+      benchmark_mode: true
 ```

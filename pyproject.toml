@@ -88,12 +88,13 @@ packages = ["PhyAgentOS"]
 [tool.hatch.build]
 include = [
     "PhyAgentOS/**/*.py",
+    "PhyAgentOS/benchmarks/**/*.json",
+    "PhyAgentOS/benchmarks/**/*.md",
     "PhyAgentOS/templates/**/*.md",
     "PhyAgentOS/templates/**/*.json",
     "PhyAgentOS/templates/**/*.yaml",
     "PhyAgentOS/skills/**/*.md",
     "PhyAgentOS/skills/**/*.sh",
-    "PhyAgentOS/runtime/adapters/stardewvalley/**/*",
 ]
 
 [tool.hatch.build.targets.sdist]

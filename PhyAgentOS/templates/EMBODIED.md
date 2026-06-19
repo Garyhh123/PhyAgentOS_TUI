@@ -115,6 +115,48 @@ Each section uses `## Target: <target_id>` so the agent can load only enabled ta
 - **Pathfinder**: mineflayer pathfinder powers `move`; complex terrain or unreachable coordinates can fail.
 - **Render Distance**: limited by server settings, usually 8-12 chunks.
 - **Action Latency**: governed by target config `step_delay`, default 0.1s; move actions can take several seconds.
+
+## Target: stardewvalley_smapi
+
+### Identity
+
+- **Name**: stardewvalley_smapi
+- **Type**: game target (Stardew Valley via SMAPI + StardojoMod)
+- **Target Class**: local
+- **Target Kind**: game
+- **Runtime**: StardewValleyTargetRuntime
+- **Workspace**: workspaces/stardewvalley
+
+### Supported Skills
+
+| Skill | Runtime Kind | Description |
+|---|---|---|
+| `stardewvalley_navigate` | builtin | Navigate and interact with the Stardew Valley world. |
+
+### Supported Actions
+
+| Action | Parameters | Description |
+|---|---|---|
+| `move` | `dx, dy` | Relative movement by tile offset. |
+| `use` | `direction` | Use tool toward up/down/left/right. |
+| `interact` | `direction` | Interact/harvest/talk toward a direction. |
+| `choose_item` | `slot_index` | Switch to inventory slot 0-11. |
+| `craft` | `item_name` | Craft an item by name. |
+
+### Observation Fields
+
+- `position`: [x, y] tile coordinates
+- `location`: current map name
+- `facing_direction`: up/down/left/right
+- `health`, `energy`, `money`: player stats
+- `inventory`: list of {Name, Quantity} items
+- `surroundings`: list of nearby tiles with terrain/objects
+- `buildings`: farm buildings with door positions
+
+### Constraints
+
+- **Interaction Range**: 1 tile for use/interact.
+- **Time Progression**: game time advances during and between actions.
 - **Block Reach**: about 4.5 blocks for dig, place, and interact.
 
 ### Observer
