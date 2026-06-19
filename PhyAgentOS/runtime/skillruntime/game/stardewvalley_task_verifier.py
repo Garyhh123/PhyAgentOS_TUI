@@ -22,7 +22,7 @@ from PhyAgentOS.runtime.skillruntime.game.condition_verifier import GameConditio
 
 logger = logging.getLogger(__name__)
 
-_HAS_ITEM_RE = re.compile(r"has_item:([\w \-\']+?)(?:×(\d+))?$")
+_HAS_ITEM_RE = re.compile(r"has_item:([\w \-\']+?)(?:[×x*]\s*(\d+))?$")
 _HAS_TOOL_RE = re.compile(r"has_tool:([\w \-\']+)$")
 _OBJECT_NEAR_RE = re.compile(r"object_near:([\w \-\']+?),(\d+)$")
 _POSITION_AT_RE = re.compile(r"position_at:(-?\d+),(-?\d+)$")

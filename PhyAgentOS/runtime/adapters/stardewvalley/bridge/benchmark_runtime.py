@@ -115,7 +115,7 @@ class BenchmarkRuntime:
             session.completed = bool(eval_result.get("completed", False))
             if not knocked_out:
                 session.truncated = session.step >= session.max_steps and not session.completed
-            session.last_eval = eval_result
+                session.last_eval = eval_result
             session.history.append(
                 {
                     "step": session.step,
