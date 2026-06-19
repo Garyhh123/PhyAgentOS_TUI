@@ -11,8 +11,10 @@ pure HTTP client, mirroring MinecraftTarget.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +32,7 @@ FALLBACK_ACTION_TYPES = frozenset({
     "choose_option", "attach_item", "unattach_item", "menu",
 })
 
-_STARDEW_ACTION_CONVERTERS: dict[str, callable] = {}
+_STARDEW_ACTION_CONVERTERS: dict[str, Callable] = {}
 
 
 def _register(types: list[str]):
@@ -295,8 +297,6 @@ class StardewValleyTarget(BaseGameTarget):
         endpoint = "/benchmark/execute" if self._benchmark_mode else "/execute"
         try:
             payload = {"action": action_str}
-            if self._benchmark_mode:
-                payload["xxx"] = ""
             resp = client.post(
                 f"{self._bridge_url}{endpoint}",
                 json=payload,
@@ -359,7 +359,7 @@ class StardewValleyTarget(BaseGameTarget):
         }
 
         prefix = "\n## Stardew Snapshot\n"
-        content = prefix + "```json\n" + __import__("json").dumps(snapshot, indent=2, ensure_ascii=False) + "\n```\n"
+        content = prefix + "```json\n" + json.dumps(snapshot, indent=2, ensure_ascii=False) + "\n```\n"
         if env_path.exists():
             try:
                 existing = env_path.read_text(encoding="utf-8")

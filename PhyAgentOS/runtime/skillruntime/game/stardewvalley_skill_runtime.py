@@ -15,7 +15,6 @@ which uses TargetSessionHandle for all target interactions.  A legacy
 from __future__ import annotations
 
 import logging
-import math
 import threading
 import time
 from typing import Any
@@ -106,23 +105,6 @@ class StardewValleySkillRuntime(BuiltinSkillRuntime):
         handle,
         session: SessionSpec,
     ) -> SessionResult:
-        try:
-            return self._run_task_plan_handle_impl(plan, handle, session)
-        except Exception as exc:
-            import traceback as _tb
-            tb_str = _tb.format_exc()
-            logger.error("TaskPlan execution failed:\n%s", tb_str)
-            print(f"\n[SKILLRUNTIME ERROR] {exc}", flush=True)
-            print(tb_str, flush=True)
-            return SessionResult(status="failed", success=False, error_code="RUNTIME_ERROR",
-                                 error_message=str(exc), num_steps=0, return_value=0.0)
-
-    def _run_task_plan_handle_impl(
-        self,
-        plan: TaskPlan,
-        handle,
-        session: SessionSpec,
-    ) -> SessionResult:
         num_steps = 0
         total_reward = 0.0
         start_time = time.monotonic()
@@ -130,11 +112,8 @@ class StardewValleySkillRuntime(BuiltinSkillRuntime):
         max_steps = session.execution.max_steps
         failed_subgoals: list[str] = []
 
-        print(f"[RT_LOOP] START: {len(plan.subgoals)} subgoals, max_steps={max_steps}", flush=True)
-
-        for sg_idx, sg in enumerate(plan.subgoals):
+        for sg in plan.subgoals:
             self._check_cancel()
-            print(f"[RT_LOOP] sg{sg_idx} id={sg.id} precheck={sg.precheck} tasks={len(sg.tasks)}", flush=True)
             if time.monotonic() - start_time > timeout_s:
                 raise SessionTimeoutError(f"session {session.session_id} exceeded {timeout_s}s")
 
@@ -147,11 +126,6 @@ class StardewValleySkillRuntime(BuiltinSkillRuntime):
 
             raw_obs = handle.observe()
             verifier = StardewTaskVerifier(handle._target, raw_obs.data)
-            obs_data = raw_obs.data if hasattr(raw_obs, 'data') else raw_obs
-            top_keys = sorted(obs_data.keys()) if isinstance(obs_data, dict) else ["NOT_A_DICT"]
-            ci_info = (obs_data.get("info", {}) or {}).get("chosen_item", "N/A") if isinstance(obs_data, dict) else "N/A"
-            ci_stardew = (obs_data.get("stardew", {}) or {}).get("chosen_item", "N/A") if isinstance(obs_data, dict) else "N/A"
-            print(f"[VERIFIER_OBS] keys={top_keys} info.chosen_item={ci_info} stardew.chosen_item={ci_stardew}", flush=True)
 
             sg.state = "running"
             if sg.precheck:
@@ -198,24 +172,14 @@ class StardewValleySkillRuntime(BuiltinSkillRuntime):
                         if num_steps >= max_steps:
                             break
                         action = {"type": action_spec.type, "params": action_spec.params}
-                        print(f"[SKILL] step={num_steps} action={action_spec.type} params={action_spec.params}", flush=True)
-                        try:
-                            chunk_result = handle.action_chunk({"actions": [action]})
-                            print(f">>>CHUNK_RETURNED<<< step={num_steps}", flush=True)
-                        except Exception as e:
-                            print(f">>>CHUNK_EXCEPTION<<< step={num_steps} {e}", flush=True)
-                            task_success = False
-                            break
+                        chunk_result = handle.action_chunk({"actions": [action]})
                         num_steps += 1
 
                         if action_spec.type == "move":
                             time.sleep(0.3)
 
                         info = chunk_result.get("info", {})
-                        ok = info.get("ok", True)
-                        result_msg = info.get("result", "")
-                        print(f"[SKILL] step={num_steps-1} result: ok={ok} result={str(result_msg)[:80]}", flush=True)
-                        if isinstance(info, dict) and not ok:
+                        if isinstance(info, dict) and not info.get("ok", True):
                             task.last_error = info.get("result", "action failed")
                             task_success = False
                             break
@@ -280,7 +244,6 @@ class StardewValleySkillRuntime(BuiltinSkillRuntime):
             metadata={"subgoals_done": sum(1 for sg in plan.subgoals if sg.state == "done"),
                       "subgoals_total": len(plan.subgoals)},
         )
-        print(f"[RT_LOOP] END: status={result.status} steps={num_steps}", flush=True)
         return result
 
     # ── Flat action list via TargetSessionHandle ───────────────────
@@ -554,7 +517,6 @@ class StardewValleySkillRuntime(BuiltinSkillRuntime):
                 "step_index": step_idx,
                 "task_description": session.task_description,
             }
-            runtime_obs = target_adapter.to_runtime_observation(raw_obs, target_info)
 
             if step_idx >= len(action_plan):
                 return SessionResult(
@@ -572,7 +534,6 @@ class StardewValleySkillRuntime(BuiltinSkillRuntime):
 
             transition = target.step(bridged_action)
             num_steps += 1
-            raw_obs = transition.get("obs", target.observe())
             total_reward += float(transition.get("reward", 0.0))
 
             if action.get("type") == "move":

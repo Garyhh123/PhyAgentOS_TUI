@@ -30,6 +30,7 @@ class BenchmarkSession:
     step: int = 0
     completed: bool = False
     truncated: bool = False
+    knocked_out: bool = False
     last_eval: dict[str, Any] = field(default_factory=dict)
     history: list[dict[str, Any]] = field(default_factory=list)
 
@@ -151,7 +152,6 @@ class BenchmarkRuntime:
             self._lock.release()
 
     def _evaluate(self, task: Any, raw_obs: dict[str, Any], task_proxy: Any) -> dict[str, Any]:
-        self._normalize_obs_keys(raw_obs)
         result = task.evaluate(raw_obs, task_proxy)
         if not isinstance(result, dict):
             raise BenchmarkError(f"Task evaluator returned {type(result).__name__}")
@@ -176,11 +176,10 @@ class BenchmarkRuntime:
             menu_type = str(current_menu.get("type", "")).lower()
             if menu_type == "dialogue":
                 dialogues = current_menu.get("dialogues", [])
-                if isinstance(dialogues, list) and len(dialogues) > 0:
-                    msg_text = str(dialogues[0]).lower() if dialogues else ""
+                if isinstance(dialogues, list) and dialogues:
+                    msg_text = str(dialogues[0]).lower()
                     if any(w in msg_text for w in ("knocked", "passed out", "unconscious", "bring you")):
                         return True
-                return True
         return False
 
     def _response(self, raw_obs: dict[str, Any]) -> dict[str, Any]:
