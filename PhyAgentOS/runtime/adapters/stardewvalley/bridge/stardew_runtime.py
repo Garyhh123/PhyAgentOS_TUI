@@ -74,7 +74,7 @@ class StardewRuntime:
             return self._observe_raw_unlocked()
 
     def start_benchmark_task(self, task: Any, task_proxy: Any) -> dict[str, Any]:
-        """Initialize a StarDojo benchmark task and return its raw baseline obs."""
+        """Run init_commands only (save already loaded during bridge startup)."""
 
         with self._runtime_lock(timeout=1.0):
             action_proxy = getattr(self.env, "action_proxy", None)

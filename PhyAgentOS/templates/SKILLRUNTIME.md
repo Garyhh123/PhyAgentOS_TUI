@@ -107,4 +107,20 @@ skillruntimes:
         - player_position
         - nearby_blocks
       strict_environment_contract: false
+  - id: stardewvalley_navigate
+    runtime: StardewValleySkillRuntime
+    runtime_kind: builtin
+    loop_mode: builtin_episode
+    agent_exposure: none
+    supported_target_kinds:
+      - game
+    observation_contract:
+      observation_type: structured
+      empty_observation_allowed: false
+    supports_chunk: false
+    default_replan_every: 1
+    requires:
+      sensors: []
+      environment_outputs: []
+      strict_environment_contract: false
 ```

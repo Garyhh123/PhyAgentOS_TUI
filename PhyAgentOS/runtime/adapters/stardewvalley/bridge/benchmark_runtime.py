@@ -103,9 +103,17 @@ class BenchmarkRuntime:
 
             raw_obs = self.runtime.execute_raw(action)
             eval_result = self._evaluate(session.task, raw_obs, session.task_proxy)
+
+            knocked_out = self._check_knockout(raw_obs)
+            if knocked_out:
+                session.truncated = True
+                session.knocked_out = True
+                session.last_eval = {"completed": False, "quantity": 0, "truncated": True, "reason": "knocked_out"}
+
             session.step += 1
             session.completed = bool(eval_result.get("completed", False))
-            session.truncated = session.step >= session.max_steps and not session.completed
+            if not knocked_out:
+                session.truncated = session.step >= session.max_steps and not session.completed
             session.last_eval = eval_result
             session.history.append(
                 {
@@ -114,6 +122,7 @@ class BenchmarkRuntime:
                     "eval": eval_result,
                     "completed": session.completed,
                     "truncated": session.truncated,
+                    "knocked_out": knocked_out,
                 }
             )
             return self._response(raw_obs)
@@ -142,13 +151,37 @@ class BenchmarkRuntime:
             self._lock.release()
 
     def _evaluate(self, task: Any, raw_obs: dict[str, Any], task_proxy: Any) -> dict[str, Any]:
+        self._normalize_obs_keys(raw_obs)
         result = task.evaluate(raw_obs, task_proxy)
         if not isinstance(result, dict):
-            raise BenchmarkError(f"Task evaluator returned {type(result).__name__}, expected dict.")
+            raise BenchmarkError(f"Task evaluator returned {type(result).__name__}")
         result = to_jsonable(result)
         result.setdefault("completed", False)
         result.setdefault("quantity", getattr(task, "current_quantity", 0))
         return result
+
+    @staticmethod
+    def _check_knockout(raw_obs: dict[str, Any]) -> bool:
+        health = raw_obs.get("health")
+        try:
+            if health is not None and float(health) <= 0:
+                return True
+        except (ValueError, TypeError):
+            pass
+        location = str(raw_obs.get("location", ""))
+        if location in ("Hospital", "hospital"):
+            return True
+        current_menu = raw_obs.get("current_menu", {})
+        if isinstance(current_menu, dict):
+            menu_type = str(current_menu.get("type", "")).lower()
+            if menu_type == "dialogue":
+                dialogues = current_menu.get("dialogues", [])
+                if isinstance(dialogues, list) and len(dialogues) > 0:
+                    msg_text = str(dialogues[0]).lower() if dialogues else ""
+                    if any(w in msg_text for w in ("knocked", "passed out", "unconscious", "bring you")):
+                        return True
+                return True
+        return False
 
     def _response(self, raw_obs: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -176,6 +209,7 @@ class BenchmarkRuntime:
             "max_steps": session.max_steps,
             "completed": session.completed,
             "truncated": session.truncated,
+            "knocked_out": getattr(session, "knocked_out", False),
             "eval": session.last_eval,
         }
 
