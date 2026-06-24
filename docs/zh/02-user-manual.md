@@ -188,12 +188,12 @@ conda run -n lerobot-pi python -m PhyAgentOS.runtime.policy.openpi.lerobot_pi0_s
 {
   "embodiments": {
     "mode": "fleet",
-    "shared_workspace": "~/.PhyAgentOS/workspaces/shared",
+    "shared_workspace": "~/.workspaces/shared",
     "instances": [
       {
         "robot_id": "go2_edu_001",
         "driver": "go2_edu",
-        "workspace": "~/.PhyAgentOS/workspaces/go2_edu_001"
+        "workspace": "~/.workspaces/go2_edu_001"
       }
     ]
   }
@@ -205,8 +205,8 @@ conda run -n lerobot-pi python -m PhyAgentOS.runtime.policy.openpi.lerobot_pi0_s
 | 模式 | 路径 |
 |------|------|
 | 单机模式 | `~/.PhyAgentOS/workspace` |
-| Fleet 共享工作区 | `~/.PhyAgentOS/workspaces/shared` |
-| Fleet 机器人工作区 | `~/.PhyAgentOS/workspaces/<robot_id>` |
+| Fleet 共享工作区 | `~/.workspaces/shared` |
+| Fleet 机器人工作区 | `~/.workspaces/<robot_id>` |
 
 > 每次修改配置后建议重新执行 `paos onboard`，它会刷新模板并补充新字段。
 

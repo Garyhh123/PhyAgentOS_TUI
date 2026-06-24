@@ -6,7 +6,7 @@ Runs in the Isaac/InternUtopia conda environment. Does NOT import PhyAgentOS
 Launch (Isaac env, from repo root):
 
   python PhyAgentOS/runtime/targets/remote/isaacsim/server.py \\
-    --config PhyAgentOS/rollout/configs/pipergo2_manipulation.json --gui --port 9003
+    --config rollout/configs/pipergo2_manipulation.json --gui --port 9003
 
 Legacy rollout WS remains available via ``python -m rollout --port 8765``.
 """
@@ -31,13 +31,11 @@ RPC_VERSION = "phyagentos.runtime_rpc.v2"
 logger = logging.getLogger(__name__)
 
 _REPO_ROOT = Path(__file__).resolve().parents[5]
-_PACKAGE_ROOT = Path(__file__).resolve().parents[4]
 
 
 def _ensure_rollout_import_paths() -> None:
-    for root in (_REPO_ROOT, _PACKAGE_ROOT):
-        if str(root) not in sys.path:
-            sys.path.insert(0, str(root))
+    if str(_REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(_REPO_ROOT))
 
 
 def _pack_array(obj: Any) -> Any:
@@ -513,7 +511,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Isaac Sim TargetWS server")
     parser.add_argument(
         "--config",
-        default=str(_PACKAGE_ROOT / "rollout/configs/pipergo2_manipulation.json"),
+        default=str(_REPO_ROOT / "rollout/configs/pipergo2_manipulation.json"),
         help="Rollout JSON config",
     )
     parser.add_argument("--host", default="0.0.0.0")

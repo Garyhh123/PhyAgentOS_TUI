@@ -6,14 +6,14 @@ Standalone TargetWS server wrapping Isaac Sim rollout (InternUtopia).
 
 ```bash
 python PhyAgentOS/runtime/targets/remote/isaacsim/server.py \
-  --config PhyAgentOS/rollout/configs/pipergo2_manipulation.json --gui --port 9003
+  --config rollout/configs/pipergo2_manipulation.json --gui --port 9003
 ```
 
 Merom multi-robot:
 
 ```bash
 python PhyAgentOS/runtime/targets/remote/isaacsim/server.py \
-  --config PhyAgentOS/rollout/configs/merom_multi_robot.json --gui --port 9003
+  --config rollout/configs/merom_multi_robot.json --gui --port 9003
 ```
 
 Runtime endpoint: `targetws://127.0.0.1:9003`

@@ -24,10 +24,10 @@ echo "[start_isaacsim_gui] DISPLAY=$DISPLAY"
 
 case "$SCENE" in
   pipergo2)
-    CONFIG="PhyAgentOS/rollout/configs/pipergo2_manipulation_gui.json"
+    CONFIG="rollout/configs/pipergo2_manipulation_gui.json"
     ;;
   merom)
-    CONFIG="PhyAgentOS/rollout/configs/merom_multi_robot_gui.json"
+    CONFIG="rollout/configs/merom_multi_robot_gui.json"
     ;;
   *)
     echo "Usage: $0 [pipergo2|merom] [port]" >&2
@@ -37,8 +37,6 @@ esac
 
 echo "[start_isaacsim_gui] scene=$SCENE config=$CONFIG port=$PORT"
 echo "[start_isaacsim_gui] First boot may take several minutes — wait for Isaac window + TargetWS listening."
-
-export PYTHONPATH="${REPO_ROOT}/PhyAgentOS${PYTHONPATH:+:${PYTHONPATH}}"
 
 exec python PhyAgentOS/runtime/targets/remote/isaacsim/server.py \
   --config "$CONFIG" --gui --port "$PORT"

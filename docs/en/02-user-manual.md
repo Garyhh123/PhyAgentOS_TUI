@@ -188,12 +188,12 @@ Location: `~/.PhyAgentOS/config.json`
 {
   "embodiments": {
     "mode": "fleet",
-    "shared_workspace": "~/.PhyAgentOS/workspaces/shared",
+    "shared_workspace": "~/.workspaces/shared",
     "instances": [
       {
         "robot_id": "go2_edu_001",
         "driver": "go2_edu",
-        "workspace": "~/.PhyAgentOS/workspaces/go2_edu_001"
+        "workspace": "~/.workspaces/go2_edu_001"
       }
     ]
   }
@@ -205,8 +205,8 @@ Location: `~/.PhyAgentOS/config.json`
 | Mode | Path |
 |------|------|
 | Single mode | `~/.PhyAgentOS/workspace` |
-| Fleet shared workspace | `~/.PhyAgentOS/workspaces/shared` |
-| Fleet robot workspace | `~/.PhyAgentOS/workspaces/<robot_id>` |
+| Fleet shared workspace | `~/.workspaces/shared` |
+| Fleet robot workspace | `~/.workspaces/<robot_id>` |
 
 > After each config change, re-run `paos onboard` to refresh templates and add new fields.
 

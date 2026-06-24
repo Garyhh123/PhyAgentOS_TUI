@@ -66,7 +66,7 @@ PhyAgentOS 有两种典型运行拓扑：
    - 默认工作区通常位于 `~/.PhyAgentOS/workspace`
    - 适合单个机器人或仿真快速验证
 2. **Fleet 模式（fleet）**
-   - 共享工作区通常位于 `~/.PhyAgentOS/workspaces/shared`
+   - 共享工作区通常位于 `~/.workspaces/shared`
    - 每个机器人实例都有自己的工作区
    - 适合异构多机器人协同
 
@@ -168,8 +168,8 @@ paos onboard
 ### 4.3 默认工作区在哪里
 
 - **单机模式**：`~/.PhyAgentOS/workspace`
-- **Fleet 模式共享工作区**：`~/.PhyAgentOS/workspaces/shared`
-- **Fleet 模式机器人工作区**：`~/.PhyAgentOS/workspaces/<robot_id>`
+- **Fleet 模式共享工作区**：`~/.workspaces/shared`
+- **Fleet 模式机器人工作区**：`~/.workspaces/<robot_id>`
 
 ## 5. 单机模式快速开始
 
@@ -399,17 +399,17 @@ python hal/hal_watchdog.py --driver rekep_real
 {
   "embodiments": {
     "mode": "fleet",
-    "shared_workspace": "~/.PhyAgentOS/workspaces/shared",
+    "shared_workspace": "~/.workspaces/shared",
     "instances": [
       {
         "robot_id": "go2_edu_001",
         "driver": "go2_edu",
-        "workspace": "~/.PhyAgentOS/workspaces/go2_edu_001"
+        "workspace": "~/.workspaces/go2_edu_001"
       },
       {
         "robot_id": "xlerobot_lab_001",
         "driver": "xlerobot_2wheels_remote",
-        "workspace": "~/.PhyAgentOS/workspaces/xlerobot_lab_001"
+        "workspace": "~/.workspaces/xlerobot_lab_001"
       }
     ]
   }

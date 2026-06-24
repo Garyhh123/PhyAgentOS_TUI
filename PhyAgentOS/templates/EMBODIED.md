@@ -12,7 +12,7 @@ Each section uses `## Target: <target_id>` so the agent can load only enabled ta
 - **Target Class**: remote
 - **Target Kind**: simulation
 - **Runtime**: LiberoRemoteTargetProxy
-- **Workspace**: PhyAgentOS/workspaces/libero_real
+- **Workspace**: workspaces/libero_real
 
 ### Supported Skills
 

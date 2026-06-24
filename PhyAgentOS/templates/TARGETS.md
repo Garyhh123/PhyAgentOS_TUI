@@ -7,7 +7,7 @@ targets:
     target_class: local
     target_kind: simulation
     enabled: true
-    workspace: PhyAgentOS/workspaces/dummy_sim
+    workspace: workspaces/dummy_sim
     supported_skillruntimes:
       - openpi_sim_vla
     runtime:
@@ -36,7 +36,7 @@ targets:
     target_class: remote
     target_kind: simulation
     enabled: true
-    workspace: PhyAgentOS/workspaces/libero_real
+    workspace: workspaces/libero_real
     supported_skillruntimes:
       - pi05_libero_remote
     runtime:
@@ -67,7 +67,7 @@ targets:
     target_class: remote
     target_kind: simulation
     enabled: true
-    workspace: PhyAgentOS/workspaces/pipergo2_isaac_sim
+    workspace: workspaces/pipergo2_isaac_sim
     supported_skillruntimes:
       - pipergo2_isaac_vla
       - pipergo2_command_sim
@@ -105,7 +105,7 @@ targets:
     target_class: remote
     target_kind: simulation
     enabled: true
-    workspace: PhyAgentOS/workspaces/merom_isaac_sim
+    workspace: workspaces/merom_isaac_sim
     supported_skillruntimes:
       - pipergo2_command_sim
     runtime:
@@ -135,7 +135,7 @@ targets:
     target_class: remote
     target_kind: simulation
     enabled: true
-    workspace: PhyAgentOS/workspaces/merom_isaac_sim
+    workspace: workspaces/merom_isaac_sim
     supported_skillruntimes:
       - pipergo2_command_sim
     runtime:
@@ -162,7 +162,7 @@ targets:
     target_class: remote
     target_kind: simulation
     enabled: true
-    workspace: PhyAgentOS/workspaces/merom_isaac_sim
+    workspace: workspaces/merom_isaac_sim
     supported_skillruntimes:
       - pipergo2_command_sim
     runtime:
@@ -189,7 +189,7 @@ targets:
     target_class: remote
     target_kind: simulation
     enabled: true
-    workspace: PhyAgentOS/workspaces/behavior1k_eval
+    workspace: b1k_integration/workspaces/behavior1k_eval
     supported_skillruntimes:
       - behavior1k_vla
     runtime:
