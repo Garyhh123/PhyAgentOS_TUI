@@ -87,6 +87,16 @@ class SessionRouting(BaseModel):
     adapter_overrides: dict[str, Any] | None = None
 
 
+class SessionBenchmarkMeta(BaseModel):
+    benchmark_id: str | None = None
+    suite_id: str | None = None
+    task_name: str | None = None
+    task_index: int | None = None
+    instance_id: int | None = None
+    policy_id: str | None = None
+    run_id: str | None = None
+
+
 class SessionExecution(BaseModel):
     max_steps: int = 600
     control_hz: float | None = None
@@ -94,6 +104,8 @@ class SessionExecution(BaseModel):
     replan_every_steps: int | None = None
     action_chunk_mode: Literal["chunk_buffer", "open_loop", "single_step"] = "chunk_buffer"
     chunk_switch_mode: Literal["soft_blend", "hard_switch"] = "hard_switch"
+    steps: list[dict[str, Any]] | None = None
+    timeline: list[dict[str, Any]] | None = None
 
 
 class SessionRuntimeHints(BaseModel):
@@ -129,6 +141,7 @@ class SessionSpec(BaseModel):
     execution: SessionExecution = Field(default_factory=SessionExecution)
     runtime_hints: SessionRuntimeHints = Field(default_factory=SessionRuntimeHints)
     safety_profile: SessionSafetyProfile = Field(default_factory=SessionSafetyProfile)
+    benchmark: SessionBenchmarkMeta | None = None
     result: SessionResult = Field(default_factory=SessionResult)
 
 

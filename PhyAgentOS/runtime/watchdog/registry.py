@@ -136,6 +136,22 @@ class SessionRegistry:
         status = SessionStatus(result.status or (SessionStatus.SUCCEEDED.value if result.success else SessionStatus.FAILED.value))
         self._update_session_status(session_id, status, result=result)
 
+    def prepare_for_run(self, session_id: str) -> None:
+        """Reset a session to pending so ``--session-id`` can re-run without hand-editing YAML."""
+        with self._exclusive_lock():
+            document = self._load_unlocked()
+            for session in document.sessions:
+                if session.session_id != session_id:
+                    continue
+                session.status = SessionStatus.PENDING
+                session.claimed_by = None
+                session.claim_token = None
+                session.updated_at = utc_now()
+                session.result = SessionResult()
+                self._save_unlocked(document)
+                return
+        raise KeyError(f"session not found: {session_id}")
+
     def mark_retry_pending(self, session_id: str, error: Exception) -> None:
         """Return a claimed/running session to pending for a configured retry."""
         with self._exclusive_lock():

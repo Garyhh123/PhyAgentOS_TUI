@@ -89,4 +89,121 @@ skillruntimes:
       forbidden:
         - implicit_shape_truncation
         - implicit_representation_cast
+  - id: pipergo2_isaac_vla
+    runtime: OpenPISkillRuntime
+    runtime_kind: policy
+    loop_mode: policy_closed_loop
+    agent_exposure: none
+    supported_target_kinds:
+      - simulation
+    policy:
+      policy_client: openpi
+      policy_adapter: policy_adapter://pipergo2_isaac_openpi_adapter
+      supports_chunk: true
+    observation_contract:
+      observation_type: multimodal
+      empty_observation_allowed: false
+    supports_chunk: true
+    default_replan_every: 4
+    requires:
+      sensors: []
+      environment_outputs: []
+      strict_environment_contract: false
+    input_contract:
+      images:
+        - observation/image
+        - observation/wrist_image
+      state: observation/state
+      prompt: prompt
+    output_contract:
+      action:
+        action_space_id: pipergo2_isaac_joint_v1
+        tensor_key: actions
+        shape:
+          - T
+          - 8
+        dtype: float32
+        normalized: false
+        representation: joint_position
+        frame: robot_base
+        chunk:
+          variable_T: true
+          default_T: 4
+          policy_hz: 20
+    adapter_requirements:
+      allowed_bridges:
+        - bridge://safety_clamp
+      forbidden: []
+  - id: pipergo2_command_sim
+    runtime: CommandSimSkillRuntime
+    runtime_kind: builtin
+    loop_mode: builtin_command_loop
+    agent_exposure: constrained_target_tools
+    supported_target_kinds:
+      - simulation
+    observation_contract:
+      observation_type: multimodal
+      empty_observation_allowed: false
+    target_tool_policy:
+      expose:
+        - execute_step
+      forbidden: []
+      require_tool_schema_validation: true
+      require_action_validation: false
+      require_target_side_validation: true
+    supports_chunk: false
+    default_replan_every: 1
+    requires:
+      sensors: []
+      environment_outputs: []
+      strict_environment_contract: false
+    adapter_requirements:
+      allowed_bridges: []
+      forbidden: []
+  - id: behavior1k_vla
+    runtime: OpenPISkillRuntime
+    runtime_kind: policy
+    loop_mode: policy_closed_loop
+    agent_exposure: none
+    supported_target_kinds:
+      - simulation
+    policy:
+      policy_client: dummy
+      policy_adapter: policy_adapter://b1k_dummy_policy_adapter
+      supports_chunk: true
+    observation_contract:
+      observation_type: multimodal
+      empty_observation_allowed: false
+    supports_chunk: true
+    default_replan_every: 1
+    requires:
+      sensors: []
+      environment_outputs: []
+      strict_environment_contract: true
+    input_contract:
+      images:
+        - observation/head_rgb
+        - observation/left_wrist_rgb
+        - observation/right_wrist_rgb
+      state: observation/state
+      prompt: prompt
+    output_contract:
+      action:
+        action_space_id: behavior1k_r1pro_joint_v1
+        tensor_key: actions
+        shape:
+          - T
+          - 23
+        dtype: float32
+        normalized: false
+        representation: joint_position
+        frame: robot
+        chunk:
+          variable_T: true
+          default_T: 1
+          policy_hz: 20
+    adapter_requirements:
+      allowed_bridges:
+        - bridge://safety_clamp
+      forbidden: []
 ```

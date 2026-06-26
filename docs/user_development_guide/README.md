@@ -184,12 +184,12 @@ Phy's 配置根对象定义在 [../PhyAgentOS/config/schema.py](../../PhyAgentOS
 {
   "embodiments": {
     "mode": "fleet",
-    "shared_workspace": "~/.PhyAgentOS/workspaces/shared",
+    "shared_workspace": "~/.workspaces/shared",
     "instances": [
       {
         "robot_id": "go2_edu_001",
         "driver": "go2_edu",
-        "workspace": "~/.PhyAgentOS/workspaces/go2_edu_001"
+        "workspace": "~/.workspaces/go2_edu_001"
       }
     ]
   }

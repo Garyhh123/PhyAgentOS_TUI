@@ -30,10 +30,21 @@ def _pack_array(obj: Any) -> Any:
 
 
 def _unpack_array(obj: dict[Any, Any]) -> Any:
-    if obj.get("__ndarray__"):
-        return np.ndarray(buffer=obj["data"], dtype=np.dtype(obj["dtype"]), shape=obj["shape"])
-    if obj.get("__npgeneric__"):
-        return np.dtype(obj["dtype"]).type(obj["data"])
+    if not isinstance(obj, dict):
+        return obj
+    is_ndarray = obj.get("__ndarray__") or obj.get(b"__ndarray__")
+    is_npgeneric = obj.get("__npgeneric__") or obj.get(b"__npgeneric__")
+    if is_ndarray:
+        data = obj.get("data", obj.get(b"data"))
+        if isinstance(data, str):
+            data = data.encode("latin1")
+        dtype = obj.get("dtype", obj.get(b"dtype"))
+        shape = obj.get("shape", obj.get(b"shape"))
+        return np.ndarray(buffer=data, dtype=np.dtype(dtype), shape=shape)
+    if is_npgeneric:
+        data = obj.get("data", obj.get(b"data"))
+        dtype = obj.get("dtype", obj.get(b"dtype"))
+        return np.dtype(dtype).type(data)
     return obj
 
 

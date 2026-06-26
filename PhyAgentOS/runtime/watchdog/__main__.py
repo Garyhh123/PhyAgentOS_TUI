@@ -28,6 +28,10 @@ def main() -> int:
         action="store_true",
         help="Run one polling pass and exit",
     )
+    parser.add_argument(
+        "--session-id",
+        help="Run this session only (must exist in SESSIONS.md). Resets it to pending before claim.",
+    )
     args = parser.parse_args()
 
     supervisor = WatchdogSupervisor(
@@ -36,10 +40,10 @@ def main() -> int:
     )
 
     if args.once:
-        return 0 if supervisor.run_once() else 1
+        return 0 if supervisor.run_once(session_id=args.session_id) else 1
 
     while True:
-        supervisor.run_once()
+        supervisor.run_once(session_id=args.session_id)
 
 
 if __name__ == "__main__":
