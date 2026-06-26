@@ -29,10 +29,10 @@ Physical Agent Operating System 采用 Markdown-first 设计：
 
 ### Fleet mode
 
-- One shared workspace, usually `~/.PhyAgentOS/workspaces/shared`
+- One shared workspace, usually `~/.workspaces/shared`
 - One robot workspace per embodied instance, for example:
-  - `~/.PhyAgentOS/workspaces/go2_edu_001`
-  - `~/.PhyAgentOS/workspaces/desktop_pet_001`
+  - `~/.workspaces/go2_edu_001`
+  - `~/.workspaces/desktop_pet_001`
 
 单实例模式：
 
@@ -41,10 +41,10 @@ Physical Agent Operating System 采用 Markdown-first 设计：
 
 Fleet 模式：
 
-- 一个 shared workspace，通常是 `~/.PhyAgentOS/workspaces/shared`
+- 一个 shared workspace，通常是 `~/.workspaces/shared`
 - 每个机器人实例一个 robot workspace，例如：
-  - `~/.PhyAgentOS/workspaces/go2_edu_001`
-  - `~/.PhyAgentOS/workspaces/desktop_pet_001`
+  - `~/.workspaces/go2_edu_001`
+  - `~/.workspaces/desktop_pet_001`
 
 ## 3. File Responsibilities / 文件职责
 

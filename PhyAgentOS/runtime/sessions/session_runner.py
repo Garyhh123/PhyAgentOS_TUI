@@ -114,7 +114,7 @@ class SessionRunner:
         self.target.close()
 
     def _session_context(self) -> dict:
-        return {
+        ctx = {
             "session_id": self.session.session_id,
             "task_description": self.session.task_description,
             "target_ref": self.session.target_ref,
@@ -123,6 +123,9 @@ class SessionRunner:
             "execution": self.session.execution.model_dump(mode="json"),
             "safety_profile": self.session.safety_profile.model_dump(mode="json"),
         }
+        if self.session.benchmark is not None:
+            ctx["benchmark"] = self.session.benchmark.model_dump(mode="json")
+        return ctx
 
     def _to_session_result(self, result: SkillRuntimeResult) -> SessionResult:
         session_result = result.to_session_result()

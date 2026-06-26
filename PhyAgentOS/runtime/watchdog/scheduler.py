@@ -39,12 +39,36 @@ class SessionScheduler:
 
     _PRIORITY_RANK = {"high": 0, "normal": 1, "low": 2}
 
+    def select_by_id(
+        self,
+        session_id: str,
+        sessions_doc: SessionsDocument,
+        targets_doc: TargetsDocument,
+        skillruntimes_doc: SkillRuntimeDocument,
+    ) -> ScheduledSession:
+        for session in sessions_doc.sessions:
+            if session.session_id == session_id:
+                if session.status != SessionStatus.PENDING:
+                    raise SessionScheduleError(
+                        session_id,
+                        f"session {session_id!r} is not pending (status={session.status})",
+                    )
+                try:
+                    return self.resolve_session(session, targets_doc, skillruntimes_doc)
+                except SchemaValidationError as exc:
+                    raise SessionScheduleError(session_id, str(exc)) from exc
+        raise SessionScheduleError(session_id, f"session not found: {session_id}")
+
     def select_next(
         self,
         sessions_doc: SessionsDocument,
         targets_doc: TargetsDocument,
         skillruntimes_doc: SkillRuntimeDocument,
+        *,
+        session_id: str | None = None,
     ) -> ScheduledSession | None:
+        if session_id:
+            return self.select_by_id(session_id, sessions_doc, targets_doc, skillruntimes_doc)
         pending = [
             (idx, session)
             for idx, session in enumerate(sessions_doc.sessions)

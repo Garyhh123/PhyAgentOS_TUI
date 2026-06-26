@@ -1,0 +1,22 @@
+{
+  "benchmark": null,
+  "error_code": null,
+  "error_message": null,
+  "metadata": {
+    "artifacts": {},
+    "final_status": {},
+    "message": "navigate ok: dist=0.0651 settled=60",
+    "num_steps": 1,
+    "return_value": 1.0
+  },
+  "num_steps": 0,
+  "policy_latency_ms": {
+    "mean": null
+  },
+  "return_value": null,
+  "session_id": "sess_piper_language_nav",
+  "skillruntime_id": "pipergo2_command_sim",
+  "status": "succeeded",
+  "success": true,
+  "target_id": "pipergo2_isaac_remote"
+}

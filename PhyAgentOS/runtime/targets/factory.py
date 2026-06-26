@@ -9,6 +9,8 @@ from PhyAgentOS.runtime.communication.target_ws_client import TargetWSClient
 from PhyAgentOS.runtime.schemas import TargetSpec
 from PhyAgentOS.runtime.targets.base import BaseRolloutTarget
 from PhyAgentOS.runtime.targets.local.dummy_sim_target import DummySimTarget
+from PhyAgentOS.runtime.targets.remote.behavior1k.proxy import Behavior1KRemoteTargetProxy
+from PhyAgentOS.runtime.targets.remote.isaacsim.proxy import IsaacSimRemoteTargetProxy
 from PhyAgentOS.runtime.targets.remote.libero.proxy import LiberoRemoteTargetProxy
 from PhyAgentOS.runtime.targets.remote.proxy import RemoteTargetProxy
 from PhyAgentOS.runtime.watchdog.errors import TargetBuildError
@@ -52,7 +54,11 @@ def build_remote_target(target: TargetSpec, endpoint: str) -> BaseRolloutTarget:
     factory = _REMOTE_TARGET_FACTORIES.get(target.runtime.target_runtime)
     if factory is None:
         raise TargetBuildError(f"unsupported remote target runtime: {target.runtime.target_runtime}")
-    client = TargetWSClient(endpoint, target_id=target.id)
+    client = TargetWSClient(
+        endpoint,
+        target_id=target.id,
+        timeout_s=float(target.config.get("target_ws_timeout_s", 300)),
+    )
     return factory(target, client)
 
 
@@ -73,6 +79,16 @@ def _is_targetws_endpoint(endpoint: str) -> bool:
     return parsed.scheme == "targetws"
 
 
+def build_isaacsim_remote_target_proxy(target: TargetSpec, client: TargetWSClient) -> IsaacSimRemoteTargetProxy:
+    return IsaacSimRemoteTargetProxy(client, config=target.config)
+
+
+def build_behavior1k_remote_target_proxy(target: TargetSpec, client: TargetWSClient) -> Behavior1KRemoteTargetProxy:
+    return Behavior1KRemoteTargetProxy(client, config=target.config)
+
+
 register_local_target_runtime("DummySimTargetRuntime", build_dummy_sim_target)
 register_remote_target_runtime("RemoteTargetProxy", build_remote_target_proxy)
 register_remote_target_runtime("LiberoRemoteTargetProxy", build_libero_remote_target_proxy)
+register_remote_target_runtime("IsaacSimRemoteTargetProxy", build_isaacsim_remote_target_proxy)
+register_remote_target_runtime("Behavior1KRemoteTargetProxy", build_behavior1k_remote_target_proxy)

@@ -25,3 +25,6 @@ SECURITY.md
 test
 tests/
 plan/
+asserts/
+checkpoints/
+openpi_turning_on_radio/

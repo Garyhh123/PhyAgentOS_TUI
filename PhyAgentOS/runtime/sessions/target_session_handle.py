@@ -132,9 +132,9 @@ class TargetSessionHandle:
             "step_index": self.session_state.step_index,
             "replan_every": self.session.execution.replan_every_steps or self.session.execution.replan_every,
             "action_dim": self.target_spec.config.get("action_dim", action_cfg.get("action_dim", 7)),
-            "max_chunk_size": action_cfg.get(
+            "max_chunk_size": self.target_spec.config.get(
                 "max_chunk_size",
-                self.target_spec.config.get("chunk_size", action_cfg.get("chunk_size", 4)),
+                action_cfg.get("max_chunk_size", self.target_spec.config.get("chunk_size", action_cfg.get("chunk_size", 4))),
             ),
             "action_contract_id": action_cfg.get("id", "dummy_delta_eef_gripper_v1"),
         }

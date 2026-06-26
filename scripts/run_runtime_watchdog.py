@@ -22,14 +22,19 @@ def main() -> int:
         help="Agent/shared workspace where perception writes ENVIRONMENT.md. Defaults to --workspace.",
     )
     parser.add_argument("--once", action="store_true", help="Run one polling pass and exit")
+    parser.add_argument(
+        "--session-id",
+        help="Run this session only (must exist in SESSIONS.md). Resets it to pending before claim.",
+    )
     args = parser.parse_args()
 
     supervisor = WatchdogSupervisor(args.workspace, environment_workspace=args.environment_workspace)
     if args.once:
-        return 0 if supervisor.run_once() else 1
+        ok = supervisor.run_once(session_id=args.session_id)
+        return 0 if ok else 1
 
     while True:
-        supervisor.run_once()
+        supervisor.run_once(session_id=args.session_id)
 
 
 if __name__ == "__main__":

@@ -266,7 +266,7 @@ class EmbodimentsConfig(Base):
     """Embodiment topology and robot instance registry."""
 
     mode: Literal["single", "fleet"] = "single"
-    shared_workspace: str = "~/.PhyAgentOS/workspaces/shared"
+    shared_workspace: str = "~/.workspaces/shared"
     instances: list[EmbodimentInstanceConfig] = Field(default_factory=list)
 
 
