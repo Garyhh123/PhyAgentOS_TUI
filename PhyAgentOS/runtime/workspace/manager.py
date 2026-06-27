@@ -140,6 +140,7 @@ class RuntimeWorkspaceManager:
                 self.workspace,
                 environment_workspace=self.environment_workspace,
                 poll_interval_s=self.config.runtime.watchdog_poll_interval_s,
+                verification_enabled=self.config.agents.verification.enabled,
             )
             self._watchdog.start()
             report.watchdog_started = True
@@ -359,10 +360,12 @@ class BackgroundWatchdog:
         *,
         environment_workspace: Path,
         poll_interval_s: float,
+        verification_enabled: bool,
     ):
         self.workspace = workspace
         self.environment_workspace = environment_workspace
         self.poll_interval_s = max(0.05, float(poll_interval_s))
+        self.verification_enabled = verification_enabled
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="phyagentos-runtime-watchdog", daemon=True)
 
@@ -374,7 +377,11 @@ class BackgroundWatchdog:
         self._thread.join(timeout=2.0)
 
     def _run(self) -> None:
-        supervisor = WatchdogSupervisor(self.workspace, environment_workspace=self.environment_workspace)
+        supervisor = WatchdogSupervisor(
+            self.workspace,
+            environment_workspace=self.environment_workspace,
+            verification_enabled=self.verification_enabled,
+        )
         while not self._stop.is_set():
             try:
                 ran = supervisor.run_once()

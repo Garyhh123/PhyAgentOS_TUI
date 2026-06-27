@@ -17,8 +17,11 @@ class SessionStatus(StrEnum):
     PREFLIGHT_CHECKING = "preflight_checking"
     RUNNING = "running"
     FINALIZING = "finalizing"
+    AWAITING_VERIFICATION = "awaiting_verification"
+    VERIFYING = "verifying"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+    REPLANNED = "replanned"
     TIMED_OUT = "timed_out"
     CANCELLING = "cancelling"
     CANCELLED = "cancelled"
@@ -28,6 +31,7 @@ class SessionStatus(StrEnum):
 TERMINAL_SESSION_STATUSES = {
     SessionStatus.SUCCEEDED,
     SessionStatus.FAILED,
+    SessionStatus.REPLANNED,
     SessionStatus.TIMED_OUT,
     SessionStatus.CANCELLED,
     SessionStatus.REJECTED,
@@ -45,10 +49,18 @@ ALLOWED_STATUS_TRANSITIONS: dict[SessionStatus, set[SessionStatus]] = {
         SessionStatus.CANCELLING,
     },
     SessionStatus.FINALIZING: {
+        SessionStatus.AWAITING_VERIFICATION,
         SessionStatus.SUCCEEDED,
         SessionStatus.FAILED,
         SessionStatus.TIMED_OUT,
         SessionStatus.CANCELLED,
+    },
+    SessionStatus.AWAITING_VERIFICATION: {SessionStatus.VERIFYING},
+    SessionStatus.VERIFYING: {
+        SessionStatus.AWAITING_VERIFICATION,
+        SessionStatus.SUCCEEDED,
+        SessionStatus.FAILED,
+        SessionStatus.REPLANNED,
     },
     SessionStatus.CANCELLING: {SessionStatus.CANCELLED, SessionStatus.FAILED},
 }
@@ -122,6 +134,8 @@ class SessionSafetyProfile(BaseModel):
 
 class SessionSpec(BaseModel):
     session_id: str
+    parent_session_id: str | None = None
+    replan_attempt: int = Field(default=0, ge=0)
     goal_id: str | None = None
     parent_goal_id: str | None = None
     horizon: Literal["short_term", "long_term"] | None = None

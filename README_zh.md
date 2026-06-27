@@ -32,6 +32,7 @@
 
 | 版本 | 日期 | 更新内容 |
 |:-----|:-----|:---------|
+| ![v0.1.6](https://img.shields.io/badge/v0.1.6-47A882) | 2026-06-27 | 支持 Behavior 1K Benchmark；用于 Agent 校验的 SessionVerfier; VerifySessionTool|
 | ![v0.1.5](https://img.shields.io/badge/v0.1.5-47A882) | 2026-06-11 | 清理协议文件及文档，game 场景分离至 `general-game-agent` 分支独立推进；当前分支聚焦仿真 & 真机重构 |
 | ![v0.1.4](https://img.shields.io/badge/v0.1.4-11648A) | 2026-06-5 | 优化用户友好的启动流程; 通信协议规范; 更合理的代码规范; Game Agent & Benchmarking 就绪 |
 | ![v0.1.3](https://img.shields.io/badge/v0.1.3-11648A) | 2026-05-25 | `PolicySkillRuntime` / `BuiltinSkillRuntime` 边界严格分离，Game Agent & Benchmarking 就绪 |

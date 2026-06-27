@@ -295,11 +295,21 @@ class AgentModes(Base):
     models: dict[str, ModeConfig] = Field(default_factory=dict)
 
 
+class AgentVerificationConfig(Base):
+    """Agent-side semantic verification for completed runtime sessions."""
+
+    enabled: bool = False
+    model: str | None = None
+    max_replans: int = Field(default=1, ge=0)
+    rgb_retention: Literal["all", "failed", "none"] = "failed"
+
+
 class AgentsConfig(Base):
     """Agent configuration."""
 
     defaults: AgentDefaults = Field(default_factory=AgentDefaults)
     modes: AgentModes = Field(default_factory=AgentModes)
+    verification: AgentVerificationConfig = Field(default_factory=AgentVerificationConfig)
 
 
 class ProviderConfig(Base):
