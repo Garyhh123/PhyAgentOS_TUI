@@ -223,13 +223,13 @@ def onboard():
     console.print("\n[dim]Want Telegram/WhatsApp? See: https://github.com/HKUDS/PhyAgentOS#-chat-apps[/dim]")
 
 
-def _make_provider(config: Config):
+def _make_provider(config: Config, model: str | None = None):
     """Create the appropriate LLM provider from config."""
     from PhyAgentOS.providers.base import GenerationSettings
     from PhyAgentOS.providers.openai_codex_provider import OpenAICodexProvider
     from PhyAgentOS.providers.azure_openai_provider import AzureOpenAIProvider
 
-    model = config.agents.defaults.model
+    model = model or config.agents.defaults.model
     provider_name = config.get_provider_name(model)
     p = config.get_provider(model)
 
@@ -335,6 +335,27 @@ def _start_runtime_workspace_manager(config: Config):
     return manager
 
 
+def _make_session_verifier(config: Config, provider):
+    """Create the Agent-owned runtime session verifier when configured."""
+    if not config.runtime.enabled or not config.agents.verification.enabled:
+        return None
+    from PhyAgentOS.agent.session_verifier import SessionVerifier
+
+    verification = config.agents.verification
+    model = verification.model or config.agents.defaults.model
+    verification_provider = (
+        provider if model == config.agents.defaults.model else _make_provider(config, model=model)
+    )
+    return SessionVerifier(
+        workspace=config.runtime_workspace_path,
+        provider=verification_provider,
+        model=model,
+        max_replans=verification.max_replans,
+        rgb_retention=verification.rgb_retention,
+        poll_interval_s=config.runtime.watchdog_poll_interval_s,
+    )
+
+
 # ============================================================================
 # Gateway / Server
 # ============================================================================
@@ -376,6 +397,7 @@ def gateway(
     runtime_manager = _start_runtime_workspace_manager(config)
     bus = MessageBus()
     provider = _make_provider(config)
+    session_verifier = _make_session_verifier(config, provider)
     session_manager = SessionManager(config.workspace_path)
 
     # Create cron service first (callback set after agent creation)
@@ -402,6 +424,7 @@ def gateway(
         runtime_workspace=config.runtime_workspace_path,
         runtime_enabled=config.runtime.enabled,
         runtime_target_enabled=config.runtime.target_enabled,
+        session_verifier=session_verifier,
     )
 
     # Set cron callback (needs agent)
@@ -514,10 +537,10 @@ def gateway(
         try:
             await cron.start()
             await heartbeat.start()
-            await asyncio.gather(
-                agent.run(),
-                channels.start_all(),
-            )
+            services = [agent.run(), channels.start_all()]
+            if session_verifier is not None:
+                services.append(session_verifier.run())
+            await asyncio.gather(*services)
         except KeyboardInterrupt:
             console.print("\nShutting down...")
         finally:
@@ -525,6 +548,8 @@ def gateway(
             heartbeat.stop()
             cron.stop()
             agent.stop()
+            if session_verifier is not None:
+                session_verifier.stop()
             runtime_manager.stop_watchdog()
             await channels.stop_all()
 
@@ -568,6 +593,7 @@ def agent(
 
     bus = MessageBus()
     provider = _make_provider(config)
+    session_verifier = _make_session_verifier(config, provider)
 
     # Create cron service for tool usage (no callback needed for CLI unless running)
     cron_store_path = get_cron_dir() / "jobs.json"
@@ -596,6 +622,7 @@ def agent(
         runtime_workspace=config.runtime_workspace_path,
         runtime_enabled=config.runtime.enabled,
         runtime_target_enabled=config.runtime.target_enabled,
+        session_verifier=session_verifier,
     )
 
     # Show spinner when logs are off (no output to miss); skip when logs are on
@@ -617,11 +644,19 @@ def agent(
     if message:
         # Single message mode — direct call, no bus needed
         async def run_once():
+            verifier_task = (
+                asyncio.create_task(session_verifier.run()) if session_verifier is not None else None
+            )
             try:
                 with _thinking_ctx():
                     response = await agent_loop.process_direct(message, session_id, on_progress=_cli_progress)
                 _print_agent_response(response, render_markdown=markdown)
             finally:
+                if session_verifier is not None:
+                    session_verifier.stop()
+                if verifier_task is not None:
+                    verifier_task.cancel()
+                    await asyncio.gather(verifier_task, return_exceptions=True)
                 runtime_manager.stop_watchdog()
                 await agent_loop.close_mcp()
 
@@ -655,6 +690,9 @@ def agent(
 
         async def run_interactive():
             bus_task = asyncio.create_task(agent_loop.run())
+            verifier_task = (
+                asyncio.create_task(session_verifier.run()) if session_verifier is not None else None
+            )
             turn_done = asyncio.Event()
             turn_done.set()
             turn_response: list[str] = []
@@ -725,9 +763,16 @@ def agent(
                         break
             finally:
                 agent_loop.stop()
+                if session_verifier is not None:
+                    session_verifier.stop()
                 runtime_manager.stop_watchdog()
                 outbound_task.cancel()
-                await asyncio.gather(bus_task, outbound_task, return_exceptions=True)
+                if verifier_task is not None:
+                    verifier_task.cancel()
+                tasks = [bus_task, outbound_task]
+                if verifier_task is not None:
+                    tasks.append(verifier_task)
+                await asyncio.gather(*tasks, return_exceptions=True)
                 await agent_loop.close_mcp()
 
         asyncio.run(run_interactive())

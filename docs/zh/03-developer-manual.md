@@ -1,353 +1,133 @@
-# PhyAgentOS API 开发者手册
+# PhyAgentOS 开发者手册
 
-> 面向二次开发者、硬件接入者、插件作者与维护者。覆盖 API 接口文档、二次开发流程、代码风格规范、实现边界与贡献规则。
+> 文档版本：v0.1.6。本文面向 Target、Skill Runtime、Adapter、Policy 与 Perception 集成开发者。
 
----
+## 1. 开发原则
 
-## 目录
+我们在 v0.1.6 中以 Session 作为执行边界。扩展 Runtime 时遵守以下约束：
 
-- [3.1 手册定位](#31-手册定位)
-- [3.2 架构深度解析](#32-架构深度解析)
-- [3.3 API 接口文档](#33-api-接口文档)
-  - [3.3.1 BaseDriver 接口](#331-basedriver-接口)
-  - [3.3.2 BaseRolloutTarget 接口](#332-baserollouttarget-接口)
-  - [3.3.3 BaseSkillRuntime 接口](#333-baseskillruntime-接口)
-  - [3.3.4 TargetAdapter 接口](#334-targetadapter-接口)
-  - [3.3.5 WatchdogSupervisor 内部架构](#335-watchdogsupervisor-内部架构)
-  - [3.3.6 Agent 侧 API](#336-agent-侧-api)
-  - [3.3.7 配置 Schema](#337-配置-schema)
-  - [3.3.8 文件协议约定](#338-文件协议约定)
-- [3.4 二次开发指南](#34-二次开发指南)
-  - [3.4.1 添加新驱动](#341-添加新驱动)
-  - [3.4.2 添加新 Target](#342-添加新-target)
-  - [3.4.3 开发外部插件](#343-开发外部插件)
-  - [3.4.4 添加新 Skill](#344-添加新-skill)
-  - [3.4.5 接入新机器人](#345-接入新机器人)
-  - [3.4.6 扩展感知管线](#346-扩展感知管线)
-  - [3.4.7 扩展导航模块](#347-扩展导航模块)
-  - [3.4.8 ROS2 适配开发](#348-ros2-适配开发)
-- [3.5 代码风格规范](#35-代码风格规范)
-- [3.6 实现边界](#36-实现边界)
-- [3.7 测试规范](#37-测试规范)
-- [3.8 贡献与提交规则](#38-贡献与提交规则)
-- [3.9 附录](#39-附录)
+1. Agent 与物理执行只通过工作区协议和 Runtime 接口耦合。
+2. Skill Runtime 不直接访问 Target、SDK、Simulator Client 或 WebSocket。
+3. 所有观察和动作转换必须由显式 Adapter/Bridge 表达。
+4. Preflight 拒绝不完整契约，不使用隐式裁剪、补齐或降级结果。
+5. Runtime 写状态和事实；Agent 负责规划与可选的语义验收。
 
----
+核心源代码入口：
 
-## 3.1 手册定位
+| 领域 | 路径 |
+|---|---|
+| Session Schema/状态机 | `PhyAgentOS/runtime/schemas/session.py` |
+| Target/Skill Schema | `PhyAgentOS/runtime/schemas/target.py`、`skillruntime.py` |
+| Watchdog | `PhyAgentOS/runtime/watchdog/supervisor.py` |
+| Preflight | `PhyAgentOS/runtime/preflight/runtime_compatibility_preflight.py` |
+| Session lifecycle | `PhyAgentOS/runtime/sessions/session_runner.py` |
+| Target access boundary | `PhyAgentOS/runtime/sessions/target_session_handle.py` |
+| Target factory | `PhyAgentOS/runtime/targets/factory.py` |
+| Runtime registry | `PhyAgentOS/runtime/watchdog/runtime_registry.py` |
+| Adapter factory | `PhyAgentOS/runtime/adapters/factory.py` |
+| Workspace provisioning | `PhyAgentOS/runtime/workspace/manager.py` |
 
-### 适合谁
+## 2. 核心接口
 
-如果你的目标已经不是"把系统跑起来"，而是：
-- 理解仓库内各模块分工
-- 新增或修改内置驱动
-- 基于 HAL 接入新机器人
-- 开发独立插件仓库
-- 接入感知、导航、ROS2 相关能力
-- 为项目补测试、补文档
-
-那么本文档是你的主要参考资料。
-
-### 推荐阅读路径
-
-| 目标 | 建议先读 |
-|------|---------|
-| 理解运行时通信 | [§3.2](#32-架构深度解析) → [§3.3.8](#338-文件协议约定) |
-| 接一个新机器人 | [§3.4.1](#341-添加新驱动) → [§3.4.5](#345-接入新机器人) |
-| 开发外部插件 | [§3.4.3](#343-开发外部插件) |
-| 理解架构全貌 | [Part 1 §1.3](../01-framework-introduction.md#13-技术架构) → [§3.2](#32-架构深度解析) |
-
----
-
-## 3.2 架构深度解析
-
-### 3.2.1 核心设计：认知与执行解耦
-
-PhyAgentOS 的核心价值是将认知层与执行层通过显式协议解耦。**很多"接口"本质上是文件协议与运行时约定，而不是 Python 函数签名。**
-
-- **Track A（认知层）**：Planner / Critic / Tool / Memory
-- **Track B（执行层）**：Watchdog / SessionRunner / SkillRuntime / Target
-- **协议边界**：Markdown 文件承载共享状态，而非跨层 Python 调用
-
-### 3.2.2 运行时文件是"真实状态面"
-
-以下文件通常比类图更重要：
-
-| 文件 | 逻辑含义 |
-|------|---------|
-| `TARGETS.md` | target registry 与 endpoint / adapter / contract |
-| `SKILLRUNTIME.md` | 可执行 skill runtime 声明 |
-| `SESSIONS.md` | 执行意图与结果真相 |
-| `ENVIRONMENT.md` | 环境状态真相 |
-| `EMBODIED.md` | 面向 Agent 的 target 能力描述 |
-| `SKILLS.md` | 面向 Agent 的 skill 发现与加载规则 |
-| `LESSONS.md` | 失败经验真相 |
-
-**只看代码不看文件会误解系统行为。**
-
-### 3.2.3 single 与 fleet 的开发含义
-
-开发任何涉及具身动作、导航或连接状态的功能时，必须显式考虑两种运行语义：
-
-- **single 模式**：一个工作区，所有状态文件在一处
-- **fleet 模式**：共享工作区存放全局状态，per-robot 工作区存放机器人私有状态
-
-### 3.2.4 模板、Profile 与运行时文件的区别
-
-| 概念 | 位置 | 含义 |
-|------|------|------|
-| **模板（templates）** | `PhyAgentOS/templates/` | 定义文件结构与建议字段 |
-| **Profile** | `hal/profiles/` | 某类机器人的静态能力声明 |
-| **运行时文件** | workspace/ | 真正被 Agent、Watchdog 与 runtime writer 读写的状态面 |
-
-简而言之：**模板定义结构，Profile 提供实例类型说明，运行时文件承载真实状态。**
-
----
-
-## 3.3 API 接口文档
-
-### 3.3.1 BaseDriver 接口
-
-**位置**：`hal/base_driver.py`
-
-所有硬件和仿真驱动必须继承 `BaseDriver`。
-
-#### 必须实现的抽象方法
-
-```python
-class BaseDriver(ABC):
-    def get_profile_path(self) -> str:
-        """返回驱动的 EMBODIED.md Profile 路径"""
-
-    def load_scene(self, scene: dict) -> None:
-        """从场景字典初始化世界状态"""
-
-    def execute_action(self, action_type: str, params: dict) -> str:
-        """执行原子动作，返回结果字符串"""
-
-    def get_scene(self) -> dict:
-        """返回当前世界状态字典"""
-```
-
-#### 可选覆盖的方法
-
-```python
-def connect(self) -> None:           # 建立硬件连接
-def disconnect(self) -> None:        # 关闭连接
-def is_connected(self) -> bool:      # 检查连接状态
-def health_check(self) -> bool:      # 轻量级健康检查
-def get_runtime_state(self) -> dict: # 返回可选运行时状态（导航、连接等）
-def close(self) -> None:             # 释放硬件资源
-```
-
-#### 驱动加载
-
-驱动注册在 `hal/drivers/__init__.py` 中的 `DRIVER_REGISTRY`，通过 `load_driver(name, **kwargs)` 加载。
-
----
-
-### 3.3.2 BaseRolloutTarget 接口
-
-**位置**：`PhyAgentOS/runtime/targets/base.py`（新版）
-
-三个场景唯一的接入点。WatchdogSupervisor 不需要知道 Target 是游戏、仿真还是真机。
+### 2.1 BaseRolloutTarget
 
 ```python
 class BaseRolloutTarget(ABC):
-    def build(self) -> None:
-        """初始化环境（连接 SMAPI、启动仿真实例、建立硬件会话等）"""
-
-    def reset(self, session_ctx: dict) -> dict:
-        """重置到初始状态，返回初始观测字典"""
-
-    def observe(self) -> dict:
-        """获取当前观测（RGBD、关节、语音、游戏状态等）"""
-
-    def step(self, executable_action: dict) -> dict:
-        """执行一步动作，返回 obs / reward / done / info"""
-
-    def close(self) -> None:
-        """释放资源（断开连接、关闭仿真窗口等）"""
-
-    def get_state(self) -> dict:
-        """返回运行态字典，供 ENVIRONMENT.md 回写"""
+    def build(self) -> None: ...
+    def describe(self) -> dict: ...
+    def configure_session(self, session_ctx: dict) -> dict: ...
+    def start_session(self, session_ctx: dict) -> dict: ...
+    def reset(self, session_ctx: dict) -> dict: ...
+    def observe(self) -> dict: ...
+    def observe_for_environment(self, session_ctx: dict) -> dict: ...
+    def action_chunk(self, executable_action_chunk: dict) -> dict: ...
+    def execution_status(self) -> dict: ...
+    def describe_target_tools(self) -> dict: ...
+    def call_target_tool(self, tool_name: str, arguments: dict) -> dict: ...
+    def cancel(self, reason: str) -> None: ...
+    def close(self) -> None: ...
 ```
 
-#### 场景实现示例
+旧 `step/get_state` 形式不是当前 Base API。Policy 动作统一使用 `action_chunk`；Builtin Runtime 通过受约束 Target Tool 完成命令型交互。
 
-```python
-# 场景 2: 仿真 Target
-class ManiSkillTarget(BaseRolloutTarget):
-    def build(self): ...       # 初始化 ManiSkill 环境
-    def observe(self): ...     # RGBD + proprioception + 语言指令
-    def step(self, action): ...# 连续动作 → obs/reward/done/info
-
-# 场景 3: 真机 Composite Target
-class CompositeTarget(BaseRolloutTarget):  # Go2 + Franka
-    def observe(self): ...     # RGBD + 力觉 + 关节 + 语音文本
-    def step(self, action): ...# chunk 缓冲 + soft blend
-```
-
----
-
-### 3.3.3 BaseSkillRuntime 接口
-
-**位置**：`PhyAgentOS/runtime/skillruntime/base.py`（新版）
+### 2.2 BaseSkillRuntime
 
 ```python
 class BaseSkillRuntime(ABC):
-    def start(self, session_ctx: dict, target: BaseRolloutTarget) -> None:
-        """初始化 skill 执行上下文"""
-
-    def tick(self, session_ctx: dict, target: BaseRolloutTarget) -> dict:
-        """每个执行周期调用一次，返回状态字典"""
-
-    def cancel(self, session_ctx: dict, reason: str) -> None:
-        """中断执行"""
-
-    def snapshot(self, session_ctx: dict) -> dict:
-        """返回 skill 当前快照"""
+    def start(self, skill_ctx: SkillContext) -> None: ...
+    def cancel(self, skill_ctx: SkillContext, reason: str) -> None: ...
+    def snapshot(self, skill_ctx: SkillContext) -> dict: ...
+    def required_environment_outputs(self, skill_ctx: SkillContext) -> list[str]: ...
 ```
 
-#### Skill Runtime 抽象层级
+具体实现必须选择一个分支：
 
-```
-SkillRuntime
-├── PolicyBackedSkillRuntime
-│   ├── VLASkillRuntime
-│   ├── OpenPISkillRuntime
-│   └── GR00TSkillRuntime
-├── BuiltinAlgorithmSkillRuntime
-│   ├── SemanticNavigationRuntime
-│   ├── TargetNavigationRuntime
-│   └── ReKepGraspRuntime
-├── HybridSkillRuntime
-│   ├── NavThenVLARuntime
-│   └── ReKepThenVLARuntime
-└── DirectAtomicRuntime
-```
+- `PolicySkillRuntime.run_policy_loop(...)`
+- `BuiltinSkillRuntime.run_builtin_loop(...)`
 
-**关键设计**：skill runtime 专注"怎么跑"，target 专注"怎么执行"，adapter 专注"怎么翻译"。三者职责清晰分离。
-
----
-
-### 3.3.4 TargetAdapter 接口
-
-**位置**：`PhyAgentOS/runtime/adapters/base.py`（新版）
-
-```
-TargetAdapter
-├── SimAdapter (BuiltinSim / RoboCasa / LIBERO)
-└── RealAdapter (Franka / Go2 / XLeRobot / UR5)
-```
-
-职责：
-- 观测的 target-specific 差异处理（坐标系变换、传感器数据归一化）
-- 动作的 target-specific 差异处理（归一化/反归一化、sticky gripper、chunk decode）
-- `AdapterPlan` 自动编排适配步骤
-
----
-
-### 3.3.5 WatchdogSupervisor 内部架构
-
-**位置**：`PhyAgentOS/runtime/watchdog/supervisor.py`（新版）
-
-```
-WatchdogSupervisor
-├── WorkspaceWatcher      # 监听 SESSIONS.md / TARGETS.md / ENVIRONMENT.md
-├── SessionRegistry       # Session 生命周期管理（pending→claimed→running→succeeded/failed）
-├── SessionScheduler      # 根据 target/skill/priority 分发
-├── TargetRuntimeRegistry # Target runtime factory/manifest
-├── SkillRuntimeRegistry  # Skill runtime factory/manifest
-├── HealthMonitor         # policy server / robot / simulator / session 健康监控
-├── ResultWriter          # 统一写回 SESSIONS.md / ENVIRONMENT.md / LESSONS.md
-└── FailureEscalator      # retry / reset / cancel / notify / safety stop
-```
-
-#### Session 状态机
-
-```
-pending → claimed → running → succeeded / failed / timed_out
-pending → rejected
-running → cancelling → cancelled
-```
-
----
-
-### 3.3.6 Agent 侧 API
-
-#### Agent Loop
-
-**位置**：`PhyAgentOS/agent/loop.py`
+### 2.3 Adapter 与 Bridge
 
 ```python
-class AgentLoop:
-    def run(self, user_input: str) -> str:
-        """主循环：接收输入 → 构建上下文 → 调用 LLM → 处理工具 → 返回结果"""
+class BaseTargetAdapter(ABC):
+    def output_observation_contract(self) -> dict: ...
+    def input_action_contract(self) -> dict: ...
+    def to_runtime_observation(self, raw_obs, target_info) -> dict: ...
+    def to_executable_action_chunk(self, runtime_action_chunk, target_info) -> dict: ...
+
+class BasePolicyAdapter(ABC):
+    def input_observation_contract(self) -> dict: ...
+    def output_action_contract(self) -> dict: ...
+    def to_policy_input(self, runtime_observation, skill_ctx) -> dict: ...
+    def from_policy_output(self, policy_output, skill_ctx) -> dict: ...
+
+class BaseActionBridge(ABC):
+    def apply(self, action_chunk, target_info) -> dict: ...
 ```
 
-工作流：
-1. 从 bootstrap 文件（`AGENTS.md`、`SOUL.md`、`USER.md`、`TOOLS.md`、`SKILLS.md`）以及 `ENVIRONMENT.md`、`EMBODIED.md`、`LESSONS.md` 等状态文件构建上下文
-2. 调用 LLM 进行规划和推理
-3. 处理工具调用与 skill 引导的工作流
-4. 需要 runtime 执行时，读取 `TARGETS.md` / `SKILLRUNTIME.md` 并将任务追加到 `SESSIONS.md`
-5. 管理对话历史
+TargetAdapter 负责 Target 原生格式与 Runtime 格式；PolicyAdapter 负责 Runtime 与特定 Policy；ActionBridge 只完成可声明、可验证的动作转换。
 
-#### Runtime Session 校验
+### 2.4 TargetSessionHandle
 
-**位置**：`PhyAgentOS/runtime/preflight/`
-
-Runtime 执行前会解析 session 中的 `target_ref` 与 `skillruntime_ref`，检查 target 是否支持对应 skill runtime，校验 sensor、perception、runtime contract 与 adapter/bridge 兼容性，不合法的 session 会在 target 或 policy runtime 启动前被拒绝。
-
-#### Skill 系统
-
-**位置**：`PhyAgentOS/agent/skills.py`
-
-每个 Skill 包含 `SKILL.md`（Skill 定义）和执行脚本。13 个内置 Skill：
-`agent-mode`、`clawhub`、`cron`、`github`、`image`、`memory`、`pipergo2-demo`、
-`rekep-robot-onboarding`、`robot-management-guideline`、`skill-creator`、`summarize`、`tmux`、`weather`。
-
-#### CLI 入口
-
-| 命令 | 说明 |
-|------|------|
-| `paos onboard` | 初始化工作区，同步模板文件 |
-| `paos agent` | 启动交互式 Agent CLI |
-| `paos agent -m "..."` | 单轮消息调用 |
-| `paos gateway` | 启动长期在线网关服务 |
-
----
-
-### 3.3.7 配置 Schema
-
-**位置**：`PhyAgentOS/config/schema.py`
-
-Pydantic 配置模型核心结构：
+Skill Runtime 获得的是 Handle，而不是原始 Target：
 
 ```python
-class EmbodimentInstanceConfig(BaseModel):
-    robot_id: str
-    driver: str
-    workspace: str
-
-class EmbodimentsConfig(BaseModel):
-    mode: Literal["single", "fleet"]
-    shared_workspace: str | None = None
-    instances: list[EmbodimentInstanceConfig] = []
-
-class Config(BaseModel):
-    agents: AgentsConfig
-    providers: ProvidersConfig
-    gateway: GatewayConfig | None
-    tools: ToolsConfig | None
-    embodiments: EmbodimentsConfig
+observe() -> RuntimeObservation
+action_chunk(chunk) -> dict
+execution_status() -> dict
+request_environment_refresh(request=None) -> EnvironmentSnapshot
+call_target_tool(tool_name, arguments) -> dict
+stop(reason) -> None
 ```
 
----
+Handle 应用 TargetAdapter、ActionBridge、Tool Manifest、Perception Runtime 和 Session trace。
 
-### 3.3.8 文件协议约定
+## 3. Runtime 文档 Schema
 
-#### SESSIONS.md 格式
+### 3.1 TARGETS.md
+
+每个 Target 必须声明：
+
+- 唯一 `id`、`target_class=local|remote`、`target_kind`
+- `workspace` 与 `supported_skillruntimes`
+- `target_runtime`、`target_adapter`、`runtime_contract_ref`
+- Remote Target 的 `targetws://` Endpoint
+- Observation 与可选 Perception 引用
+
+Schema 支持 `game | debug | simulation | real_robot`。只有在 Factory 中注册的 `target_runtime` 才能被构造。
+
+### 3.2 SKILLRUNTIME.md
+
+`runtime_kind` 只能是 `policy` 或 `builtin`：
+
+- Policy Runtime 必须声明 Policy Client 与 Policy Adapter。
+- 暴露 Target Tool 的 Builtin Runtime 必须声明 `target_tool_policy`。
+- `supported_target_kinds` 必须包含目标类型。
+- `requires.sensors` 非空时必须有可解析的 Sensor Config。
+- `environment_outputs` 非空时会触发 Perception Plan 与严格输出检查。
+
+### 3.3 SESSIONS.md
+
+最小开发示例：
 
 ```yaml
 version: runtime_sessions_v1
@@ -355,367 +135,143 @@ sessions:
   - session_id: sess_example
     target_ref: target://dummy_sim
     skillruntime_ref: skillruntime://openpi_sim_vla
-    task_description: run a smoke test
+    task_description: runtime smoke test
     status: pending
     priority: normal
+    routing:
+      target_endpoint: null
+      policy_endpoint: dummy://local
+      adapter_resolution: strict_auto
+      adapter_overrides: null
+    execution:
+      max_steps: 10
+      replan_every_steps: 5
+      action_chunk_mode: chunk_buffer
+      chunk_switch_mode: hard_switch
+    result: {}
 ```
 
-#### Session 校验-分发-执行链路
+完整字段定义以 `SessionSpec` 为准。不要在 Session 中内联 Sensor、Perception Model 或 Target/Policy pair Adapter。
 
+## 4. 生命周期与并发
+
+Watchdog 是串行 Worker；调度顺序为 priority 后按文档顺序。`depends_on` 已进入 Schema，但 v0.1.6 调度器尚未执行依赖判定，编排方当前不能依赖该字段保证顺序。
+
+```text
+pending
+  → claimed
+  → preflight_checking
+  → running
+  → finalizing
+  → succeeded | failed | timed_out | cancelled
+
+preflight_checking → rejected
+finalizing → awaiting_verification → verifying
+verifying → succeeded | failed | replanned | awaiting_verification
 ```
-1. Agent 形成任务意图
-2. Agent 从 TARGETS.md / SKILLRUNTIME.md 解析 target 与 skill runtime
-3. Agent 向 SESSIONS.md 追加 pending session
-4. WatchdogSupervisor claim session，执行 preflight
-5. SessionRunner 运行 target/skill runtime，结果回写到 SESSIONS.md、ENVIRONMENT.md、LOG.md 与 artifacts
-```
 
-排查时要区分：任务生成有问题 / target 或 skillruntime 不匹配 / preflight 拒绝 / Watchdog 执行失败 / 执行成功但环境未回写。
+`SessionRegistry` 使用 `SESSIONS.md.lock` 和 claim token 保护状态更新。开发者不应绕过 Registry 直接推进状态。
 
----
+## 5. Preflight 当前检查
 
-## 3.4 二次开发指南
+v0.1.6 Preflight 覆盖：
 
-### 3.4.1 添加新驱动
+- Target enable、class/kind、Endpoint 与 supported Skill
+- Runtime Contract 可读性、Target ID 与 Adapter 一致性
+- Skill Runtime 注册、Target kind 与 Policy Endpoint
+- Empty Observation 双方显式允许
+- Target/Policy Adapter 和 Bridge 注册
+- Adapter Observation/Action Shape、dtype 与 layout
+- Required Sensor 与 Observation Schema
+- Policy Output 与 Target Action Contract 的表示、Shape 和归一化 Bridge
+- Builtin Target Tool Manifest 的禁止项
 
-添加内置 driver 的最小流程：
+当前边界：real-robot Operator Override、完整 SafetyGuard 参数和远端 describe/health 契约还未全部成为强制检查；集成方不能把通过现有 Preflight 等同于真机安全认证。
 
-1. 在 `hal/drivers/` 中新增驱动实现文件
-2. 继承 `BaseDriver`，实现 4 个抽象方法
-3. 在 `hal/profiles/` 中新增对应 Profile
-4. 在 `hal/drivers/__init__.py` 的 `DRIVER_REGISTRY` 中注册
-5. 用 `hal/hal_watchdog.py --driver <name>` 直接启动验证
-6. 用 `paos agent` 做全链路联调
+## 6. 添加 Local Target
 
-#### 内置 driver vs 外部插件
+最短实现路径：
 
-| 适合直接改主仓库 | 更适合做外部插件 |
-|------------------|-----------------|
-| 修复现有驱动 bug | 依赖较重的第三方 SDK |
-| 增强内置仿真 | 厂商私有运行时 |
-| 普适性改动 | 真实机器人部署逻辑复杂 |
-| | 希望独立发版、独立维护依赖 |
-
----
-
-### 3.4.2 添加新 Target
-
-引入新场景只需实现 `BaseRolloutTarget` 子类（约 100 行）：
+1. 实现 `BaseRolloutTarget`。
+2. 编写 TargetAdapter 和 Runtime Contract YAML。
+3. 用 `register_local_target_runtime(runtime_name, factory)` 注册。
+4. 在 `TARGETS.md` 增加 Target，并只列出已验证的 Skill Runtime。
+5. 增加 lifecycle、Adapter Contract、Preflight 和端到端 Session 测试。
 
 ```python
-class MyTarget(BaseRolloutTarget):
-    def build(self) -> None:
-        # 初始化环境
+from PhyAgentOS.runtime.targets.factory import register_local_target_runtime
 
-    def reset(self, session_ctx: dict) -> dict:
-        # 重置并返回初始观测
-        return {"obs": ..., "info": ...}
-
-    def observe(self) -> dict:
-        # 返回当前观测
-        return {"rgb": ..., "depth": ..., "joint": ...}
-
-    def step(self, executable_action: dict) -> dict:
-        # 执行一步
-        return {"obs": ..., "reward": ..., "done": ..., "info": ...}
-
-    def close(self) -> None:
-        # 释放资源
-
-    def get_state(self) -> dict:
-        # 返回运行态
-        return {"status": ..., "position": ...}
+register_local_target_runtime("MyTargetRuntime", build_my_target)
 ```
 
-**不需要懂**: Watchdog、Session 状态机、文件协议、Critic——Base 层已处理。
+当前注册表通过模块导入完成，不提供旧 `PhyAgentOS_plugin.toml` Driver 自动发现机制。
 
+## 7. 添加 Remote Target
 
+Remote Target 推荐复用：
 
-### 3.4.3 开发外部插件
+- `TargetWSClient`：将 `targetws://` 转为 WebSocket，使用 Runtime Envelope + msgpack。
+- `RemoteTargetProxy`：映射 `target.*` 与 `agent_tool.*` RPC。
+- `register_remote_target_runtime(runtime_name, factory)`：注册构造器。
 
-#### 插件注册机制
+服务端至少应实现生命周期消息：`target.describe`、`target.configure_session`、`target.start_session`、`target.reset`、`target.observe`、`target.action_chunk`、`target.execution_status`、`target.cancel` 和 `target.close`。Response 必须回显匹配的 seq、session、target 和 skillruntime 标识。
 
-**位置**：`hal/plugins.py`
+## 8. 添加 Skill Runtime
 
-1. 插件仓库提供 `PhyAgentOS_plugin.toml` 描述文件
-2. 部署脚本 clone 或复制插件仓库到 `~/.PhyAgentOS/plugins/repos/`
-3. 主仓库读取 manifest 并写入本地插件 registry
-4. 当内置 `DRIVER_REGISTRY` 找不到目标 driver 时，从外部 registry 动态解析
+1. 继承 `PolicySkillRuntime` 或 `BuiltinSkillRuntime`。
+2. 只使用 `TargetSessionHandle`。
+3. 用 `register_skill_runtime(name, factory)` 注册。
+4. 在 `SKILLRUNTIME.md` 声明 Loop、Target kind、Policy、IO Contract 和 Requirements。
+5. 针对取消、超时、终态和不兼容 Contract 编写测试。
 
-#### 插件模板结构
+Builtin Runtime 暴露 Tool 时，Target 必须在 `describe_target_tools` 中提供 Schema，Skill 必须在 `target_tool_policy.expose` 中显式允许。
 
-```
-my-plugin/
-├── PhyAgentOS_plugin.toml    # 插件描述文件
-├── requirements.txt          # 依赖
-├── driver.py                 # 驱动实现（继承 BaseDriver）
-├── profile.md                # 机器人 Profile
-└── README.md                 # 使用说明
-```
+## 9. Policy 与通信
 
-#### 部署脚本参考
+| Scheme | Client |
+|---|---|
+| `dummy://local` | `DummyPolicyClient` |
+| `openpi://host:port` | OpenPI client |
+| `policyws://host:port` | OpenPI-compatible client |
+| `b1k-ws://host:port` | BEHAVIOR-1K client |
+
+Remote Target 使用 `phyagentos.runtime_rpc.v2` Envelope 和 msgpack。大型数组可内联编码；Artifact 与环境状态应通过文件路径/URI 落盘，避免把大对象写入 Markdown。
+
+## 10. Perception 开发
+
+Perception 配置由三层组成：
+
+1. Sensor Config：传感器、Observation Key、Shape、dtype 与标定引用。
+2. Perception Config：Model、Plugin Candidate、Pipeline 和输出。
+3. Skill Requirements：本次 Session 需要的 Sensor 与 Environment Output。
+
+`PerceptionRuntime.resolve_and_check` 生成 Plan；`EnvironmentWriter` reconcile/merge `PhyAgentOS.environment.v2`。2D-only 结果不能生成虚假的米制 3D Pose，原始图像、Mask、Depth、Point Cloud 和 logits 应写 Artifact。
+
+## 11. SessionVerifier 扩展边界
+
+Runtime 成功后，`ResultWriter` 生成 Episode 与 Verification Bundle；Agent 侧 `SessionVerifier` 负责多模态语义 verdict。Review 模式只追加 Attempt 和 Lesson，不修改既有终态或创建 Replan。
+
+新增证据类型时必须同时更新：Bundle Schema/Writer、Verifier Prompt、Retention 行为和测试，确保状态与 Artifact 生命周期一致。
+
+## 12. 测试与质量门禁
 
 ```bash
-python scripts/deploy_rekep_real_plugin.py \
-  --repo-url https://github.com/baiyu858/PhyAgentOS-rekep-real-plugin.git
+pytest
+pytest tests/runtime
+pytest tests/runtime/test_runtime_protocol_alignment.py \
+       tests/runtime/test_runtime_templates.py \
+       tests/runtime/test_supervisor_single_session.py
+ruff check PhyAgentOS tests
 ```
 
----
+外部 Simulator/Policy/Robot 集成至少按以下顺序验证：Schema → Factory → Preflight rejection/acceptance → 单 Session → Timeout/Cancel → Artifact → 多次运行资源释放。真机测试还必须在 Target 侧独立验证安全停止。
 
-### 3.4.4 添加新 Skill
+## 13. 后续设计方向
 
-每个 Skill 是一个目录，包含 `SKILL.md` 定义文件和执行脚本：
-
-```
-PhyAgentOS/skills/my-skill/
-├── SKILL.md      # Skill 元数据与 Prompt
-└── run.sh        # 执行入口
-```
-
-**SKILL.md 格式**：
-```markdown
-# Skill Name
-Description of what this skill does.
-
-## Parameters
-- param1: description
-- param2: description
-
-## Usage
-...
-```
-
----
-
-### 3.4.5 接入新机器人
-
-#### Profile 编写规范
-
-Profile 应包含（给 Critic 和 Agent 看的能力说明书）：
-- 身份与类型
-- 传感器能力
-- 支持动作表
-- 物理约束（工作空间、力矩限制等）
-- 连接方式
-- 运行时协议映射
-
-#### driver-config JSON 透传机制
-
-`hal_watchdog.py` 支持通过 `--driver-config` 传入一个 JSON 对象，原样透传给目标 driver 构造器：
-
-```bash
-python hal/hal_watchdog.py \
-  --driver my_driver \
-  --driver-config examples/my_driver_config.json
-```
-
-好处：避免频繁改 Watchdog CLI、保持每个 driver 自己定义初始化参数、配置示例以文件形式沉淀在仓库中。
-
----
-
-### 3.4.6 扩展感知管线
-
-**位置**：`hal/perception/`
-
-感知管线分层结构：
-
-```
-service.py                 # 服务化编排入口
-  ├── geometry_pipeline.py # 几何处理（点云、变换）
-  ├── segmentation_pipeline.py  # 语义分割
-  ├── fusion_pipeline.py   # 多源融合 → 场景图
-  └── environment_writer.py     # 将感知结果写入 ENVIRONMENT.md
-```
-
-**开发建议**：把"感知处理"和"环境落盘"明确分层，不要把逻辑塞进 driver。
-
----
-
-### 3.4.7 扩展导航模块
-
-**位置**：`hal/navigation/`
-
-```
-target_navigation_engine.py    # 核心导航引擎，语义目标解析
-  └── target_navigation_backend.py  # 导航执行后端抽象
-        └── bridge.py          # HAL 与导航后端桥接
-```
-
-导航能力扩展最重要的不是"让机器人动起来"，而是让**状态可见、可回写、可解释**。
-
----
-
-### 3.4.8 ROS2 适配开发
-
-**位置**：`hal/ros2/`
-
-```
-bridge.py          # ROS2 通信桥接
-messages.py        # 消息类型定义与转换
-adapters/          # 机器人专用 ROS2 适配器
-```
-
-接入新 ROS2 topic / sensor / control 通道时，优先按 adapter 维度扩展，不要在单一 driver 内部堆砌临时逻辑。
-
----
-
-## 3.5 代码风格规范
-
-### Python
-
-| 规范项 | 要求 |
-|--------|------|
-| Python 版本 | ≥ 3.11 |
-| 行长度 | 最大 100 字符 |
-| Lint 工具 | ruff |
-| Lint 规则 | E / F / I / N / W |
-| 忽略规则 | E501（行长度由 ruff formatter 处理） |
-| 类型注解 | 所有公开函数必须添加类型注解 |
-| 文档字符串 | 使用 Google 风格 docstring |
-| 导入顺序 | isort 自动排序（标准库 → 第三方 → 项目内部） |
-
-### Pydantic Schema 惯例
-
-- 所有运行时数据结构使用 Pydantic BaseModel 定义
-- 字段使用明确的类型注解和 default 值
-- 复杂嵌套字段单独定义 model
-
-### 文件组织
-
-- 每个模块一个明确职责
-- 不要把所有逻辑塞进 driver
-- 感知、导航、ROS2 各自独立分层
-
----
-
-## 3.6 实现边界
-
-### 绝对禁止的跨界行为
-
-| 组件 | 绝不能知道 |
-|------|-----------|
-| **RolloutTarget** | Policy 推理、Skill 逻辑、上层 Agent |
-| **SkillRuntime** | Target 内部实现细节 |
-| **TargetAdapter** | Policy 推理、Target 内部状态 |
-| **WatchdogSupervisor** | 具体怎么执行 step |
-| **Base 层** | 任何场景模块的 import |
-
-### 设计护栏
-
-1. **Base 层不 import 任何场景模块**
-2. **每新增场景 = ~100 行 BaseRolloutTarget 子类**
-3. **三个场景并行不阻塞**
-4. **真实机器人最终安全裁决必须留在本地控制机**（不在云端 Agent 侧做最终 stop 决定）
-
-### 安全边界（真机场景）
-
-```
-Sensor → ObservationProvider → PolicyServer → ActionChunk
-  → ChunkBuffer (本地) → SoftBlend → SafetyGuard (本地) → MotorCommand
-```
-
-云端 Agent 只生成意图层 session spec，本地 Runtime 层执行并做最终 safety check。
-
----
-
-## 3.7 测试规范
-
-### 四层验证体系
-
-| 层级 | 内容 | 命令 |
-|------|------|------|
-| 1. 纯 Python 单测 | 接口、配置、注册、解析逻辑 | `pytest tests/` |
-| 2. Runtime contract/preflight | target/skill/adapter/bridge 兼容性 | runtime protocol tests |
-| 3. 远程服务验收 | 真实 target/policy server 连接 | LIBERO TargetWS + pi0.5 policy server |
-| 4. Agent 全链路联调 | Agent → SESSIONS → WatchdogSupervisor → SessionRunner → artifacts/ENVIRONMENT | `paos agent` |
-
-### 关键测试文件
-
-| 测试文件 | 覆盖主题 |
-|---------|---------|
-| `tests/runtime/test_runtime_protocol_alignment.py` | runtime 协议、adapter/bridge 注册 |
-| `tests/runtime/test_supervisor_single_session.py` | WatchdogSupervisor session 状态流 |
-| `tests/runtime/test_libero_remote_target.py` | LIBERO target proxy / adapter / preflight |
-| `tests/runtime/test_openpi_adapter_schema.py` | OpenPI policy adapter schema |
-| `tests/runtime/test_lerobot_pi0_server.py` | pi0 / pi0.5 policy loader |
-| `tests/test_commands.py` | CLI 命令 |
-
-### 最小测试命令
-
-```bash
-# 全量
-pytest tests/
-
-# 单模块
-pytest tests/test_hal_external_plugins.py
-```
-
-### 真机/插件验证顺序
-
-```
-protocol 单测 → preflight → 远程 target/policy server 验收 → Agent 全链路验证
-```
-
----
-
-## 3.8 贡献与提交规则
-
-### PR 流程
-
-1. Fork 仓库并创建 feature 分支
-2. 编写代码 + 测试 + 文档
-3. 确保 `pytest tests/` 全部通过
-4. 确保 `ruff check .` 无错误
-5. 提交 PR，描述清楚改动内容和动机
-
-### Commit 规范
-
-- 使用语义化提交信息：`feat:` / `fix:` / `docs:` / `refactor:` / `test:` / `chore:`
-- 一个 commit 做一件事
-- 不要在 commit 中包含 secrets（`.env`、credentials 等）
-
-### 文档维护分层
-
-| 文档层 | 目标读者 | 变更触发条件 |
-|--------|---------|-------------|
-| README | 所有人 | 重大特性变更 |
-| 框架介绍 | 所有人 | 架构演进、新特性、Demo 更新 |
-| 用户手册 | 使用者 | 命令变更、配置结构变化、新场景支持 |
-| 开发者手册 | 开发者 | API 变更、新模块、流程变化 |
-
-### 何时拆出独立文档
-
-同时满足以下两个条件应拆出独立文档：
-- 超过"快速说明"范围，需要背景+部署+排障+示例+FAQ
-- 有自己稳定的读者群（如插件作者、ROS2 开发者、运维人员）
-
----
-
-## 3.9 附录
-
-### 模块路径速查表
-
-| 功能 | 路径 |
-|------|------|
-| Runtime Watchdog | `PhyAgentOS/runtime/watchdog/` |
-| Session Runner | `PhyAgentOS/runtime/sessions/` |
-| Target Runtime | `PhyAgentOS/runtime/targets/` |
-| LIBERO TargetWS | `PhyAgentOS/runtime/targets/remote/libero/` |
-| Skill Runtime | `PhyAgentOS/runtime/skillruntime/` |
-| Target/Policy Adapter | `PhyAgentOS/runtime/adapters/` |
-| OpenPI Policy Client/Server | `PhyAgentOS/runtime/policy/openpi/` |
-| Agent Loop | `PhyAgentOS/agent/loop.py` |
-| Agent Context | `PhyAgentOS/agent/context.py` |
-| Agent Skill 系统 | `PhyAgentOS/agent/skills.py` |
-| 配置 Schema | `PhyAgentOS/config/schema.py` |
-| CLI 入口 | `PhyAgentOS/cli/commands.py` |
-| 测试套件 | `tests/` |
-
----
+HAL v3 的下一阶段包括：统一 `strict_environment_contract=true`、完整 real-robot SafetyGuard/Operator Override、Session 依赖调度、Agent-interactive Builtin Runtime、Goal Graph/Session Compiler、确定性多 Bridge 解析和长期 Fleet 编排。这些能力进入公共文档前，需要先完成 Schema、实现与端到端测试闭环。
 
 ## 后续阅读
 
-- [Part 1: 框架介绍](../01-framework-introduction.md) — 设计理念、架构、路线图
-- [Part 2: 用户手册](../02-user-manual.md) — 快速开始、场景配置、排障指南
-
-> **外部插件参考**：ReKep 真机插件 [GitHub](https://github.com/baiyu858/PhyAgentOS-rekep-real-plugin) 是最佳的外部插件实现参考。
+- [框架介绍](01-framework-introduction.md)
+- [用户手册](02-user-manual.md)
+- [文档索引](../README.md)

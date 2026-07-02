@@ -34,6 +34,7 @@ class WatchdogSupervisor:
         workspace: str | Path,
         worker_id: str | None = None,
         environment_workspace: str | Path | None = None,
+        verification_enabled: bool = False,
     ):
         self.paths = RuntimeWorkspacePaths.from_path(workspace)
         self.workspace = self.paths.workspace
@@ -41,6 +42,7 @@ class WatchdogSupervisor:
             Path(environment_workspace).expanduser() if environment_workspace is not None else self.workspace
         )
         self.worker_id = worker_id or f"runtime-watchdog@{socket.gethostname()}"
+        self.verification_enabled = verification_enabled
         self.registry = SessionRegistry(self.paths.sessions)
         self.result_writer = ResultWriter(self.workspace)
         self.watcher = WorkspaceWatcher(self.paths)
@@ -187,7 +189,18 @@ class WatchdogSupervisor:
                 result,
             )
             self.result_writer.write_session_history(session, scheduled.target_spec, result)
-            self.registry.mark_finished(session_id, result)
+            if self.verification_enabled and result.success:
+                self.result_writer.write_verification_bundle(
+                    session,
+                    scheduled.target_spec,
+                    scheduled.skillruntime_id,
+                    result,
+                    environment_workspace=self.environment_workspace,
+                    final_observation=runner.final_observation if runner is not None else None,
+                )
+                self.registry.mark_awaiting_verification(session_id, result)
+            else:
+                self.registry.mark_finished(session_id, result)
             return True
         except Exception as exc:
             self.failure_escalator.handle(session_id, exc, self.registry)

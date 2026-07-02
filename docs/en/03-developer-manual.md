@@ -1,356 +1,133 @@
-# PhyAgentOS API Developer Manual
+# PhyAgentOS Developer Manual
 
-> For secondary developers, hardware integrators, plugin authors, and maintainers. Covers API interfaces, secondary development workflows, coding style standards, implementation boundaries, and contribution rules.
+> Documentation version: v0.1.6. This manual is for Target, Skill Runtime, Adapter, Policy, and Perception integrators.
 
----
+## 1. Development Principles
 
-## Table of Contents
+In v0.1.6, we use a Session as the execution boundary. Runtime extensions follow these constraints:
 
-- [3.1 About This Manual](#31-about-this-manual)
-- [3.2 Architecture Deep Dive](#32-architecture-deep-dive)
-- [3.3 API Reference](#33-api-reference)
-  - [3.3.1 BaseDriver Interface](#331-basedriver-interface)
-  - [3.3.2 BaseRolloutTarget Interface](#332-baserollouttarget-interface)
-  - [3.3.3 BaseSkillRuntime Interface](#333-baseskillruntime-interface)
-  - [3.3.4 TargetAdapter Interface](#334-targetadapter-interface)
-  - [3.3.5 WatchdogSupervisor Internal Architecture](#335-watchdogsupervisor-internal-architecture)
-  - [3.3.6 Agent-Side APIs](#336-agent-side-apis)
-  - [3.3.7 Configuration Schema](#337-configuration-schema)
-  - [3.3.8 File Protocol Conventions](#338-file-protocol-conventions)
-- [3.4 Secondary Development Guide](#34-secondary-development-guide)
-  - [3.4.1 Adding a New Driver](#341-adding-a-new-driver)
-  - [3.4.2 Adding a New Target](#342-adding-a-new-target)
-  - [3.4.3 Developing External Plugins](#343-developing-external-plugins)
-  - [3.4.4 Adding a New Skill](#344-adding-a-new-skill)
-  - [3.4.5 Integrating a New Robot](#345-integrating-a-new-robot)
-  - [3.4.6 Extending the Perception Pipeline](#346-extending-the-perception-pipeline)
-  - [3.4.7 Extending the Navigation Module](#347-extending-the-navigation-module)
-  - [3.4.8 ROS2 Adapter Development](#348-ros2-adapter-development)
-- [3.5 Coding Style Standards](#35-coding-style-standards)
-- [3.6 Implementation Boundaries](#36-implementation-boundaries)
-- [3.7 Testing Standards](#37-testing-standards)
-- [3.8 Contribution & Submission Rules](#38-contribution--submission-rules)
-- [3.9 Appendix](#39-appendix)
+1. The Agent and physical execution couple only through workspace protocols and Runtime interfaces.
+2. A Skill Runtime never accesses a Target, SDK, simulator client, or WebSocket directly.
+3. Every observation and action conversion is represented by an explicit Adapter/Bridge.
+4. Preflight rejects incomplete contracts; it does not use implicit truncation, padding, or downgraded output.
+5. Runtime writes state and facts; the Agent owns planning and optional semantic verification.
 
----
+Core source entry points:
 
-## 3.1 About This Manual
+| Area | Path |
+|---|---|
+| Session schema/state machine | `PhyAgentOS/runtime/schemas/session.py` |
+| Target/Skill schemas | `PhyAgentOS/runtime/schemas/target.py`, `skillruntime.py` |
+| Watchdog | `PhyAgentOS/runtime/watchdog/supervisor.py` |
+| Preflight | `PhyAgentOS/runtime/preflight/runtime_compatibility_preflight.py` |
+| Session lifecycle | `PhyAgentOS/runtime/sessions/session_runner.py` |
+| Target access boundary | `PhyAgentOS/runtime/sessions/target_session_handle.py` |
+| Target factory | `PhyAgentOS/runtime/targets/factory.py` |
+| Runtime registry | `PhyAgentOS/runtime/watchdog/runtime_registry.py` |
+| Adapter factory | `PhyAgentOS/runtime/adapters/factory.py` |
+| Workspace provisioning | `PhyAgentOS/runtime/workspace/manager.py` |
 
-### Who This Is For
+## 2. Core Interfaces
 
-If your goal is no longer just "get the system running" but:
-- Understanding module responsibilities within the repository
-- Adding or modifying built-in drivers
-- Integrating new robots via HAL
-- Developing independent plugin repositories
-- Integrating perception, navigation, or ROS2 capabilities
-- Contributing tests, documentation, or deployment instructions
-
-Then this document is your primary reference.
-
-### Recommended Reading Path
-
-| Goal | Start With |
-|------|-----------|
-| Understand runtime communication | [§3.2](#32-architecture-deep-dive) → [§3.3.8](#338-file-protocol-conventions) |
-| Integrate a new robot | [§3.4.1](#341-adding-a-new-driver) → [§3.4.5](#345-integrating-a-new-robot) |
-| Develop external plugins | [§3.4.3](#343-developing-external-plugins) |
-| Understand full architecture | [Part 1 §1.3](../01-framework-introduction.md#13-technical-architecture) → [§3.2](#32-architecture-deep-dive) |
-
----
-
-## 3.2 Architecture Deep Dive
-
-### 3.2.1 Core Design: Cognitive-Execution Decoupling
-
-PhyAgentOS's core value lies in decoupling the cognitive and execution layers via explicit protocols. **Many "interfaces" are fundamentally file protocols and runtime conventions, not Python function signatures.**
-
-- **Track A (Cognitive)**: Planner / Critic / Tool / Memory
-- **Track B (Execution)**: Watchdog / SessionRunner / SkillRuntime / Target
-- **Protocol Boundary**: Markdown files carry shared state, not cross-layer Python calls
-
-### 3.2.2 Runtime Files Are the "Ground Truth"
-
-The following files are often more important than class diagrams:
-
-| File | Logical Meaning |
-|------|----------------|
-| `TARGETS.md` | Runtime target registry and endpoint / adapter / contract references |
-| `SKILLRUNTIME.md` | Executable policy/builtin skill runtime declarations |
-| `SESSIONS.md` | Execution intent and result ground truth |
-| `ENVIRONMENT.md` | Environment state ground truth |
-| `EMBODIED.md` | Agent-facing target capability prose |
-| `SKILLS.md` | Agent-facing skill discovery and loading rules |
-| `LESSONS.md` | Failure experience ground truth |
-
-**Reading only the code without understanding the files will lead to misinterpreting system behavior.**
-
-### 3.2.3 Single vs Fleet Development Implications
-
-When developing any functionality involving embodied actions, navigation, or connectivity, you must explicitly consider both runtime semantics:
-
-- **single mode**: One workspace, all state files in one place
-- **fleet mode**: Shared workspace for global state, per-robot workspaces for private state
-
-### 3.2.4 Distinguishing Templates, Profiles, and Runtime Files
-
-| Concept | Location | Meaning |
-|---------|----------|---------|
-| **Templates** | `PhyAgentOS/templates/` | Define file structure and suggested fields |
-| **Profile** | `hal/profiles/` | Static capability declaration for a robot type |
-| **Runtime Files** | workspace/ | Actual state surface read/written by Agent, Watchdog, and runtime writers |
-
-In short: **Templates define structure, Profiles provide instance type descriptions, Runtime files carry live state.**
-
----
-
-## 3.3 API Reference
-
-### 3.3.1 BaseDriver Interface
-
-**Location**: `hal/base_driver.py`
-
-All hardware and simulation drivers must inherit from `BaseDriver`.
-
-#### Required Abstract Methods
-
-```python
-class BaseDriver(ABC):
-    def get_profile_path(self) -> str:
-        """Return the path to the driver's EMBODIED.md Profile"""
-
-    def load_scene(self, scene: dict) -> None:
-        """Initialize world state from scene dictionary"""
-
-    def execute_action(self, action_type: str, params: dict) -> str:
-        """Execute atomic action, return result string"""
-
-    def get_scene(self) -> dict:
-        """Return current world state dictionary"""
-```
-
-#### Optional Overrides
-
-```python
-def connect(self) -> None:           # Establish hardware connection
-def disconnect(self) -> None:        # Close connection
-def is_connected(self) -> bool:      # Check connection status
-def health_check(self) -> bool:      # Lightweight health check
-def get_runtime_state(self) -> dict: # Return optional runtime state (nav, connection, etc.)
-def close(self) -> None:             # Release hardware resources
-```
-
-#### Driver Loading
-
-Drivers are registered in `hal/drivers/__init__.py` `DRIVER_REGISTRY` and loaded via `load_driver(name, **kwargs)`.
-
----
-
-### 3.3.2 BaseRolloutTarget Interface
-
-**Location**: `PhyAgentOS/runtime/targets/base.py` (new version)
-
-The single entry point for all three scenarios. WatchdogSupervisor does not need to know whether the Target is a game, simulation, or real robot.
+### 2.1 BaseRolloutTarget
 
 ```python
 class BaseRolloutTarget(ABC):
-    def build(self) -> None:
-        """Initialize environment (connect SMAPI, launch sim instance, establish hardware session, etc.)"""
-
-    def reset(self, session_ctx: dict) -> dict:
-        """Reset to initial state, return initial observation dict"""
-
-    def observe(self) -> dict:
-        """Get current observation (RGBD, joints, voice, game state, etc.)"""
-
-    def step(self, executable_action: dict) -> dict:
-        """Execute one action step, return obs / reward / done / info"""
-
-    def close(self) -> None:
-        """Release resources (disconnect, close sim window, etc.)"""
-
-    def get_state(self) -> dict:
-        """Return runtime state dict for ENVIRONMENT.md writeback"""
+    def build(self) -> None: ...
+    def describe(self) -> dict: ...
+    def configure_session(self, session_ctx: dict) -> dict: ...
+    def start_session(self, session_ctx: dict) -> dict: ...
+    def reset(self, session_ctx: dict) -> dict: ...
+    def observe(self) -> dict: ...
+    def observe_for_environment(self, session_ctx: dict) -> dict: ...
+    def action_chunk(self, executable_action_chunk: dict) -> dict: ...
+    def execution_status(self) -> dict: ...
+    def describe_target_tools(self) -> dict: ...
+    def call_target_tool(self, tool_name: str, arguments: dict) -> dict: ...
+    def cancel(self, reason: str) -> None: ...
+    def close(self) -> None: ...
 ```
 
-#### Scenario Implementation Examples
+The former `step/get_state` shape is not the current base API. Policy actions use `action_chunk`; Builtin Runtimes perform command interactions through constrained Target tools.
 
-```python
-# Scenario 2: Simulation Target
-class ManiSkillTarget(BaseRolloutTarget):
-    def build(self): ...       # Initialize ManiSkill environment
-    def observe(self): ...     # RGBD + proprioception + language instruction
-    def step(self, action): ...# Continuous action → obs/reward/done/info
-
-# Scenario 3: Real Composite Target
-class CompositeTarget(BaseRolloutTarget):  # Go2 + Franka
-    def observe(self): ...     # RGBD + force + joints + voice text
-    def step(self, action): ...# chunk buffer + soft blend
-```
-
----
-
-### 3.3.3 BaseSkillRuntime Interface
-
-**Location**: `PhyAgentOS/runtime/skillruntime/base.py` (new version)
+### 2.2 BaseSkillRuntime
 
 ```python
 class BaseSkillRuntime(ABC):
-    def start(self, session_ctx: dict, target: BaseRolloutTarget) -> None:
-        """Initialize skill execution context"""
-
-    def tick(self, session_ctx: dict, target: BaseRolloutTarget) -> dict:
-        """Called once per execution cycle, return status dict"""
-
-    def cancel(self, session_ctx: dict, reason: str) -> None:
-        """Interrupt execution"""
-
-    def snapshot(self, session_ctx: dict) -> dict:
-        """Return current skill snapshot"""
+    def start(self, skill_ctx: SkillContext) -> None: ...
+    def cancel(self, skill_ctx: SkillContext, reason: str) -> None: ...
+    def snapshot(self, skill_ctx: SkillContext) -> dict: ...
+    def required_environment_outputs(self, skill_ctx: SkillContext) -> list[str]: ...
 ```
 
-#### Skill Runtime Hierarchy
+A concrete runtime selects one branch:
 
-```
-SkillRuntime
-├── PolicyBackedSkillRuntime
-│   ├── VLASkillRuntime
-│   ├── OpenPISkillRuntime
-│   └── GR00TSkillRuntime
-├── BuiltinAlgorithmSkillRuntime
-│   ├── SemanticNavigationRuntime
-│   ├── TargetNavigationRuntime
-│   └── ReKepGraspRuntime
-├── HybridSkillRuntime
-│   ├── NavThenVLARuntime
-│   └── ReKepThenVLARuntime
-└── DirectAtomicRuntime
-```
+- `PolicySkillRuntime.run_policy_loop(...)`
+- `BuiltinSkillRuntime.run_builtin_loop(...)`
 
-**Key Design**: Skill runtime focuses on "how to run", target on "how to execute", adapter on "how to translate". Clear separation of concerns.
-
----
-
-### 3.3.4 TargetAdapter Interface
-
-**Location**: `PhyAgentOS/runtime/adapters/base.py` (new version)
-
-```
-TargetAdapter
-├── SimAdapter (BuiltinSim / RoboCasa / LIBERO)
-└── RealAdapter (Franka / Go2 / XLeRobot / UR5)
-```
-
-Responsibilities:
-- Target-specific observation difference handling (coordinate transforms, sensor data normalization)
-- Target-specific action difference handling (normalization/de-normalization, sticky gripper, chunk decode)
-- `AdapterPlan` auto-composes adaptation steps
-
----
-
-### 3.3.5 WatchdogSupervisor Internal Architecture
-
-**Location**: `PhyAgentOS/runtime/watchdog/supervisor.py` (new version)
-
-```
-WatchdogSupervisor
-├── WorkspaceWatcher      # Monitors SESSIONS.md / TARGETS.md / ENVIRONMENT.md
-├── SessionRegistry       # Session lifecycle management (pending→claimed→running→succeeded/failed)
-├── SessionScheduler      # Dispatches by target/skill/priority
-├── TargetRuntimeRegistry # Target runtime factory/manifest
-├── SkillRuntimeRegistry  # Skill runtime factory/manifest
-├── HealthMonitor         # Policy server / robot / simulator / session health monitoring
-├── ResultWriter          # Unified writeback to SESSIONS.md / ENVIRONMENT.md / LESSONS.md
-└── FailureEscalator      # retry / reset / cancel / notify / safety stop
-```
-
-#### Session State Machine
-
-```
-pending → claimed → running → succeeded / failed / timed_out
-pending → rejected
-running → cancelling → cancelled
-```
-
----
-
-### 3.3.6 Agent-Side APIs
-
-#### Agent Loop
-
-**Location**: `PhyAgentOS/agent/loop.py`
+### 2.3 Adapters and Bridges
 
 ```python
-class AgentLoop:
-    def run(self, user_input: str) -> str:
-        """Main loop: receive input → build context → call LLM → handle tools → return result"""
+class BaseTargetAdapter(ABC):
+    def output_observation_contract(self) -> dict: ...
+    def input_action_contract(self) -> dict: ...
+    def to_runtime_observation(self, raw_obs, target_info) -> dict: ...
+    def to_executable_action_chunk(self, runtime_action_chunk, target_info) -> dict: ...
+
+class BasePolicyAdapter(ABC):
+    def input_observation_contract(self) -> dict: ...
+    def output_action_contract(self) -> dict: ...
+    def to_policy_input(self, runtime_observation, skill_ctx) -> dict: ...
+    def from_policy_output(self, policy_output, skill_ctx) -> dict: ...
+
+class BaseActionBridge(ABC):
+    def apply(self, action_chunk, target_info) -> dict: ...
 ```
 
-Workflow:
-1. Build context from bootstrap files (`AGENTS.md`, `SOUL.md`, `USER.md`, `TOOLS.md`, `SKILLS.md`) plus state files such as `ENVIRONMENT.md`, `EMBODIED.md`, and `LESSONS.md`
-2. Call LLM for planning and reasoning
-3. Handle tool invocations and skill-guided workflows
-4. For runtime execution, read `TARGETS.md` / `SKILLRUNTIME.md` and append work to `SESSIONS.md`
-5. Manage conversation history
+A TargetAdapter maps native Target data to/from Runtime data. A PolicyAdapter maps Runtime data to/from one policy. An ActionBridge performs only declared, verifiable action conversions.
 
-#### Runtime Session Validation
+### 2.4 TargetSessionHandle
 
-**Location**: `PhyAgentOS/runtime/preflight/`
-
-Runtime validation happens before execution. It resolves the requested
-`target_ref` and `skillruntime_ref`, checks whether the target supports the
-skill runtime, validates sensor/perception/runtime contracts, and rejects
-invalid sessions before a target or policy runtime is started.
-
-#### Skill System
-
-**Location**: `PhyAgentOS/agent/skills.py`
-
-Each Skill is a directory containing `SKILL.md` (skill definition) and execution scripts. 13 built-in Skills:
-`agent-mode`, `clawhub`, `cron`, `github`, `image`, `memory`, `pipergo2-demo`,
-`rekep-robot-onboarding`, `robot-management-guideline`, `skill-creator`, `summarize`, `tmux`, `weather`.
-
-#### CLI Entry Points
-
-| Command | Description |
-|---------|-------------|
-| `paos onboard` | Initialize workspace, sync template files |
-| `paos agent` | Start interactive Agent CLI |
-| `paos agent -m "..."` | Single-turn message call |
-| `paos gateway` | Start long-running gateway service |
-
----
-
-### 3.3.7 Configuration Schema
-
-**Location**: `PhyAgentOS/config/schema.py`
-
-Pydantic configuration model core structure:
+A Skill Runtime receives a Handle, not a raw Target:
 
 ```python
-class EmbodimentInstanceConfig(BaseModel):
-    robot_id: str
-    driver: str
-    workspace: str
-
-class EmbodimentsConfig(BaseModel):
-    mode: Literal["single", "fleet"]
-    shared_workspace: str | None = None
-    instances: list[EmbodimentInstanceConfig] = []
-
-class Config(BaseModel):
-    agents: AgentsConfig
-    providers: ProvidersConfig
-    gateway: GatewayConfig | None
-    tools: ToolsConfig | None
-    embodiments: EmbodimentsConfig
+observe() -> RuntimeObservation
+action_chunk(chunk) -> dict
+execution_status() -> dict
+request_environment_refresh(request=None) -> EnvironmentSnapshot
+call_target_tool(tool_name, arguments) -> dict
+stop(reason) -> None
 ```
 
----
+The Handle applies the TargetAdapter, ActionBridge, Tool Manifest, Perception Runtime, and Session trace.
 
-### 3.3.8 File Protocol Conventions
+## 3. Runtime Document Schemas
 
-#### SESSIONS.md Format
+### 3.1 TARGETS.md
+
+Each Target declares:
+
+- a unique `id`, `target_class=local|remote`, and `target_kind`
+- `workspace` and `supported_skillruntimes`
+- `target_runtime`, `target_adapter`, and `runtime_contract_ref`
+- a `targetws://` endpoint for a remote Target
+- observation and optional perception references
+
+The schema supports `game | debug | simulation | real_robot`. A `target_runtime` can be constructed only after registration in the factory.
+
+### 3.2 SKILLRUNTIME.md
+
+`runtime_kind` is either `policy` or `builtin`:
+
+- A Policy Runtime declares a Policy Client and Policy Adapter.
+- A Builtin Runtime that exposes Target tools declares `target_tool_policy`.
+- `supported_target_kinds` includes the selected Target kind.
+- Non-empty `requires.sensors` requires a resolvable Sensor Config.
+- Non-empty `environment_outputs` triggers a Perception Plan and strict output checks.
+
+### 3.3 SESSIONS.md
+
+Minimal development example:
 
 ```yaml
 version: runtime_sessions_v1
@@ -358,371 +135,143 @@ sessions:
   - session_id: sess_example
     target_ref: target://dummy_sim
     skillruntime_ref: skillruntime://openpi_sim_vla
-    task_description: run a smoke test
+    task_description: runtime smoke test
     status: pending
     priority: normal
+    routing:
+      target_endpoint: null
+      policy_endpoint: dummy://local
+      adapter_resolution: strict_auto
+      adapter_overrides: null
+    execution:
+      max_steps: 10
+      replan_every_steps: 5
+      action_chunk_mode: chunk_buffer
+      chunk_switch_mode: hard_switch
+    result: {}
 ```
 
-#### Session Validate-Dispatch-Execute Pipeline
+`SessionSpec` is the source of truth for all fields. Do not inline sensors, perception models, or a Target/Policy pair adapter in a Session.
 
+## 4. Lifecycle and Concurrency
+
+The Watchdog is a serial worker. It orders work by priority and then document order. `depends_on` is present in the schema, but the v0.1.6 scheduler does not enforce dependencies, so orchestrators cannot currently use it as an ordering guarantee.
+
+```text
+pending
+  → claimed
+  → preflight_checking
+  → running
+  → finalizing
+  → succeeded | failed | timed_out | cancelled
+
+preflight_checking → rejected
+finalizing → awaiting_verification → verifying
+verifying → succeeded | failed | replanned | awaiting_verification
 ```
-1. Agent forms task intent
-2. Agent resolves target and skill runtime from TARGETS.md / SKILLRUNTIME.md
-3. Agent appends a pending session to SESSIONS.md
-4. Watchdog claims the session and runs preflight
-5. SessionRunner executes target/skill runtime and writes results to SESSIONS.md, ENVIRONMENT.md, LOG.md, and artifacts
-```
 
-When debugging, distinguish: task generation issue / target or skillruntime mismatch / preflight rejection / Watchdog execution failure / execution succeeded but state not written back.
+`SessionRegistry` protects updates with `SESSIONS.md.lock` and claim tokens. Extensions must not advance state by bypassing the registry.
 
----
+## 5. Current Preflight Checks
 
-## 3.4 Secondary Development Guide
+The v0.1.6 Preflight covers:
 
-### 3.4.1 Adding a New Driver
+- Target enablement, class/kind, endpoint, and supported Skill
+- Runtime Contract readability plus Target ID and Adapter consistency
+- Skill Runtime registration, Target kind, and Policy Endpoint
+- explicit Empty Observation agreement on both sides
+- Target/Policy Adapter and Bridge registration
+- Adapter observation/action shape, dtype, and layout
+- required sensors and observation schemas
+- Policy output vs Target Action Contract representation, shape, and normalization bridge
+- forbidden entries in Builtin Target Tool manifests
 
-Minimum workflow for adding a built-in driver:
+Current boundary: real-robot operator override, the complete SafetyGuard parameter set, and remote describe/health contracts are not all mandatory checks yet. Passing the current Preflight is not a real-robot safety certification.
 
-1. Create driver implementation file in `hal/drivers/`
-2. Inherit `BaseDriver`, implement 4 abstract methods
-3. Create corresponding Profile in `hal/profiles/`
-4. Register in `hal/drivers/__init__.py` `DRIVER_REGISTRY`
-5. Validate by starting directly: `hal/hal_watchdog.py --driver <name>`
-6. Full-pipeline integration test with `paos agent`
+## 6. Adding a Local Target
 
-#### Built-in Driver vs External Plugin
+Shortest implementation path:
 
-| Modify Main Repo | External Plugin |
-|------------------|-----------------|
-| Fix existing driver bugs | Heavy third-party SDK dependencies |
-| Enhance built-in simulation | Vendor-private runtimes |
-| Universal changes | Complex real-robot deployment logic |
-| | Independent versioning and dependency management desired |
-
----
-
-### 3.4.2 Adding a New Target
-
-Adding a new scenario requires only implementing a `BaseRolloutTarget` subclass (~100 lines):
+1. Implement `BaseRolloutTarget`.
+2. Add a TargetAdapter and Runtime Contract YAML.
+3. Register it with `register_local_target_runtime(runtime_name, factory)`.
+4. Add it to `TARGETS.md` and list only validated Skill Runtimes.
+5. Add lifecycle, adapter-contract, Preflight, and end-to-end Session tests.
 
 ```python
-class MyTarget(BaseRolloutTarget):
-    def build(self) -> None:
-        # Initialize environment
+from PhyAgentOS.runtime.targets.factory import register_local_target_runtime
 
-    def reset(self, session_ctx: dict) -> dict:
-        # Reset and return initial observation
-        return {"obs": ..., "info": ...}
-
-    def observe(self) -> dict:
-        # Return current observation
-        return {"rgb": ..., "depth": ..., "joint": ...}
-
-    def step(self, executable_action: dict) -> dict:
-        # Execute one step
-        return {"obs": ..., "reward": ..., "done": ..., "info": ...}
-
-    def close(self) -> None:
-        # Release resources
-
-    def get_state(self) -> dict:
-        # Return runtime state
-        return {"status": ..., "position": ...}
+register_local_target_runtime("MyTargetRuntime", build_my_target)
 ```
 
-**No need to understand**: Watchdog, Session state machine, file protocol, Critic — the Base layer handles all of that.
+The current registry is populated by module imports. It does not provide the former `PhyAgentOS_plugin.toml` Driver auto-discovery path.
 
+## 7. Adding a Remote Target
 
+Remote Targets should reuse:
 
-### 3.4.3 Developing External Plugins
+- `TargetWSClient`, which maps `targetws://` to WebSocket and uses Runtime Envelope + msgpack
+- `RemoteTargetProxy`, which maps `target.*` and `agent_tool.*` RPCs
+- `register_remote_target_runtime(runtime_name, factory)` for construction
 
-#### Plugin Registration Mechanism
+The server should implement at least `target.describe`, `target.configure_session`, `target.start_session`, `target.reset`, `target.observe`, `target.action_chunk`, `target.execution_status`, `target.cancel`, and `target.close`. Responses must echo matching seq, session, target, and skillruntime identifiers.
 
-**Location**: `hal/plugins.py`
+## 8. Adding a Skill Runtime
 
-1. Plugin repo provides `PhyAgentOS_plugin.toml` manifest
-2. Deployment script clones or copies plugin repo to `~/.PhyAgentOS/plugins/repos/`
-3. Main repo reads manifest and writes to local plugin registry
-4. When built-in `DRIVER_REGISTRY` doesn't find target driver, dynamically resolves from external registry
+1. Subclass `PolicySkillRuntime` or `BuiltinSkillRuntime`.
+2. Use only `TargetSessionHandle`.
+3. Register with `register_skill_runtime(name, factory)`.
+4. Declare loop, Target kinds, policy, I/O contracts, and requirements in `SKILLRUNTIME.md`.
+5. Test cancellation, timeout, terminal state, and incompatible contracts.
 
-#### Plugin Template Structure
+When a Builtin Runtime exposes a tool, the Target supplies its schema through `describe_target_tools`, and the Skill explicitly allows it in `target_tool_policy.expose`.
 
-```
-my-plugin/
-├── PhyAgentOS_plugin.toml    # Plugin manifest
-├── requirements.txt          # Dependencies
-├── driver.py                 # Driver implementation (extends BaseDriver)
-├── profile.md                # Robot Profile
-└── README.md                 # Usage instructions
-```
+## 9. Policy and Communication
 
-#### Deployment Script Reference
+| Scheme | Client |
+|---|---|
+| `dummy://local` | `DummyPolicyClient` |
+| `openpi://host:port` | OpenPI client |
+| `policyws://host:port` | OpenPI-compatible client |
+| `b1k-ws://host:port` | BEHAVIOR-1K client |
+
+Remote Targets use `phyagentos.runtime_rpc.v2` envelopes and msgpack. Large arrays may use inline encoding; artifacts and environment state should be persisted through paths/URIs instead of embedding large objects in Markdown.
+
+## 10. Perception Development
+
+Perception configuration has three layers:
+
+1. Sensor Config: sensors, observation keys, shape, dtype, and calibration references.
+2. Perception Config: models, plugin candidates, pipelines, and outputs.
+3. Skill Requirements: sensors and environment outputs required by this Session.
+
+`PerceptionRuntime.resolve_and_check` produces a plan; `EnvironmentWriter` reconciles and merges `PhyAgentOS.environment.v2`. A 2D-only result must not fabricate a metric 3D pose. Raw images, masks, depth, point clouds, and logits belong in artifacts.
+
+## 11. SessionVerifier Extension Boundary
+
+After Runtime success, `ResultWriter` creates an episode and verification bundle. The Agent-side `SessionVerifier` owns the multimodal semantic verdict. Review mode appends an attempt and lesson without changing a terminal state or creating a replan.
+
+Adding an evidence type requires coordinated changes to the bundle schema/writer, verifier prompt, retention behavior, and tests so state and artifact lifecycles stay consistent.
+
+## 12. Tests and Quality Gates
 
 ```bash
-python scripts/deploy_rekep_real_plugin.py \
-  --repo-url https://github.com/baiyu858/PhyAgentOS-rekep-real-plugin.git
+pytest
+pytest tests/runtime
+pytest tests/runtime/test_runtime_protocol_alignment.py \
+       tests/runtime/test_runtime_templates.py \
+       tests/runtime/test_supervisor_single_session.py
+ruff check PhyAgentOS tests
 ```
 
----
+Validate an external simulator/policy/robot integration in this order: schema → factory → Preflight rejection/acceptance → one Session → timeout/cancel → artifacts → resource release over repeated runs. Real-robot tests also require an independently validated target-side safety stop.
 
-### 3.4.4 Adding a New Skill
+## 13. Future Design Direction
 
-Each Skill is a directory containing a `SKILL.md` definition file and execution scripts:
-
-```
-PhyAgentOS/skills/my-skill/
-├── SKILL.md      # Skill metadata and prompt
-└── run.sh        # Execution entry point
-```
-
-**SKILL.md format**:
-```markdown
-# Skill Name
-Description of what this skill does.
-
-## Parameters
-- param1: description
-- param2: description
-
-## Usage
-...
-```
-
----
-
-### 3.4.5 Integrating a New Robot
-
-#### Profile Writing Guidelines
-
-A Profile should contain (a capability specification for Critic and Agent):
-- Identity and type
-- Sensor capabilities
-- Supported action table
-- Physical constraints (workspace, torque limits, etc.)
-- Connection method
-- Runtime protocol mapping
-
-#### driver-config JSON Pass-Through Mechanism
-
-`hal_watchdog.py` supports passing a JSON object via `--driver-config`, transparently forwarded to the target driver constructor:
-
-```bash
-python hal/hal_watchdog.py \
-  --driver my_driver \
-  --driver-config examples/my_driver_config.json
-```
-
-Benefits: avoids frequent Watchdog CLI changes, each driver defines its own init params, config examples are persisted in the repo.
-
----
-
-### 3.4.6 Extending the Perception Pipeline
-
-**Location**: `hal/perception/`
-
-Perception pipeline layer structure:
-
-```
-service.py                 # Service orchestration entry point
-  ├── geometry_pipeline.py # Geometric processing (point clouds, transforms)
-  ├── segmentation_pipeline.py  # Semantic segmentation
-  ├── fusion_pipeline.py   # Multi-source fusion → scene graph
-  └── environment_writer.py     # Write perception results to ENVIRONMENT.md
-```
-
-**Development advice**: Clearly separate "perception processing" from "environment writeback". Don't cram all logic into the driver.
-
----
-
-### 3.4.7 Extending the Navigation Module
-
-**Location**: `hal/navigation/`
-
-```
-target_navigation_engine.py    # Core navigation engine, semantic goal resolution
-  └── target_navigation_backend.py  # Navigation execution backend abstraction
-        └── bridge.py          # Bridge between HAL and navigation backend
-```
-
-The most important thing in navigation extension is not just "making the robot move", but making state **visible, writable, and interpretable**.
-
----
-
-### 3.4.8 ROS2 Adapter Development
-
-**Location**: `hal/ros2/`
-
-```
-bridge.py          # ROS2 communication bridge
-messages.py        # Message type definitions and conversions
-adapters/          # Robot-specific ROS2 adapters
-```
-
-When integrating new ROS2 topics / sensors / control channels, prefer extending by adapter dimension rather than piling ad-hoc logic into a single driver.
-
----
-
-## 3.5 Coding Style Standards
-
-### Python
-
-| Standard | Requirement |
-|----------|-------------|
-| Python version | ≥ 3.11 |
-| Line length | Max 100 characters |
-| Lint tool | ruff |
-| Lint rules | E / F / I / N / W |
-| Ignored rules | E501 (line length handled by ruff formatter) |
-| Type annotations | Required on all public functions |
-| Docstrings | Google-style docstrings |
-| Import ordering | isort auto-sorted (stdlib → third-party → project internal) |
-
-### Pydantic Schema Conventions
-
-- All runtime data structures defined using Pydantic BaseModel
-- Fields use explicit type annotations and default values
-- Complex nested fields defined as separate models
-
-### File Organization
-
-- One clear responsibility per module
-- Don't cram all logic into the driver
-- Perception, navigation, ROS2 each have independent layers
-
----
-
-## 3.6 Implementation Boundaries
-
-### Strictly Forbidden Cross-Boundary Behavior
-
-| Component | Must NOT Know |
-|-----------|---------------|
-| **RolloutTarget** | Policy inference, Skill logic, upper Agent |
-| **SkillRuntime** | Target internal implementation details |
-| **TargetAdapter** | Policy inference, Target internal state |
-| **WatchdogSupervisor** | How to execute step specifics |
-| **Base layer** | Any import from scenario modules |
-
-### Design Guardrails
-
-1. **Base layer must NOT import any scenario module**
-2. **Each new scenario = ~100 lines of BaseRolloutTarget subclass**
-3. **Three scenarios progress in parallel without blocking**
-4. **Real-robot final safety adjudication MUST stay on the local control machine** (no final stop decisions on the cloud Agent side)
-
-### Safety Boundary (Real-Robot Scenario)
-
-```
-Sensor → ObservationProvider → PolicyServer → ActionChunk
-  → ChunkBuffer (local) → SoftBlend → SafetyGuard (local) → MotorCommand
-```
-
-Cloud Agent only generates intent-level session specs. Local Runtime layer executes and performs final safety checks.
-
----
-
-## 3.7 Testing Standards
-
-### Four-Layer Validation System
-
-| Layer | Content | Command |
-|-------|---------|---------|
-| 1. Pure Python unit tests | Interfaces, config, registration, parsing logic | `pytest tests/test_hal_base_driver.py` |
-| 2. Driver local smoke test | Start Watchdog directly | `python hal/hal_watchdog.py --driver <name>` |
-| 3. Dry-run preflight | Pre-check real plugin or remote runtime | preflight + dry-run |
-| 4. Agent full-pipeline integration | Agent → SESSIONS → Watchdog → runtime target → ENVIRONMENT | `paos agent` + Watchdog |
-
-### Key Test Files
-
-| Test File | Coverage |
-|-----------|----------|
-| `tests/test_hal_external_plugins.py` | Plugin registration & external driver resolution |
-| `tests/test_hal_base_driver.py` | Driver base contract |
-| `tests/test_hal_watchdog_driver_config.py` | `driver-config` pass-through |
-| `tests/test_go2_navigation_stack.py` | Go2 navigation stack |
-| `tests/test_perception_service.py` | Perception service |
-| `tests/test_commands.py` | CLI commands |
-| `tests/test_fleet_watchdog.py` | Fleet Watchdog workflows |
-
-### Minimum Test Commands
-
-```bash
-# Full suite
-pytest tests/
-
-# Single module
-pytest tests/test_hal_external_plugins.py
-```
-
-### Real-Robot/Plugin Verification Sequence
-
-```
-preflight → dry-run → Watchdog direct connection validation → Agent full-pipeline validation
-```
-
----
-
-## 3.8 Contribution & Submission Rules
-
-### PR Workflow
-
-1. Fork the repo and create a feature branch
-2. Write code + tests + documentation
-3. Ensure `pytest tests/` all pass
-4. Ensure `ruff check .` has no errors
-5. Submit PR with clear description of changes and motivation
-
-### Commit Conventions
-
-- Use semantic commit messages: `feat:` / `fix:` / `docs:` / `refactor:` / `test:` / `chore:`
-- One commit, one thing
-- Never commit secrets (`.env`, credentials, etc.)
-
-### Documentation Layering
-
-| Doc Layer | Target Audience | Change Trigger |
-|-----------|----------------|----------------|
-| README | Everyone | Major feature changes |
-| Framework Introduction | Everyone | Architecture evolution, new features, demo updates |
-| User Manual | Users | Command changes, config structure changes, new scenario support |
-| Developer Manual | Developers | API changes, new modules, process changes |
-
-### When to Split Out a Separate Doc
-
-Split out when BOTH conditions are met:
-- Beyond "quick reference" scope, needs background + deployment + troubleshooting + examples + FAQ
-- Has a stable, specific audience (e.g., plugin authors, ROS2 developers, operators)
-
----
-
-## 3.9 Appendix
-
-### Module Path Quick Reference
-
-| Function | Path |
-|----------|------|
-| BaseDriver | `hal/base_driver.py` |
-| Watchdog | `hal/hal_watchdog.py` / `PhyAgentOS/runtime/watchdog/` |
-| Built-in Drivers | `hal/drivers/` |
-| Robot Profiles | `hal/profiles/` |
-| Driver Config Examples | `examples/` |
-| Agent Loop | `PhyAgentOS/agent/loop.py` |
-| Agent Context | `PhyAgentOS/agent/context.py` |
-| Agent Skill System | `PhyAgentOS/agent/skills.py` |
-| Config Schema | `PhyAgentOS/config/schema.py` |
-| Perception Runtime | `PhyAgentOS/runtime/perception/` |
-| Runtime Session System | `PhyAgentOS/runtime/sessions/` |
-| Runtime Watchdog | `PhyAgentOS/runtime/watchdog/` |
-| Skill Runtime | `PhyAgentOS/runtime/skillruntime/` |
-| Skill System | `PhyAgentOS/agent/skills.py` |
-| CLI Entry | `PhyAgentOS/cli/commands.py` |
-| Test Suite | `tests/` |
-
----
+The next HAL v3 stage includes uniform `strict_environment_contract=true`, complete real-robot SafetyGuard/operator override, Session dependency scheduling, agent-interactive Builtin Runtimes, Goal Graph/Session Compiler, deterministic multi-Bridge resolution, and long-horizon Fleet orchestration. Before these capabilities enter public current-state documentation, their schemas, implementation, and end-to-end tests must be complete.
 
 ## Further Reading
 
-- [Part 1: Framework Introduction](../01-framework-introduction.md) — Design philosophy, architecture, roadmap
-- [Part 2: User Manual](../02-user-manual.md) — Quick start, scenario configuration, troubleshooting
-
-> **External Plugin Reference**: The ReKep real-robot plugin [GitHub](https://github.com/baiyu858/PhyAgentOS-rekep-real-plugin) is the best external plugin implementation reference.
+- [Framework Introduction](01-framework-introduction.md)
+- [User Manual](02-user-manual.md)
+- [Documentation Index](../README.md)

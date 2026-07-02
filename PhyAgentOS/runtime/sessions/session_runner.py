@@ -113,6 +113,11 @@ class SessionRunner:
     def close(self) -> None:
         self.target.close()
 
+    @property
+    def final_observation(self) -> dict | None:
+        observation = self.state.last_status.get("obs")
+        return observation if isinstance(observation, dict) else None
+
     def _session_context(self) -> dict:
         ctx = {
             "session_id": self.session.session_id,

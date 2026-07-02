@@ -32,6 +32,7 @@
 
 | Version | Date | Update |
 |:------|:-----|:-------|
+| ![v0.1.6](https://img.shields.io/badge/v0.1.6-47A882) | 2026-06-27 | Support for  Behavior 1K; SessionVerfier for Agent verification; VerifySessionTool|
 | ![v0.1.5](https://img.shields.io/badge/v0.1.5-47A882) | 2026-06-11 | Cleaned protocol files and docs; game scenario separated to `general-game-agent` branch; main branch now focused on sim & real |
 | ![v0.1.4](https://img.shields.io/badge/v0.1.4-11648A) | 2026-06-5 | Optimize the user-friendly onboarding process; Communication Protocol Specification; More reasonable coding standards; Game Agent & Benchmarking ready |
 | ![v0.1.3](https://img.shields.io/badge/v0.1.3-11648A) | 2026-05-25 | Strict separation of `PolicySkillRuntime` / `BuiltinSkillRuntime`; Game Agent & Benchmarking ready |
@@ -170,6 +171,32 @@ conda run -n lerobot-pi python -m PhyAgentOS.runtime.policy.openpi.lerobot_pi0_s
 session watchdog automatically when runtime is enabled in config. Runtime
 targets are declared in `TARGETS.md`, executable runtimes in `SKILLRUNTIME.md`,
 and the Agent queues work by appending sessions to `SESSIONS.md`.
+
+Agent-side semantic verification is disabled by default. Enable it in
+`~/.PhyAgentOS/config.json` when runtime completion must be checked against the
+final RGB observations and workspace history:
+
+```json
+{
+  "agents": {
+    "verification": {
+      "enabled": true,
+      "model": null,
+      "maxReplans": 1,
+      "rgbRetention": "failed"
+    }
+  }
+}
+```
+
+With verification enabled, a runtime-successful session moves through
+`awaiting_verification` and `verifying`. The Agent then marks it `succeeded` or
+`failed`, or marks it `replanned` and appends a replacement `pending` session.
+Evidence is stored under `artifacts/runtime/<session_id>/`, and every verdict
+is recorded in `LESSONS.md`. `rgbRetention` accepts `all`, `failed`, or `none`;
+the default `failed` policy removes RGB after successful verification while
+retaining failed and replanned evidence. The Agent can call `verify_session`
+to process a waiting session or review a terminal session whose RGB remains.
 
 ```bash
 paos agent -m "run the configured LIBERO benchmark task"
