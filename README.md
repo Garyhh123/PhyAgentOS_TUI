@@ -56,7 +56,7 @@ Traditional "LLM-direct-to-hardware" approaches tightly couple reasoning to exec
 <br>
 
 <div align="center">
-  <img src="docs/imgs/framework.png" alt="Architecture" width="960">
+  <img src="docs/imgs/framework.svg" alt="Architecture" width="960">
   <p><sub>▲ Session-Centered Runtime Architecture Overview</sub></p>
 </div>
 

@@ -56,7 +56,7 @@
 <br>
 
 <div align="center">
-  <img src="docs/imgs/framework_zh.png" alt="架构图" width="960">
+  <img src="docs/imgs/framework_zh.svg" alt="架构图" width="960">
   <p><sub>▲ Session-Centered Runtime 架构全览</sub></p>
 </div>
 
