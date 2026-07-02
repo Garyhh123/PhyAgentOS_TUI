@@ -1,256 +1,127 @@
-# Communication Architecture / 通信架构说明
+# PhyAgentOS 通信架构
 
-This document explains how Physical Agent Operating System components communicate at runtime.
-It is a bilingual architectural guide, not a live protocol bus by itself.
+> 版本：v0.1.6 · [English](COMMUNICATION_en.md)
 
-本文说明 Physical Agent Operating System 在运行时如何通信。
-它是一份中英双语的架构说明书，不是实际承载通信的运行态总线。
+## 1. 三个通信边界
 
-## 1. Core Principle / 核心原则
+PhyAgentOS 不使用一条总线承载所有职责，而是分为：
 
-Physical Agent Operating System follows a Markdown-first design:
-
-- Track A (Agent side) plans, reasons, and validates.
-- Track B (Runtime / HAL side) executes through watchdog-supervised targets and skills.
-- Shared state is exposed through Markdown files instead of direct cross-layer Python calls.
-
-Physical Agent Operating System 采用 Markdown-first 设计：
-
-- Track A（Agent 侧）负责理解、规划、校验。
-- Track B（Runtime / HAL 侧）负责通过 watchdog 监督的 target 与 skill 执行。
-- 跨层共享状态优先通过 Markdown 文件暴露，而不是直接跨层 Python 调用。
-
-## 2. Workspaces / 工作区拓扑
-
-### Single mode
-
-- One workspace, usually `~/.PhyAgentOS/workspace`
-- Agent and watchdog both operate around the same runtime directory
-
-### Fleet mode
-
-- One shared workspace, usually `~/.workspaces/shared`
-- One robot workspace per embodied instance, for example:
-  - `~/.workspaces/go2_edu_001`
-  - `~/.workspaces/desktop_pet_001`
-
-单实例模式：
-
-- 只有一个 workspace，通常是 `~/.PhyAgentOS/workspace`
-- Agent 和 watchdog 围绕同一个运行目录工作
-
-Fleet 模式：
-
-- 一个 shared workspace，通常是 `~/.workspaces/shared`
-- 每个机器人实例一个 robot workspace，例如：
-  - `~/.workspaces/go2_edu_001`
-  - `~/.workspaces/desktop_pet_001`
-
-## 3. File Responsibilities / 文件职责
-
-### Shared workspace files
-
-- `ENVIRONMENT.md`
-  - Global environment truth source
-  - Scene graph, map, TF, and per-robot runtime state
-- `LESSONS.md`
-  - Shared failure memory and action rejection notes
-- `TARGETS.md`, `SKILLRUNTIME.md`, `SESSIONS.md`
-  - Runtime target registry, skill registry, and session queue
-  - Used by the session-centered runtime instead of direct Agent-to-target calls
-- `TASK.md`
-  - Multi-step task decomposition state
-- `ORCHESTRATOR.md`
-  - Global supervision and coordination state
-
-Shared workspace 文件：
-
-- `ENVIRONMENT.md`
-  - 全局环境真相源
-  - 保存 scene graph、map、TF 和各机器人的运行态
-- `LESSONS.md`
-  - 共享失败经验和动作拒绝记录
-- `TARGETS.md`、`SKILLRUNTIME.md`、`SESSIONS.md`
-  - Runtime target registry、skill registry 与 session 队列
-  - 被 session-centered runtime 使用，避免 Agent 直接调用 target
-- `TASK.md`
-  - 多步骤任务拆解状态
-- `ORCHESTRATOR.md`
-  - 全局监督与协调状态
-
-### Agent-facing workspace files
-
-- `SKILLS.md`
-  - Describes how agent skills are discovered and loaded.
-- `EMBODIED.md`
-  - Human-readable target capability descriptions; target sections can be filtered by enabled runtime targets.
-
-Agent-facing workspace 文件：
-
-- `SKILLS.md`
-  - 描述 Agent skills 的发现与加载规则。
-- `EMBODIED.md`
-  - 面向 Agent 的 target 能力描述；可按启用的 runtime target 过滤 target section。
-
-## 4. Template vs Profile / 模板与 Profile 的区别
-
-`PhyAgentOS/templates/EMBODIED.md` is only a structural template.
-It explains:
-
-- what sections `EMBODIED.md` should contain
-- what each section means
-- what belongs in static profile data
-- what belongs in runtime state instead
-
-Concrete robot values must live in `hal/profiles/*.md`.
-
-`PhyAgentOS/templates/EMBODIED.md` 只是结构模板。
-它用于说明：
-
-- `EMBODIED.md` 应包含哪些 section
-- 每个 section 的作用是什么
-- 哪些信息属于静态 profile
-- 哪些信息应该写进运行态文件
-
-具体机器人参数必须写在 `hal/profiles/*.md`。
-
-## 5. Who Reads What / 谁读取什么
-
-### Planner / main Agent
-
-Usually reads the shared workspace:
-
-- `ENVIRONMENT.md`
-- `LESSONS.md`
-- `TASK.md`
-- `ORCHESTRATOR.md`
-
-The main Agent does not automatically ingest every robot profile in fleet mode.
-
-When scheduling runtime execution, it reads:
-
-- `TARGETS.md`
-- `SKILLRUNTIME.md`
-- `ENVIRONMENT.md`
-- `RUNTIME.md`
-
-It writes pending work to `SESSIONS.md`.
-
-### Watchdog
-
-The session-centered `WatchdogSupervisor` reads:
-
-- `TARGETS.md`
-- `SKILLRUNTIME.md`
-- `SESSIONS.md`
-- external runtime YAML under `configs/runtime/`
-
-It writes:
-
-- session status and result back to `SESSIONS.md`
-- perception deltas to `ENVIRONMENT.md`
-- reusable preflight failures to `LESSONS.md`
-- transient runtime history to `LOG.md`
-- episode artifacts under `artifacts/runtime/<session_id>/`
-
-During execution, the watchdog schedules sessions serially and supervises each runner through heartbeat snapshots and `execute_timeout_s`. A timed-out session is written as `timed_out` with an episode artifact and transient history entry; cleanup is best-effort because the first runtime implementation uses thread supervision rather than process termination.
-
-Planner / 主 Agent：
-
-  - 默认主要读取 shared workspace：
-  - `ENVIRONMENT.md`
-  - `LESSONS.md`
-  - `TASK.md`
-  - `ORCHESTRATOR.md`
-- 创建 runtime session 前会读取：
-  - `TARGETS.md`
-  - `SKILLRUNTIME.md`
-  - `ENVIRONMENT.md`
-  - `RUNTIME.md`
-- 然后向 `SESSIONS.md` 写入 pending work
-
-Watchdog：
-
-- session-centered `WatchdogSupervisor` 读取：
-  - `TARGETS.md`
-  - `SKILLRUNTIME.md`
-  - `SESSIONS.md`
-  - `configs/runtime/` 下的外部 runtime YAML
-- 它写入：
-  - `SESSIONS.md` 中的 session 状态与结果
-  - `ENVIRONMENT.md` 中的感知增量
-  - `LESSONS.md` 中可复用的 preflight 失败经验
-  - `LOG.md` 中的临时 runtime history
-  - `artifacts/runtime/<session_id>/` 下的 episode artifacts
-
-执行期间，watchdog 会按串行方式调度 session，并通过 runner heartbeat snapshot 与 `execute_timeout_s` 监督单个 runner。超时 session 会以 `timed_out` 写回，并生成 episode artifact 与临时 history；当前 runtime 使用线程监督，因此超时后的资源清理是 best-effort，而不是强制终止进程。
-
-## 6. Runtime Session Protocol / Runtime Session 协议
-
-The runtime protocol keeps the upper/lower boundary file-based while moving execution to sessions:
-
-- `TARGETS.md` answers which targets exist, whether they are enabled, which skill runtimes they support, and which target class/kind, runtime endpoint, target adapter, sensor config, perception config, and runtime contract they use.
-- `SKILLRUNTIME.md` declares `runtime_kind`, loop mode, agent exposure, supported target kinds, policy requirements, observation contract, required sensors/environment outputs, output action contract, target-tool policy, and allowed deterministic bridges.
-- `SESSIONS.md` declares a task, target, skill runtime, timeout, priority, and routing hints. It does not bind pair adapters.
-- `configs/runtime/contracts/<target_id>.runtime.yaml` declares target action contract and safety limits.
-- Adapter and bridge references use explicit URI namespaces such as `target_adapter://`, `policy_adapter://`, and `bridge://`.
-
-Runtime status flow:
+1. Agent 消息边界：Channel ↔ MessageBus ↔ AgentLoop。
+2. Agent/Runtime 边界：Markdown + YAML 工作区协议。
+3. Runtime/Target/Policy 边界：本地调用或 msgpack-over-WebSocket RPC。
 
 ```text
-pending -> claimed -> preflight_checking -> running -> succeeded / failed / timed_out / cancelled
-preflight_checking -> rejected
+Channel ─ MessageBus ─ AgentLoop
+                         │
+                         │ TARGETS / SKILLRUNTIME / SESSIONS
+                         ▼
+                  WatchdogSupervisor
+                         │
+             ┌───────────┴───────────┐
+             ▼                       ▼
+       targetws:// RPC       policy endpoint RPC
 ```
 
-`RuntimeCompatibilityPreflight` resolves an `AdapterPlan` before execution. It validates protocol files, target/skill compatibility, adapter/bridge availability, sensor config declarations, perception config declarations, and runtime contracts. Actual target observation channels are checked when runtime reads an observation for environment refresh or skill execution. After preflight, `WatchdogSupervisor` creates a `SessionRunner`; the runner owns target lifecycle and exposes the target to policy or builtin skills only through `TargetSessionHandle`. Target runtimes and policy servers do not call each other directly.
+## 2. Agent 消息边界
 
-For remote targets, `targetws://` messages use the runtime envelope and msgpack serialization. RPC responses are correlated with the request by message type, sequence number, session id, target id, and skill runtime id; mismatched responses are treated as target protocol errors.
+Channel 把外部消息转换为 `InboundMessage` 并发布到 MessageBus。AgentLoop 按 session key 处理上下文、模型与 Tool Call，再通过 `OutboundMessage` 返回 Channel。CLI 单轮路径可直接调用 `process_direct`，但 Agent 内部闭环相同。
 
-Runtime 协议继续保持文件边界，但执行单位变成 session：
+消息通道不能直接编辑 Runtime Session 状态，也不能直接调用 Target。
 
-- `TARGETS.md` 描述有哪些 target、是否启用、支持哪些 skill runtime，以及 target class/kind、runtime endpoint、target adapter、sensor config、perception config、runtime contract。
-- `SKILLRUNTIME.md` 声明 `runtime_kind`、loop mode、agent exposure、支持的 target kinds、policy 需求、observation contract、所需 sensors/environment outputs、输出动作契约、target-tool policy 和允许的确定性 bridge。
-- `SESSIONS.md` 声明任务、target、skill runtime、timeout、priority 和 routing hints，不绑定 pair adapter。
-- `configs/runtime/contracts/<target_id>.runtime.yaml` 声明 target action contract 与安全限制。
-- Adapter 与 bridge 引用使用 `target_adapter://`、`policy_adapter://`、`bridge://` 等显式 URI 命名空间。
+## 3. 工作区协议边界
 
-运行状态流：
+| 文件 | 主要作者 | 主要读者 |
+|---|---|---|
+| `RUNTIME.md` | RuntimeWorkspaceManager | Agent |
+| `TARGETS.md` | 用户/集成开发者 | Agent、Scheduler、Preflight |
+| `SKILLRUNTIME.md` | 用户/集成开发者 | Agent、Scheduler、Preflight |
+| `SESSIONS.md` | Agent、Registry、Verifier | Agent、Watchdog、Verifier |
+| `ENVIRONMENT.md` | Runtime/Perception | Agent、Skill |
+| `LOG.md` | ResultWriter | Agent、Benchmarking、运维 |
+| `LESSONS.md` | Runtime/Verifier | Agent、开发者 |
+
+`TARGETS.md` 和 `SKILLRUNTIME.md` 是能力声明，`SESSIONS.md` 是队列与状态，`ENVIRONMENT.md` 是事实快照；三者不能相互代替。
+
+## 4. 原子性与所有权
+
+- `SessionRegistry` 用 `SESSIONS.md.lock` 和原子写保护 claim/状态变更。
+- `EnvironmentWriter` reconcile 后原子写 Environment v2。
+- Agent 追加 pending Session 时保留已有 Session 和 Result。
+- Runtime 不修改 Agent 的任务规划；Agent 不伪造 Runtime 终态。
+- Verification review 只追加审计信息，不改变既有终态。
+
+## 5. Remote Target Envelope
+
+```yaml
+version: phyagentos.runtime_rpc.v2
+type: target.action_chunk
+session_id: sess_001
+target_id: target_001
+skillruntime_id: skill_001
+episode_id: ep_001
+seq: 17
+timestamp_ns: 1779030000000000000
+trace_id: trace_001
+payload: {}
+```
+
+当前 Transport：
+
+- Remote Target：WebSocket + msgpack
+- Local Target：进程内调用，保持相同生命周期语义
+- Policy：按 Endpoint Scheme 构造独立 Client
+
+Response 必须匹配请求的 seq、session、target 与 skillruntime。`target.observe` 的响应类型为 `target.observation`；`agent_tool.call` 的响应类型为 `agent_tool.result`。
+
+## 6. Target 消息集合
+
+当前 Proxy/Server 生命周期使用：
 
 ```text
-pending -> claimed -> preflight_checking -> running -> succeeded / failed / timed_out / cancelled
-preflight_checking -> rejected
+target.describe
+target.configure_session
+target.start_session
+target.reset
+target.observe / target.observation
+target.action_chunk
+target.execution_status
+agent_tool.call / agent_tool.result
+target.cancel
+target.close
+runtime.error
 ```
 
-`RuntimeCompatibilityPreflight` 会在执行前解析 `AdapterPlan`，并校验协议文件、target/skill 兼容性、adapter/bridge 可用性、sensor config 声明、perception config 声明和 runtime contract。真实 target observation 的 channel 会在 runtime 为环境刷新或技能执行读取 observation 时校验。Preflight 通过后，`WatchdogSupervisor` 创建 `SessionRunner`；runner 负责 target lifecycle，并且只通过 `TargetSessionHandle` 把 target 暴露给 policy 或 builtin skill。Target runtime 与 policy server 不直接互相调用。
+`SessionRunner` 在 Preflight accepted 后才能进入 Target lifecycle。Skill Runtime 后续调用必须经过 `TargetSessionHandle`。
 
-对于 remote target，`targetws://` 消息使用 runtime envelope 与 msgpack 序列化。RPC response 会通过 message type、sequence number、session id、target id 和 skill runtime id 与 request 严格关联；关联不匹配会被视为 target protocol error。
+## 7. Policy Endpoint
 
-## 7. Typical Runtime Pipeline / 典型运行流程
+| Scheme | 语义 |
+|---|---|
+| `dummy://local` | 本地确定性 Dummy Policy |
+| `openpi://host:port` | OpenPI WebSocket Client |
+| `policyws://host:port` | OpenPI-compatible Client |
+| `b1k-ws://host:port` | BEHAVIOR-1K Policy Client |
 
-1. `paos onboard` prepares workspaces.
-2. Runtime protocol files define targets, skill runtimes, sessions, and external configs.
-3. User starts `paos agent` or `paos gateway`; when runtime is enabled in config, the runtime workspace is provisioned and the session watchdog starts automatically.
-4. Agent plans from shared state and writes or updates a session.
-5. Watchdog claims a pending session and runs compatibility preflight.
-7. If accepted, watchdog creates a `SessionRunner`; the runner enters `running`, configures and starts the target session, then runs the selected skill runtime through `TargetSessionHandle` under heartbeat and execution-timeout supervision.
-8. Runtime writes session results, environment deltas, lessons, and artifacts.
+Policy Payload 由 PolicyAdapter 生成，Target 原始 Observation 不应绕过 Adapter 直接发送。
 
-1. `paos onboard` 准备工作区。
-2. Runtime 协议文件定义 targets、skill runtimes、sessions 与外部配置。
-3. 用户启动 `paos agent` 或 `paos gateway`；当 config 启用 runtime 时，系统自动创建 runtime workspace 并启动 session watchdog。
-4. Agent 基于 shared state 规划并写入或更新 session。
-5. Watchdog claim pending session 并执行 compatibility preflight。
-7. 如通过，watchdog 创建 `SessionRunner`；runner 进入 `running`，配置并启动 target session，然后在 heartbeat 与执行超时监督下通过 `TargetSessionHandle` 运行选定的 skill runtime。
-8. Runtime 写回 session result、environment delta、lessons 与 artifacts。
+## 8. 数据放置规则
 
-## 8. Design Intent / 设计意图
+- 小型结构化控制数据放 RPC Payload。
+- 大型图像/Mask/Depth/Point Cloud/Trace 写 Artifact，并用 Path/URI 引用。
+- ENVIRONMENT 只保存 compact state 与 Artifact 引用。
+- `episode.json` 保存单次执行事实；`LOG.md` 保存历史索引。
+- Verification Bundle 保存任务、环境、历史和 RGB 路径。
 
-- Keep shared context concise enough for planning
-- Keep robot-specific validation precise
-- Keep runtime state visible and inspectable
-- Avoid hiding hardware facts inside opaque code paths
+## 9. 错误边界
 
-- 让 shared 上下文足够简洁，便于规划
-- 让机器人级校验保持精确
-- 让运行态保持可见、可检查
-- 避免把硬件事实藏在不可见的黑盒代码路径里
+`runtime.error` 应包含稳定 `error_code` 和可操作 `message`。连接错误、协议不匹配、Preflight rejection、Policy failure、Target failure、timeout 与 semantic failure 是不同错误层，不应折叠为同一 task failure。
+
+## 10. 当前限制与演进
+
+v0.1.6 尚未完整实现远端在线 Healthcheck、Runner heartbeat RPC、Session 依赖调度和真机 Operator Override 协议。HAL v3 将继续收敛统一 Envelope、严格 Contract 与 Target-side safety，但不会让 Runtime RPC 绕过工作区 Session 状态机。
+
+## 相关文档
+
+- [集成开发指南](README.md)
+- [开发者手册](../zh/03-developer-manual.md)
+- [Runtime 感知说明](../../PhyAgentOS/runtime/perception/README.md)

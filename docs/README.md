@@ -1,61 +1,38 @@
-# PhyAgentOS 文档 / Documentation
+# PhyAgentOS Documentation
 
-[English](#documentation-index) | [中文](#文档索引)
+版本 / Version: **v0.1.6**
+实现基线 / Implementation baseline: repository source at 2026-07-02
 
----
+本目录由 PhyAgentOS 开发团队面向用户与生态开发者维护。
 
-## 文档索引
+The PhyAgentOS development team maintains this directory as the public documentation for users and ecosystem developers. 
 
-PhyAgentOS 文档体系由四部分组成，分别面向不同读者群：
+## 中文
 
-| Part | 文档 | 面向 | 内容 |
-|:-----|:-----|:-----|:-----|
-| 1 | [框架介绍](zh/01-framework-introduction.md) | 所有人 | 设计理念、技术架构、当前进展、路线图、TODO、Demo |
-| 2 | [用户手册](zh/02-user-manual.md) | 使用者 | 快速开始、场景配置、运行时操作、排障指南 |
-| 3 | [API 开发者手册](zh/03-developer-manual.md) | 开发者 | 接口文档、二次开发、代码风格、实现边界、贡献规则 |
-| 4 | [场景文档](scenarios/) | 使用者+开发者 | 特定场景的完整部署指南、使用手册、踩坑记录 |
+1. [框架介绍](zh/01-framework-introduction.md)：架构、已实现能力、实现边界与后续设计
+2. [用户手册](zh/02-user-manual.md)：安装、配置、Runtime 工作区、场景启动与排障
+3. [开发者手册](zh/03-developer-manual.md)：核心接口、Schema、扩展流程、通信协议与测试
 
-### 阅读路径
+补充手册：
 
-| 你的目标 | 建议先读 |
-|---------|---------|
-| 了解项目是什么、能做什么 | [Part 1: 框架介绍](zh/01-framework-introduction.md) |
-| 快速跑通系统 | [Part 2: 用户手册 §2.4](zh/02-user-manual.md#24-5-分钟快速开始) |
-| 接入新硬件/写驱动 | [Part 3: API 开发者手册 §3.4](zh/03-developer-manual.md#34-二次开发指南) |
-| 开发外部插件 | [Part 3: API 开发者手册 §3.4.3](zh/03-developer-manual.md#343-开发外部插件) |
-| 理解架构全貌 | [Part 1 §1.3](zh/01-framework-introduction.md#13-技术架构) → [Part 3 §3.2](zh/03-developer-manual.md#32-架构深度解析) |
+- [运行手册](user_manual/README.md)：部署检查、Session 运维与故障分层
+- [集成开发指南](user_development_guide/README.md)：Target/Skill/Policy/Perception 接入闭环
+- [通信架构](user_development_guide/COMMUNICATION.md)：消息、文件协议与 Runtime RPC 边界
 
-### 版本信息
+## English
 
-- 框架版本：v0.2.1
-- 文档版本：v1.2
-- 最后更新：2026-06-05
+1. [Framework Introduction](en/01-framework-introduction.md): architecture, implemented capabilities, boundaries, and future design
+2. [User Manual](en/02-user-manual.md): installation, configuration, runtime workspaces, scenario startup, and troubleshooting
+3. [Developer Manual](en/03-developer-manual.md): core interfaces, schemas, extension workflows, protocols, and tests
 
----
+Supplementary manuals:
 
-## Documentation Index
+- [Operations Manual](user_manual/README_en.md): deployment checks, Session operations, and failure layers
+- [Integration Development Guide](user_development_guide/README_en.md): Target/Skill/Policy/Perception integration loop
+- [Communication Architecture](user_development_guide/COMMUNICATION_en.md): messaging, file protocols, and Runtime RPC boundaries
 
-The PhyAgentOS documentation consists of four parts targeting different audiences:
+## Architecture Diagrams / 架构图
 
-| Part | Document | Audience | Content |
-|:-----|:---------|:---------|:--------|
-| 1 | [Framework Introduction](en/01-framework-introduction.md) | Everyone | Design philosophy, architecture, progress, roadmap, TODO, demos |
-| 2 | [User Manual](en/02-user-manual.md) | Users | Quick start, scenario configuration, runtime operations, troubleshooting |
-| 3 | [API Developer Manual](en/03-developer-manual.md) | Developers | API reference, secondary development, coding style, boundaries, contribution |
-| 4 | [Scenario Docs](scenarios/) | Users + Devs | Complete deployment guide, usage manual, troubleshooting per scenario |
-
-### Reading Path
-
-| Your Goal | Start With |
-|-----------|-----------|
-| Understand what the project is | [Part 1: Framework Introduction](en/01-framework-introduction.md) |
-| Get the system running | [Part 2: User Manual §2.4](en/02-user-manual.md#24-5-minute-quick-start) |
-| Add new hardware / write a driver | [Part 3: API Developer Manual §3.4](en/03-developer-manual.md#34-secondary-development-guide) |
-| Develop an external plugin | [Part 3: API Developer Manual §3.4.3](en/03-developer-manual.md#343-developing-external-plugins) |
-| Understand the full architecture | [Part 1 §1.3](en/01-framework-introduction.md#13-technical-architecture) → [Part 3 §3.2](en/03-developer-manual.md#32-architecture-deep-dive) |
-
-### Version Info
-
-- Framework Version: v0.2.1
-- Document Version: v1.2
-- Last Updated: 2026-06-05
+- Agent Architecture: [中文](agent-architecture.html) · [English](agent-architecture.en.html)
+- Benchmarking Architecture: [中文](benchmarking-architecture.html) · [English](benchmarking-architecture.en.html)
+- SessionVerifier Architecture: [中文](session-verifier-architecture.html) · [English](session-verifier-architecture.en.html)
