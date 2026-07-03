@@ -21,6 +21,7 @@ RUNTIME_CONFIG_TEMPLATE_NAMES = (
     "configs/runtime/contracts/dummy_sim.runtime.yaml",
     "configs/runtime/contracts/libero_real.runtime.yaml",
     "configs/runtime/contracts/isaacsim_pipergo2.runtime.yaml",
+    "configs/runtime/contracts/go2_builtin.runtime.yaml",
     "configs/runtime/sensors/dummy_sim.sensors.yaml",
 )
 _RUNTIME_INSTRUCTIONS = """# Runtime Protocol
@@ -72,6 +73,7 @@ sessions:
       replan_every_steps: 5
       action_chunk_mode: chunk_buffer
       chunk_switch_mode: hard_switch
+      steps: null
     runtime_hints:
       perception_queries: []
       force_environment_refresh: false
@@ -92,6 +94,40 @@ Rules:
   that target's `supported_skillruntimes`.
 - Use endpoint values declared in `TARGETS.md` unless the user explicitly
   provides a different endpoint.
+- Builtin command runtimes such as `go2_builtin_command` must include
+  structured `execution.steps`; do not rely on `task_description` for the
+  executable command. For Go2, use commands exposed by the target, for example:
+
+```yaml
+execution:
+  max_steps: 1
+  replan_every_steps: 1
+  action_chunk_mode: chunk_buffer
+  chunk_switch_mode: hard_switch
+  steps:
+    - command: stand_up
+```
+
+For Go2 movement, prefer an explicit posture sequence and put velocity fields
+under `params`:
+
+```yaml
+execution:
+  max_steps: 3
+  replan_every_steps: 1
+  action_chunk_mode: chunk_buffer
+  chunk_switch_mode: hard_switch
+  steps:
+    - command: stand_up
+    - command: balance_stand
+    - command: move
+      params:
+        vx: 0.5
+        vy: 0.0
+        vyaw: 0.0
+        duration_s: 1.0
+```
+
 - Do not manually edit `ENVIRONMENT.md`; it is runtime state managed by
   PhyAgentOS.
 """

@@ -70,6 +70,10 @@ def build_remote_target_proxy(target: TargetSpec, client: TargetWSClient) -> Rem
     return RemoteTargetProxy(client, config=target.config)
 
 
+def build_go2_remote_target_proxy(target: TargetSpec, client: TargetWSClient) -> RemoteTargetProxy:
+    return RemoteTargetProxy(client, config=target.config)
+
+
 def build_libero_remote_target_proxy(target: TargetSpec, client: TargetWSClient) -> LiberoRemoteTargetProxy:
     return LiberoRemoteTargetProxy(client, config=target.config)
 
@@ -89,6 +93,7 @@ def build_behavior1k_remote_target_proxy(target: TargetSpec, client: TargetWSCli
 
 register_local_target_runtime("DummySimTargetRuntime", build_dummy_sim_target)
 register_remote_target_runtime("RemoteTargetProxy", build_remote_target_proxy)
+register_remote_target_runtime("Go2RemoteTargetProxy", build_go2_remote_target_proxy)
 register_remote_target_runtime("LiberoRemoteTargetProxy", build_libero_remote_target_proxy)
 register_remote_target_runtime("IsaacSimRemoteTargetProxy", build_isaacsim_remote_target_proxy)
 register_remote_target_runtime("Behavior1KRemoteTargetProxy", build_behavior1k_remote_target_proxy)

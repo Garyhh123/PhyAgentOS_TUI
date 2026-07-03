@@ -203,6 +203,7 @@ class WatchdogSupervisor:
                 self.registry.mark_finished(session_id, result)
             return True
         except Exception as exc:
+            self._write_execution_failure_lesson(session_id, exc)
             self.failure_escalator.handle(session_id, exc, self.registry)
             return True
 
@@ -266,4 +267,29 @@ class WatchdogSupervisor:
             metadata["preflight"] = preflight_result.model_dump(mode="json", exclude_none=True)
             session.result.metadata = metadata
             self.registry.save(document)
+            return
+
+    def _write_execution_failure_lesson(self, session_id: str, exc: Exception) -> None:
+        try:
+            session = self.registry.get_session(session_id)
+            targets_doc, skillruntimes_doc = self._load_registries()
+            scheduled = self.scheduler.resolve_session(session, targets_doc, skillruntimes_doc)
+            from PhyAgentOS.runtime.watchdog.errors import error_code_for
+
+            error_code = error_code_for(exc)
+            summary = f"{type(exc).__name__}: {exc}"
+            self.result_writer.write_lesson(
+                session,
+                scheduled.target_spec.id,
+                scheduled.skillruntime_id,
+                str(session.status),
+                error_code,
+                summary,
+                {
+                    "exception_type": type(exc).__name__,
+                    "message": str(exc),
+                    "session_status": str(session.status),
+                },
+            )
+        except Exception:
             return

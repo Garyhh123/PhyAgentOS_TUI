@@ -206,4 +206,54 @@ skillruntimes:
       allowed_bridges:
         - bridge://safety_clamp
       forbidden: []
+  - id: go2_builtin_command
+    runtime: CommandSimSkillRuntime
+    runtime_kind: builtin
+    loop_mode: builtin_command_loop
+    agent_exposure: constrained_target_tools
+    supported_target_kinds:
+      - real_robot
+    observation_contract:
+      observation_type: empty
+      empty_observation_allowed: true
+      empty_observation_semantics: Go2 builtin command sessions do not require observation data.
+    target_tool_policy:
+      expose:
+        - execute_step
+      forbidden:
+        - raw_sdk_command
+        - reset
+        - close
+        - disable_safety
+      require_tool_schema_validation: true
+      require_action_validation: true
+      require_target_side_validation: true
+      require_operator_override_for_real_robot: false
+      allow_reset_by_agent: false
+      allow_close_by_agent: false
+    supports_chunk: false
+    default_replan_every: 1
+    requires:
+      sensors: []
+      environment_outputs: []
+      strict_environment_contract: false
+    output_contract:
+      action:
+        action_space_id: go2_builtin_command_v1
+        shape:
+          - 1
+          - 1
+        dtype: object
+        normalized: false
+        representation: builtin_command
+        frame: robot_base
+        chunk:
+          variable_T: false
+          default_T: 1
+          policy_hz: 10
+    adapter_requirements:
+      allowed_bridges: []
+      forbidden:
+        - raw_sdk_command
+        - action_chunk_control
 ```
