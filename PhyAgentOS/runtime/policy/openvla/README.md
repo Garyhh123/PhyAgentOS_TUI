@@ -167,6 +167,70 @@ conda run --no-capture-output -n paos python \
   --run-root "$RUN_ROOT"
 ```
 
+### Optional Agent-assisted Target-native Evaluation
+
+Agent-assisted target-native evaluation still creates one PAOS session per
+suite. The first attempt is preserved as the official score. When an episode
+fails, the LIBERO target immediately sends that episode's initial/final RGB
+evidence to the verifier and retries the same task/init-state inside the same
+suite session when the verifier returns `replan`. The summary reports both
+first-attempt and final-outcome rates.
+
+Start the verifier service in the `paos` environment:
+
+```bash
+export DMXAPI_API_KEY="..."
+PYTHONPATH=$(pwd) conda run --no-capture-output -n paos python \
+  scripts/run_benchmark_episode_verifier.py \
+  --host 127.0.0.1 --port 8100 \
+  --base-url https://www.dmxapi.cn/v1 \
+  --model qwen3.5-flash
+```
+
+Use the same LIBERO TargetWS server and suite-specific OpenVLA policy servers
+from the official flow above, then generate agent-assisted workspaces:
+
+```bash
+RUN_ROOT=tests/openvla/libero_target_agent_assisted_$(date -u +%Y%m%dT%H%M%SZ)
+export RUN_ROOT
+mkdir -p "$RUN_ROOT"
+
+declare -A POLICY_PORT=(
+  [libero_spatial]=8030
+  [libero_object]=8031
+  [libero_goal]=8032
+  [libero_10]=8033
+)
+
+for SUITE in libero_spatial libero_object libero_goal libero_10; do
+  PYTHONPATH=$(pwd) conda run -n paos python scripts/prepare_libero_target_benchmark.py \
+    --workspace "$RUN_ROOT/$SUITE" \
+    --suite "$SUITE" \
+    --policy-id openvla \
+    --target-endpoint targetws://127.0.0.1:9032 \
+    --policy-endpoint "openpi://127.0.0.1:${POLICY_PORT[$SUITE]}" \
+    --task-ids 0-9 \
+    --init-state-ids 0-49 \
+    --control-mode relative \
+    --agent-assist-mode retry \
+    --agent-assist-trigger failed_only \
+    --agent-assist-inline \
+    --verifier-endpoint http://127.0.0.1:8100/verify_benchmark_episode \
+    --verifier-failure-policy skip \
+    --max-replans-per-episode 1 \
+    --max-verifier-calls-per-suite 50 \
+    --force-init
+done
+
+PYTHONPATH=$(pwd) conda run --no-capture-output -n paos python \
+  scripts/run_eval_watchdog.py \
+  --run-root "$RUN_ROOT"
+
+conda run --no-capture-output -n paos python \
+  scripts/summarize_eval_results.py \
+  --run-root "$RUN_ROOT"
+```
+
 ## Official OpenVLA LIBERO Reference
 
 The official OpenVLA README reports finetuned OpenVLA results over 3 random

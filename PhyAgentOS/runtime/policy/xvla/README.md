@@ -102,6 +102,63 @@ conda run --no-capture-output -n paos python \
   --run-root "$RUN_ROOT"
 ```
 
+### Optional Agent-assisted Target-native Evaluation
+
+Agent-assisted target-native evaluation still creates one PAOS session per
+suite. The first attempt is preserved as the official score. When an episode
+fails, the LIBERO target immediately sends that episode's initial/final RGB
+evidence to the verifier and retries the same task/init-state inside the same
+suite session when the verifier returns `replan`. The summary reports both
+first-attempt and final-outcome rates.
+
+Start the verifier service in the `paos` environment:
+
+```bash
+export DMXAPI_API_KEY="..."
+PYTHONPATH=$(pwd) conda run --no-capture-output -n paos python \
+  scripts/run_benchmark_episode_verifier.py \
+  --host 127.0.0.1 --port 8100 \
+  --base-url https://www.dmxapi.cn/v1 \
+  --model qwen3.5-flash
+```
+
+The verifier sends the failed episode's initial and final RGB observations to
+the multimodal model, together with the task text and runtime result.
+
+```bash
+RUN_ROOT=tests/xvla/libero_target_agent_assisted_$(date -u +%Y%m%dT%H%M%SZ)
+export RUN_ROOT
+mkdir -p "$RUN_ROOT"
+
+for SUITE in libero_spatial libero_object libero_goal libero_10; do
+  PYTHONPATH=$(pwd) conda run -n paos python scripts/prepare_libero_target_benchmark.py \
+    --workspace "$RUN_ROOT/$SUITE" \
+    --suite "$SUITE" \
+    --policy-id xvla \
+    --target-endpoint targetws://127.0.0.1:9042 \
+    --policy-endpoint openpi://127.0.0.1:8040 \
+    --task-ids 0-9 \
+    --init-state-ids 0-49 \
+    --control-mode absolute \
+    --agent-assist-mode retry \
+    --agent-assist-trigger failed_only \
+    --agent-assist-inline \
+    --verifier-endpoint http://127.0.0.1:8100/verify_benchmark_episode \
+    --verifier-failure-policy skip \
+    --max-replans-per-episode 1 \
+    --max-verifier-calls-per-suite 50 \
+    --force-init
+done
+
+PYTHONPATH=$(pwd) conda run --no-capture-output -n paos python \
+  scripts/run_eval_watchdog.py \
+  --run-root "$RUN_ROOT"
+
+conda run --no-capture-output -n paos python \
+  scripts/summarize_eval_results.py \
+  --run-root "$RUN_ROOT"
+```
+
 ## 4-Suite LIBERO Result
 
 | Suite | Success | Success rate |

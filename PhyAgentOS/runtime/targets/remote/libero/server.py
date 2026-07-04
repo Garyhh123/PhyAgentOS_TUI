@@ -21,11 +21,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import functools
+import json
 import os
 import time
 import traceback
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import urlparse, urlunparse
+from urllib import error as url_error, request as url_request
 
 import numpy as np
 
@@ -145,6 +148,11 @@ def status(message: str) -> None:
     print("[libero-target] %s" % message, flush=True)
 
 
+async def _run_blocking(func: Any, *args: Any, **kwargs: Any) -> Any:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, functools.partial(func, *args, **kwargs))
+
+
 # --- real LIBERO runtime ------------------------------------------------------
 
 LIBERO_DEFAULT_CONFIG = {
@@ -181,6 +189,7 @@ class LiberoRealRuntime:
         self._total_reward = 0.0
         self._episode_chunks = []
         self._last_obs = None
+        self._initial_obs = None
         self._frames = []
         self._episode_idx = 0
         self._last_video_path = None
@@ -290,6 +299,7 @@ class LiberoRealRuntime:
         self._last_video_path = None
         self._record_frame(obs)
         self._last_obs = self._format_obs(obs)
+        self._initial_obs = self._last_obs
         self._last_status = {
             "accepted": True,
             "safety_status": "ok",
@@ -389,66 +399,251 @@ class LiberoRealRuntime:
         policy_endpoint = str(config.get("policy_endpoint") or "")
         if not policy_endpoint:
             raise TargetProtocolError("benchmark requires policy_endpoint")
-        task_ids = _parse_id_list(config.get("task_ids"), default=list(range(10)))
-        init_state_ids = _parse_id_list(config.get("init_state_ids"), default=list(range(50)))
+        episode_specs = _parse_episode_specs(config)
         max_steps = int(config.get("max_steps", self.config.get("max_steps", 300)))
         policy_timeout_s = float(config.get("policy_timeout_s", 180.0))
         control_mode = str(config.get("control_mode", self.config.get("control_mode", "relative")))
+        evidence_mode = str(config.get("evidence_mode") or ("all" if config.get("include_evidence") else "none"))
+        attempt_index = int(config.get("attempt_index", 0))
+        agent_assist = _agent_assist_config(config)
+        inline_assist = bool(agent_assist.get("enabled")) and str(agent_assist.get("mode")) == "retry" and bool(agent_assist.get("inline"))
+        if inline_assist:
+            evidence_mode = "failed"
         status(
             "benchmark start session=%s suite=%s episodes=%d policy=%s"
-            % (self.session_id or config.get("session_id") or "<none>", suite, len(task_ids) * len(init_state_ids), policy_endpoint)
+            % (self.session_id or config.get("session_id") or "<none>", suite, len(episode_specs), policy_endpoint)
         )
         episodes = []
         total_steps = 0
         latencies = []
-        successes = 0
+        first_successes = 0
+        final_successes = 0
+        verifier_attempts = []
+        attempts = []
+        episodes_replanned = 0
+        recovered_after_replan = 0
         started = time.time()
         async with _PolicyWsClient(policy_endpoint, timeout_s=policy_timeout_s) as policy:
-            for task_id in task_ids:
-                for init_state_id in init_state_ids:
+            for episode_spec in episode_specs:
+                task_id = int(episode_spec["task_id"])
+                init_state_id = int(episode_spec["init_state_id"])
+                if inline_assist:
+                    episode, episode_attempts, episode_verifier_attempts = await self._run_assisted_benchmark_episode(
+                        policy,
+                        suite=suite,
+                        task_id=task_id,
+                        init_state_id=init_state_id,
+                        max_steps=max_steps,
+                        control_mode=control_mode,
+                        evidence_mode=evidence_mode,
+                        config=config,
+                        agent_assist=agent_assist,
+                    )
+                else:
                     episode = await self._run_benchmark_episode(
                         policy,
                         suite=suite,
-                        task_id=int(task_id),
-                        init_state_id=int(init_state_id),
+                        task_id=task_id,
+                        init_state_id=init_state_id,
                         max_steps=max_steps,
                         control_mode=control_mode,
+                        attempt_index=attempt_index,
+                        evidence_mode=evidence_mode,
                         config=config,
                     )
-                    episodes.append(episode)
-                    total_steps += int(episode.get("num_steps") or 0)
-                    successes += 1 if episode.get("success") else 0
-                    if episode.get("mean_policy_latency_ms") is not None:
-                        latencies.append(float(episode["mean_policy_latency_ms"]))
-                    status(
-                        "benchmark episode suite=%s t%d_i%d success=%s steps=%d rate=%d/%d"
-                        % (
-                            suite,
-                            int(task_id),
-                            int(init_state_id),
-                            bool(episode.get("success")),
-                            int(episode.get("num_steps") or 0),
-                            successes,
-                            len(episodes),
-                        )
+                    episode_attempts = [_attempt_record(episode)]
+                    episode_verifier_attempts = []
+                episodes.append(episode)
+                attempts.extend(episode_attempts)
+                verifier_attempts.extend(episode_verifier_attempts)
+                total_steps += sum(int(item.get("num_steps") or 0) for item in episode_attempts)
+                first_successes += 1 if episode.get("first_attempt_success", episode.get("success")) else 0
+                final_successes += 1 if episode.get("final_success", episode.get("success")) else 0
+                if len(episode_attempts) > 1:
+                    episodes_replanned += 1
+                    if episode.get("final_success") and not episode.get("first_attempt_success"):
+                        recovered_after_replan += 1
+                if episode.get("mean_policy_latency_ms") is not None:
+                    latencies.append(float(episode["mean_policy_latency_ms"]))
+                status(
+                    "benchmark episode suite=%s t%d_i%d first=%s final=%s steps=%d rate=%d/%d"
+                    % (
+                        suite,
+                        task_id,
+                        init_state_id,
+                        bool(episode.get("first_attempt_success", episode.get("success"))),
+                        bool(episode.get("final_success", episode.get("success"))),
+                        int(episode.get("num_steps") or 0),
+                        final_successes,
+                        len(episodes),
                     )
+                )
         total = len(episodes)
         result = {
             "status": "succeeded" if total else "failed",
+            "run_id": str(config.get("run_id") or config.get("session_id") or self.session_id or ""),
             "suite": suite,
-            "successes": successes,
+            "execution_mode": "target_native",
+            "assist_mode": str(config.get("assist_mode") or "disabled"),
+            "control_mode": control_mode,
+            "max_steps": max_steps,
+            "successes": first_successes,
+            "first_attempt_successes": first_successes if attempt_index == 0 else 0,
+            "final_successes": final_successes,
             "total_episodes": total,
-            "success_rate": float(successes / total) if total else 0.0,
+            "completed_episodes": total,
+            "valid_episodes": total,
+            "total_attempts": len(attempts) if attempts else total,
+            "success_rate": float(first_successes / total) if total else 0.0,
+            "final_success_rate": float(final_successes / total) if total else 0.0,
+            "episodes_replanned": episodes_replanned,
+            "recovered_after_replan": recovered_after_replan,
+            "verifier_calls": len(verifier_attempts),
+            "verifier_skipped": sum(1 for item in verifier_attempts if item.get("verdict") == "skipped"),
             "num_steps": total_steps,
             "mean_policy_latency_ms": float(np.mean(latencies)) if latencies else None,
             "elapsed_s": float(time.time() - started),
             "episodes": episodes,
+            "attempts": attempts,
+            "verifier_attempts": verifier_attempts,
         }
         status(
-            "benchmark finished suite=%s success=%d/%d elapsed_s=%.1f"
-            % (suite, successes, total, float(result["elapsed_s"]))
+            "benchmark finished suite=%s first=%d/%d final=%d/%d elapsed_s=%.1f"
+            % (suite, first_successes, total, final_successes, total, float(result["elapsed_s"]))
         )
         return result
+
+    async def _run_assisted_benchmark_episode(
+        self,
+        policy,
+        *,
+        suite: str,
+        task_id: int,
+        init_state_id: int,
+        max_steps: int,
+        control_mode: str,
+        evidence_mode: str,
+        config: Dict[str, Any],
+        agent_assist: Dict[str, Any],
+    ) -> tuple[Dict[str, Any], list[Dict[str, Any]], list[Dict[str, Any]]]:
+        max_replans = max(0, int(agent_assist.get("max_replans_per_episode", 1)))
+        attempts = []
+        verifier_attempts = []
+        first_episode = None
+        final_episode = None
+        for attempt_index in range(max_replans + 1):
+            episode = await self._run_benchmark_episode(
+                policy,
+                suite=suite,
+                task_id=task_id,
+                init_state_id=init_state_id,
+                max_steps=max_steps,
+                control_mode=control_mode,
+                attempt_index=attempt_index,
+                evidence_mode=evidence_mode,
+                config=config,
+            )
+            if first_episode is None:
+                first_episode = episode
+            attempts.append(_attempt_record(episode))
+            final_episode = episode
+            if episode.get("success"):
+                if attempt_index > 0:
+                    status(
+                        "agent assist retry result suite=%s t%d_i%d attempt=%d success=True steps=%d error_code=%s error_message=%s"
+                        % (
+                            suite,
+                            task_id,
+                            init_state_id,
+                            attempt_index,
+                            int(episode.get("num_steps") or 0),
+                            str(episode.get("error_code")),
+                            str(episode.get("error_message")),
+                        )
+                    )
+                break
+            status(
+                "benchmark attempt failed suite=%s t%d_i%d attempt=%d steps=%d max_steps=%d error_code=%s error_message=%s"
+                % (
+                    suite,
+                    task_id,
+                    init_state_id,
+                    attempt_index,
+                    int(episode.get("num_steps") or 0),
+                    max_steps,
+                    str(episode.get("error_code")),
+                    str(episode.get("error_message")),
+                )
+            )
+            if attempt_index >= max_replans:
+                if attempt_index > 0:
+                    status(
+                        "agent assist retry result suite=%s t%d_i%d attempt=%d success=False steps=%d error_code=%s error_message=%s"
+                        % (
+                            suite,
+                            task_id,
+                            init_state_id,
+                            attempt_index,
+                            int(episode.get("num_steps") or 0),
+                            str(episode.get("error_code")),
+                            str(episode.get("error_message")),
+                        )
+                    )
+                break
+            if len(verifier_attempts) >= int(agent_assist.get("max_verifier_calls_per_suite", 50)):
+                status(
+                    "agent assist verifier skipped suite=%s t%d_i%d attempt=%d reason=verifier_budget_exhausted"
+                    % (suite, task_id, init_state_id, attempt_index)
+                )
+                break
+            status(
+                "agent assist verifier start suite=%s t%d_i%d attempt=%d endpoint=%s"
+                % (
+                    suite,
+                    task_id,
+                    init_state_id,
+                    attempt_index,
+                    str(agent_assist.get("verifier_endpoint") or "<none>"),
+                )
+            )
+            verdict = await _verify_episode_attempt(config, episode, agent_assist)
+            verifier_attempts.append(verdict)
+            status(
+                "agent assist verifier verdict suite=%s t%d_i%d attempt=%d verdict=%s verifier_status=%s failure_reason=%s"
+                % (
+                    suite,
+                    task_id,
+                    init_state_id,
+                    attempt_index,
+                    str(verdict.get("verdict")),
+                    str(verdict.get("verifier_status")),
+                    str(verdict.get("failure_reason")),
+                )
+            )
+            if verdict.get("verdict") != "replan":
+                status(
+                    "agent assist retry skipped suite=%s t%d_i%d attempt=%d verdict=%s"
+                    % (suite, task_id, init_state_id, attempt_index, str(verdict.get("verdict")))
+                )
+                break
+            status(
+                "agent assist retry start suite=%s t%d_i%d next_attempt=%d"
+                % (suite, task_id, init_state_id, attempt_index + 1)
+            )
+        first_success = bool(first_episode and first_episode.get("success"))
+        final_success = bool(final_episode and final_episode.get("success"))
+        merged = dict(first_episode or final_episode or {})
+        merged.pop("evidence", None)
+        merged["first_attempt_success"] = first_success
+        merged["final_success"] = final_success
+        merged["final_status"] = "succeeded" if final_success else "failed"
+        merged["attempts"] = attempts
+        if final_episode is not None:
+            merged["num_steps"] = int(final_episode.get("num_steps") or 0)
+            merged["return_value"] = float(final_episode.get("return_value") or 0.0)
+            merged["mean_policy_latency_ms"] = final_episode.get("mean_policy_latency_ms")
+            merged["status"] = str(final_episode.get("status") or merged.get("status") or "failed")
+        return merged, attempts, verifier_attempts
 
     async def _run_benchmark_episode(
         self,
@@ -459,6 +654,8 @@ class LiberoRealRuntime:
         init_state_id: int,
         max_steps: int,
         control_mode: str,
+        attempt_index: int,
+        evidence_mode: str,
         config: Dict[str, Any],
     ) -> Dict[str, Any]:
         self.config.update(
@@ -475,6 +672,9 @@ class LiberoRealRuntime:
             }
         )
         episode_session_id = "%s_t%d_i%d" % (str(config.get("session_id") or self.session_id or "benchmark"), task_id, init_state_id)
+        if attempt_index:
+            episode_session_id = "%s_a%d" % (episode_session_id, attempt_index)
+        episode_id = "%s_t%d_i%d" % (suite, task_id, init_state_id)
         self.reset({"session_id": episode_session_id, "libero": dict(self.config)})
         policy.reset_session(episode_session_id)
         episode_latencies = []
@@ -499,12 +699,17 @@ class LiberoRealRuntime:
             error_message = str(exc)
             self.done = True
         summary = self._episode_summary()
-        return {
+        episode = {
+            "episode_id": episode_id,
             "suite": suite,
             "task_id": int(task_id),
             "init_state_id": int(init_state_id),
+            "attempt_index": int(attempt_index),
+            "policy_session_id": episode_session_id,
             "task_description": self.language,
             "success": bool(self.success),
+            "first_attempt_success": bool(self.success) if int(attempt_index) == 0 else None,
+            "final_success": bool(self.success),
             "status": "succeeded" if bool(self.success) else "failed",
             "num_steps": int(self.step_idx),
             "return_value": float(self._total_reward),
@@ -517,6 +722,14 @@ class LiberoRealRuntime:
                 if key not in {"chunks"}
             },
         }
+        include_evidence = evidence_mode == "all" or (evidence_mode == "failed" and not bool(self.success))
+        if include_evidence:
+            episode["evidence"] = {
+                "version": "benchmark_episode_evidence_v1",
+                "initial_observation": self._initial_obs,
+                "final_observation": self._last_obs,
+            }
+        return episode
 
     # -- helpers --
     def _format_obs(self, obs: Dict[str, Any]) -> Dict[str, Any]:
@@ -805,6 +1018,211 @@ def _parse_id_list(value: Any, *, default: list[int]) -> list[int]:
         else:
             ids.append(int(part))
     return sorted(dict.fromkeys(ids))
+
+
+def _parse_episode_specs(config: Dict[str, Any]) -> list[dict[str, int]]:
+    explicit = config.get("episodes")
+    if isinstance(explicit, list):
+        episodes = []
+        for item in explicit:
+            if not isinstance(item, dict):
+                continue
+            episodes.append(
+                {
+                    "task_id": int(item["task_id"]),
+                    "init_state_id": int(item["init_state_id"]),
+                }
+            )
+        return episodes
+    task_ids = _parse_id_list(config.get("task_ids"), default=list(range(10)))
+    init_state_ids = _parse_id_list(config.get("init_state_ids"), default=list(range(50)))
+    return [
+        {"task_id": int(task_id), "init_state_id": int(init_state_id)}
+        for task_id in task_ids
+        for init_state_id in init_state_ids
+    ]
+
+
+def _agent_assist_config(config: Dict[str, Any]) -> Dict[str, Any]:
+    raw = config.get("agent_assist")
+    if not isinstance(raw, dict):
+        return {"enabled": False, "mode": "disabled", "inline": False}
+    mode = str(raw.get("mode") or raw.get("assist_mode") or ("retry" if raw.get("enabled") else "disabled"))
+    return {
+        "enabled": bool(raw.get("enabled")) and mode != "disabled",
+        "mode": mode,
+        "inline": bool(raw.get("inline", True)),
+        "verifier_endpoint": raw.get("verifier_endpoint"),
+        "verifier_timeout_s": float(raw.get("verifier_timeout_s") or 60.0),
+        "verifier_failure_policy": str(raw.get("verifier_failure_policy") or "skip"),
+        "max_replans_per_episode": int(raw.get("max_replans_per_episode") or 1),
+        "max_verifier_calls_per_suite": int(raw.get("max_verifier_calls_per_suite") or 50),
+    }
+
+
+async def _verify_episode_attempt(
+    config: Dict[str, Any],
+    episode: Dict[str, Any],
+    agent_assist: Dict[str, Any],
+) -> Dict[str, Any]:
+    endpoint = agent_assist.get("verifier_endpoint")
+    bundle = _episode_verification_bundle(config, episode)
+    verdict = await _run_blocking(
+        _post_verifier,
+        str(endpoint or ""),
+        bundle,
+        float(agent_assist.get("verifier_timeout_s") or 60.0),
+        str(agent_assist.get("verifier_failure_policy") or "skip"),
+    )
+    return {
+        "run_id": config.get("run_id") or config.get("session_id"),
+        "suite": config.get("suite") or config.get("benchmark_name"),
+        "episode_id": episode.get("episode_id"),
+        "task_id": episode.get("task_id"),
+        "init_state_id": episode.get("init_state_id"),
+        "attempt_index": episode.get("attempt_index", 0),
+        "verdict": verdict.get("verdict"),
+        "evidence": verdict.get("evidence"),
+        "failure_reason": verdict.get("failure_reason"),
+        "replan_task_description": verdict.get("replan_task_description"),
+        "lesson": verdict.get("lesson"),
+        "verifier_status": verdict.get("verifier_status"),
+    }
+
+
+def _post_verifier(
+    endpoint: str,
+    bundle: Dict[str, Any],
+    timeout_s: float,
+    failure_policy: str,
+) -> Dict[str, Any]:
+    if not endpoint:
+        return _verifier_fallback("verifier endpoint is not configured", failure_policy)
+    if endpoint.startswith("mock://"):
+        mode = endpoint[len("mock://") :]
+        if mode in {"replan", "replan_failed"}:
+            return {
+                "verdict": "replan",
+                "evidence": ["mock verifier requested retry"],
+                "failure_reason": None,
+                "replan_task_description": bundle.get("task_description"),
+                "lesson": "Mock verifier retries failed benchmark episodes.",
+                "verifier_status": "mock",
+            }
+        return _verifier_fallback("mock verifier did not request retry", failure_policy)
+    try:
+        payload = json.dumps(_jsonable(bundle), ensure_ascii=False).encode("utf-8")
+        req = url_request.Request(
+            endpoint,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with url_request.urlopen(req, timeout=timeout_s) as response:  # noqa: S310 - user-configured local verifier
+            data = json.loads(response.read().decode("utf-8"))
+    except (OSError, TimeoutError, url_error.URLError, json.JSONDecodeError) as exc:
+        return _verifier_fallback(str(exc), failure_policy)
+    if not isinstance(data, dict):
+        return _verifier_fallback("verifier response is not a JSON object", failure_policy)
+    verdict = str(data.get("verdict") or "failure")
+    if verdict not in {"success", "replan", "failure", "skipped"}:
+        verdict = "failure"
+    evidence = data.get("evidence")
+    if not isinstance(evidence, list) or not evidence:
+        evidence = ["verifier did not provide evidence"]
+    return {
+        "verdict": verdict,
+        "evidence": [str(item) for item in evidence],
+        "failure_reason": data.get("failure_reason"),
+        "replan_task_description": data.get("replan_task_description"),
+        "lesson": str(data.get("lesson") or "No verifier lesson was provided."),
+        "verifier_status": str(data.get("verifier_status") or "completed"),
+    }
+
+
+def _verifier_fallback(reason: str, failure_policy: str) -> Dict[str, Any]:
+    if failure_policy == "retry":
+        return {
+            "verdict": "replan",
+            "evidence": ["verifier fallback retry: %s" % reason],
+            "failure_reason": None,
+            "replan_task_description": None,
+            "lesson": "Retry selected by verifier failure policy.",
+            "verifier_status": "fallback_retry",
+        }
+    if failure_policy == "failure":
+        return {
+            "verdict": "failure",
+            "evidence": ["verifier fallback failure: %s" % reason],
+            "failure_reason": reason,
+            "replan_task_description": None,
+            "lesson": "Episode remained failed because verifier was unavailable.",
+            "verifier_status": "fallback_failure",
+        }
+    return {
+        "verdict": "skipped",
+        "evidence": ["verifier skipped: %s" % reason],
+        "failure_reason": reason,
+        "replan_task_description": None,
+        "lesson": "Episode verification was skipped.",
+        "verifier_status": "skipped",
+    }
+
+
+def _episode_verification_bundle(config: Dict[str, Any], episode: Dict[str, Any]) -> Dict[str, Any]:
+    evidence = episode.get("evidence") if isinstance(episode.get("evidence"), dict) else {}
+    return {
+        "version": "benchmark_episode_verification_v1",
+        "run_id": config.get("run_id") or config.get("session_id"),
+        "suite_id": episode.get("suite") or config.get("suite") or config.get("benchmark_name"),
+        "episode_id": episode.get("episode_id"),
+        "task_index": episode.get("task_id"),
+        "instance_id": episode.get("init_state_id"),
+        "attempt_index": episode.get("attempt_index", 0),
+        "task_description": episode.get("task_description"),
+        "runtime_claim": {
+            "success": bool(episode.get("success")),
+            "source": "target_environment",
+            "authority": "target",
+        },
+        "initial_observation": evidence.get("initial_observation"),
+        "final_observation": evidence.get("final_observation"),
+        "final_status": {
+            "steps": episode.get("num_steps"),
+            "reward": episode.get("return_value"),
+            "done": True,
+        },
+    }
+
+
+def _attempt_record(episode: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "episode_id": episode.get("episode_id"),
+        "suite": episode.get("suite"),
+        "task_id": episode.get("task_id"),
+        "init_state_id": episode.get("init_state_id"),
+        "attempt_index": int(episode.get("attempt_index") or 0),
+        "policy_session_id": episode.get("policy_session_id"),
+        "success": bool(episode.get("success")),
+        "status": episode.get("status"),
+        "num_steps": episode.get("num_steps"),
+        "return_value": episode.get("return_value"),
+        "mean_policy_latency_ms": episode.get("mean_policy_latency_ms"),
+        "error_code": episode.get("error_code"),
+        "error_message": episode.get("error_message"),
+    }
+
+
+def _jsonable(value: Any) -> Any:
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, dict):
+        return {str(key): _jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(item) for item in value]
+    return value
 
 
 async def _dispatch(runtime: LiberoRealRuntime, request: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:

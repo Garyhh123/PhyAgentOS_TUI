@@ -37,11 +37,13 @@ def iter_workspaces(paths: list[Path]) -> list[Path]:
     return workspaces
 
 
-def summarize_workspace(workspace: Path) -> tuple[int, int]:
+def summarize_workspace(workspace: Path) -> tuple[int, int, int]:
     sessions = read_sessions(workspace)
     counts = Counter(session.get("status", "unknown") for session in sessions)
-    benchmark_success = 0
+    benchmark_first_success = 0
+    benchmark_final_success = 0
     benchmark_total = 0
+    has_final = False
     for session in sessions:
         result = session.get("result") or {}
         metadata = result.get("metadata") or {}
@@ -50,17 +52,29 @@ def summarize_workspace(workspace: Path) -> tuple[int, int]:
             continue
         if benchmark.get("total_episodes") is None:
             continue
-        benchmark_success += int(benchmark.get("successes") or 0)
+        first = int(benchmark.get("first_attempt_successes", benchmark.get("successes") or 0))
+        final = int(benchmark.get("final_successes", first))
+        benchmark_first_success += first
+        benchmark_final_success += final
         benchmark_total += int(benchmark.get("total_episodes") or 0)
+        has_final = has_final or final != first or str(benchmark.get("assist_mode", "disabled")) != "disabled"
     if benchmark_total:
-        success = benchmark_success
+        success = benchmark_first_success
         total = benchmark_total
     else:
         success = sum(session.get("status") == "succeeded" for session in sessions)
+        benchmark_final_success = success
         total = len(sessions)
-    rate = success / total if total else 0.0
-    print(f"{workspace.name}: {success}/{total} = {rate:.3%} statuses={dict(counts)}")
-    return success, total
+    first_rate = success / total if total else 0.0
+    if has_final and benchmark_total:
+        final_rate = benchmark_final_success / total if total else 0.0
+        print(
+            f"{workspace.name}: first={success}/{total} = {first_rate:.3%}; "
+            f"final={benchmark_final_success}/{total} = {final_rate:.3%} statuses={dict(counts)}"
+        )
+    else:
+        print(f"{workspace.name}: {success}/{total} = {first_rate:.3%} statuses={dict(counts)}")
+    return success, benchmark_final_success, total
 
 
 def main() -> int:
@@ -83,15 +97,24 @@ def main() -> int:
     if not paths:
         parser.error("pass at least one --run-root or --workspace")
 
-    total_success = 0
+    total_first_success = 0
+    total_final_success = 0
     total_episodes = 0
     for workspace in iter_workspaces(paths):
-        success, total = summarize_workspace(workspace)
-        total_success += success
+        first_success, final_success, total = summarize_workspace(workspace)
+        total_first_success += first_success
+        total_final_success += final_success
         total_episodes += total
 
-    rate = total_success / total_episodes if total_episodes else 0.0
-    print(f"overall: {total_success}/{total_episodes} = {rate:.3%}")
+    first_rate = total_first_success / total_episodes if total_episodes else 0.0
+    final_rate = total_final_success / total_episodes if total_episodes else 0.0
+    if total_final_success != total_first_success:
+        print(
+            f"overall: first={total_first_success}/{total_episodes} = {first_rate:.3%}; "
+            f"final={total_final_success}/{total_episodes} = {final_rate:.3%}"
+        )
+    else:
+        print(f"overall: {total_first_success}/{total_episodes} = {first_rate:.3%}")
     return 0
 
 

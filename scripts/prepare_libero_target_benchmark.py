@@ -34,6 +34,14 @@ def main() -> int:
     parser.add_argument("--control-mode", default="absolute", choices=["relative", "absolute"])
     parser.add_argument("--execute-timeout-s", type=float, default=172800)
     parser.add_argument("--policy-timeout-s", type=float, default=180)
+    parser.add_argument("--agent-assist-mode", default="disabled", choices=["disabled", "audit", "retry"])
+    parser.add_argument("--agent-assist-trigger", default="failed_only", choices=["failed_only", "failed_or_low_confidence", "all"])
+    parser.add_argument("--verifier-endpoint", default=None)
+    parser.add_argument("--verifier-timeout-s", type=float, default=60)
+    parser.add_argument("--verifier-failure-policy", default="skip", choices=["skip", "retry", "failure"])
+    parser.add_argument("--max-replans-per-episode", type=int, default=1)
+    parser.add_argument("--max-verifier-calls-per-suite", type=int, default=50)
+    parser.add_argument("--agent-assist-inline", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--force-init", action="store_true")
     args = parser.parse_args()
 
@@ -168,6 +176,7 @@ def _write_session(
                 "perception_queries": [
                     {"task_ids": _parse_ids(args.task_ids)},
                     {"init_state_ids": _parse_ids(args.init_state_ids)},
+                    _agent_assist_hint(args),
                 ],
                 "force_environment_refresh": False,
                 "preferred_replan_every_steps": 1,
@@ -201,6 +210,27 @@ def _parse_ids(spec: str) -> list[int]:
         else:
             ids.append(int(part))
     return sorted(dict.fromkeys(ids))
+
+
+def _agent_assist_hint(args: argparse.Namespace) -> dict[str, Any]:
+    enabled = args.agent_assist_mode != "disabled"
+    hint = {
+        "agent_assist": {
+            "enabled": enabled,
+            "mode": args.agent_assist_mode,
+            "trigger": args.agent_assist_trigger,
+            "max_replans_per_episode": int(args.max_replans_per_episode),
+            "max_verifier_calls_per_suite": int(args.max_verifier_calls_per_suite),
+            "success_authority": "target",
+            "verifier_timeout_s": float(args.verifier_timeout_s),
+            "verifier_failure_policy": args.verifier_failure_policy,
+            "retry_instruction_mode": "verifier_rewrite",
+            "inline": bool(args.agent_assist_inline),
+        }
+    }
+    if args.verifier_endpoint:
+        hint["agent_assist"]["verifier_endpoint"] = args.verifier_endpoint
+    return hint
 
 
 if __name__ == "__main__":
