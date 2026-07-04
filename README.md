@@ -288,7 +288,7 @@ PRs and Issues are welcome! Check our development roadmap here → [Dev Plan](ht
 
 <div align="center">
 
-Jointly developed by **Sun Yat-sen University HCP Lab** & **Peng Cheng Laboratory**
+Jointly developed by **Sun Yat-sen University HCP Lab** & **Peng Cheng Laboratory** & **X-Era Lab**
 
 <br>
 
