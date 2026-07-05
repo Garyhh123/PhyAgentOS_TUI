@@ -288,9 +288,7 @@ PRs and Issues are welcome! Check our development roadmap here → [Dev Plan](ht
 
 <div align="center">
 
-Built on **[nanobot](https://github.com/HKUDS/nanobot)**
-
-Jointly developed by **Sun Yat-sen University HCP Lab** & **Peng Cheng Laboratory**
+Jointly developed by **Sun Yat-sen University HCP Lab** & **Peng Cheng Laboratory** & **X-Era Lab**
 
 <br>
 
@@ -299,6 +297,8 @@ Jointly developed by **Sun Yat-sen University HCP Lab** & **Peng Cheng Laborator
 <img src="docs/imgs/Pengcheng.png" alt="Pengcheng" height="128">
 &nbsp;&nbsp;&nbsp;
 <img src="docs/imgs/HCP.jpg" alt="HCP" height="128">
+&nbsp;&nbsp;&nbsp;
+<img src="docs/imgs/logo-xera-mark.png" alt="X-Era Lab" height="128">
 
 <br>
 <sub>MIT License · Copyright © 2025-2026 PhyAgentOS</sub>

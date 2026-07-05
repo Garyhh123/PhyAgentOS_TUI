@@ -262,9 +262,7 @@ PhyAgentOS/
 
 <div align="center">
 
-本项目基于 **[nanobot](https://github.com/HKUDS/nanobot)** 构建
-
-由 **中山大学 HCP 实验室** 与 **鹏城实验室** 联合开发
+由 **中山大学 HCP 实验室**、**鹏城实验室** 与 **拓元智慧** 联合开发
 
 <br>
 
@@ -273,6 +271,8 @@ PhyAgentOS/
 <img src="docs/imgs/Pengcheng.png" alt="Pengcheng" height="128">
 &nbsp;&nbsp;&nbsp;
 <img src="docs/imgs/HCP.jpg" alt="HCP" height="128">
+&nbsp;&nbsp;&nbsp;
+<img src="docs/imgs/logo-xera-mark.png" alt="X-Era Lab" height="128">
 
 <br>
 <sub>MIT License · Copyright © 2025-2026 PhyAgentOS</sub>
