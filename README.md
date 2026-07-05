@@ -172,30 +172,34 @@ session watchdog automatically when runtime is enabled in config. Runtime
 targets are declared in `TARGETS.md`, executable runtimes in `SKILLRUNTIME.md`,
 and the Agent queues work by appending sessions to `SESSIONS.md`.
 
-Agent-side semantic verification is disabled by default. Enable it in
-`~/.PhyAgentOS/config.json` when runtime completion must be checked against the
-final RGB observations and workspace history:
+Verification is configured globally in `~/.PhyAgentOS/config.json`; each
+Session selects `strict`, `audit`, or `recovery`:
 
 ```json
 {
   "agents": {
     "verification": {
-      "enabled": true,
+      "serviceEnabled": true,
       "model": null,
-      "maxReplans": 1,
-      "rgbRetention": "failed"
+      "timeoutS": 60,
+      "evidenceRetention": "none",
+      "maxReplansPerEpisode": 2,
+      "maxVerifierCallsPerRun": 50,
+      "serviceHost": "127.0.0.1",
+      "servicePort": 8100,
+      "remoteTargetUrl": null
     }
   }
 }
 ```
 
-With verification enabled, a runtime-successful session moves through
+For `policy_loop` audit/recovery, a completed session moves through
 `awaiting_verification` and `verifying`. The Agent then marks it `succeeded` or
 `failed`, or marks it `replanned` and appends a replacement `pending` session.
 Evidence is stored under `artifacts/runtime/<session_id>/`, and every verdict
-is recorded in `LESSONS.md`. `rgbRetention` accepts `all`, `failed`, or `none`;
-the default `failed` policy removes RGB after successful verification while
-retaining failed and replanned evidence. The Agent can call `verify_session`
+is recorded in `LESSONS.md`. `evidenceRetention` accepts `all`, `failed`, or `none`.
+For `target_native`, episode verification runs inside the benchmark job and is
+not repeated by SessionVerifier. The Agent can call `verify_session`
 to process a waiting session or review a terminal session whose RGB remains.
 
 ```bash
@@ -292,11 +296,11 @@ Jointly developed by **Sun Yat-sen University HCP Lab** & **Peng Cheng Laborator
 
 <br>
 
-<img src="docs/imgs/SYSU.png" alt="SYSU" height="128">
+<!-- <img src="docs/imgs/SYSU.png" alt="SYSU" height="128">
+&nbsp;&nbsp;&nbsp; -->
+<img src="docs/imgs/HCP.jpg" alt="HCP" height="128">
 &nbsp;&nbsp;&nbsp;
 <img src="docs/imgs/Pengcheng.png" alt="Pengcheng" height="128">
-&nbsp;&nbsp;&nbsp;
-<img src="docs/imgs/HCP.jpg" alt="HCP" height="128">
 &nbsp;&nbsp;&nbsp;
 <img src="docs/imgs/logo-xera-mark.png" alt="X-Era Lab" height="128">
 
