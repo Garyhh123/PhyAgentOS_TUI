@@ -12,6 +12,7 @@ The PhyAgentOS development team maintains this directory as the public documenta
 1. [框架介绍](zh/01-framework-introduction.md)：架构、已实现能力、实现边界与后续设计
 2. [用户手册](zh/02-user-manual.md)：安装、配置、Runtime 工作区、场景启动与排障
 3. [开发者手册](zh/03-developer-manual.md)：核心接口、Schema、扩展流程、通信协议与测试
+4. [Runtime 参数配置参考](zh/04-runtime-configuration-reference.md)：全局配置、Target、SkillRuntime、Session、Benchmark、Verification 与远程部署参数
 
 补充手册：
 
@@ -24,6 +25,7 @@ The PhyAgentOS development team maintains this directory as the public documenta
 1. [Framework Introduction](en/01-framework-introduction.md): architecture, implemented capabilities, boundaries, and future design
 2. [User Manual](en/02-user-manual.md): installation, configuration, runtime workspaces, scenario startup, and troubleshooting
 3. [Developer Manual](en/03-developer-manual.md): core interfaces, schemas, extension workflows, protocols, and tests
+4. [Runtime Configuration Reference](en/04-runtime-configuration-reference.md): global, Target, SkillRuntime, Session, benchmark, verification, and remote-host parameters
 
 Supplementary manuals:
 

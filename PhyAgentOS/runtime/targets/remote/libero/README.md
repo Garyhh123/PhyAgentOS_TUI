@@ -100,11 +100,11 @@ Results are written under the workspace's `SESSIONS.md`, `LOG.md`, and
 
 ## Target-Native Suite Benchmark
 
-For high-throughput benchmarking, the LIBERO target also exposes
-`target.benchmark`. In this mode PAOS creates one session for the whole suite,
-and the LIBERO target runs the task/init-state loop internally against the
-policy endpoint. This avoids the per-step PAOS policy loop and keeps the result
-as one benchmark artifact.
+For high-throughput benchmarking, the LIBERO target also exposes the typed
+`target.benchmark.*` job interface. In this mode PAOS creates one session for
+the whole suite, and the LIBERO target runs the task/init-state loop internally
+against the policy endpoint. This avoids the per-step PAOS policy loop and
+keeps the result as one benchmark artifact.
 
 ```bash
 PYTHONPATH=$(pwd) conda run -n paos python scripts/prepare_libero_target_benchmark.py \

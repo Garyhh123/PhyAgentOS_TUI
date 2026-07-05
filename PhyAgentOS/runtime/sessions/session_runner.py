@@ -31,6 +31,7 @@ class SessionRunner:
         perception_runtime: PerceptionRuntime | None,
         perception_plan: ResolvedPerceptionPlan | None,
         target_tool_manifest: TargetToolManifest | None = None,
+        verification_settings: dict | None = None,
     ):
         self.session = session
         self.target_spec = target_spec
@@ -42,7 +43,9 @@ class SessionRunner:
         self.perception_runtime = perception_runtime
         self.perception_plan = perception_plan
         self.target_tool_manifest = target_tool_manifest
+        self.verification_settings = dict(verification_settings or {})
         self.state = SessionState(session_id=session.session_id, trace_id=f"trace_{uuid4().hex[:12]}")
+        self._initial_observation: dict | None = None
 
     def start(self) -> SessionResult:
         self.state.started_at_ns = time.time_ns()
@@ -55,7 +58,10 @@ class SessionRunner:
         self.state.heartbeat()
         self.target.start_session(session_ctx)
         self.state.heartbeat()
-        initial_observation = self.target.reset(self.session.model_dump(mode="json"))
+        initial_observation = None
+        if self.session.execution.reset_policy == "session_runner":
+            initial_observation = self.target.reset(self.session.model_dump(mode="json"))
+        self._initial_observation = initial_observation
         self.state.heartbeat()
         handle = TargetSessionHandle(
             session=self.session,
@@ -76,7 +82,7 @@ class SessionRunner:
             target=self.target_spec,
             skillruntime=self.skillruntime_spec,
             task_description=self.session.task_description,
-            metadata={"trace_id": self.state.trace_id},
+            metadata={"trace_id": self.state.trace_id, "verification": self.verification_settings},
         )
         self.skill_runtime.start(skill_ctx)
         self.state.heartbeat()
@@ -117,6 +123,10 @@ class SessionRunner:
     def final_observation(self) -> dict | None:
         observation = self.state.last_status.get("obs")
         return observation if isinstance(observation, dict) else None
+
+    @property
+    def initial_observation(self) -> dict | None:
+        return self._initial_observation
 
     def _session_context(self) -> dict:
         ctx = {

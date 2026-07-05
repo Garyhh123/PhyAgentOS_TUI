@@ -37,6 +37,22 @@ class TargetObservationContract(BaseModel):
     empty_observation_semantics: str | None = None
 
 
+class TargetBenchmarkExecutionMode(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["policy_loop", "target_native"]
+    interface: Literal["rollout_episode_v1", "target_benchmark_job_v1"]
+    reset_owner: Literal["session_runner", "skillruntime"]
+
+
+class TargetBenchmarkCapability(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    benchmark_id: str
+    suites: list[str] = Field(default_factory=list)
+    execution_modes: list[TargetBenchmarkExecutionMode]
+
+
 class TargetSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -47,6 +63,7 @@ class TargetSpec(BaseModel):
     enabled: bool = True
     workspace: str
     supported_skillruntimes: list[str] = Field(default_factory=list)
+    benchmark_capabilities: list[TargetBenchmarkCapability] = Field(default_factory=list)
     runtime: TargetRuntimeSpec
     observation: TargetObservationContract = Field(default_factory=TargetObservationContract)
     perception: TargetPerceptionRefs = Field(default_factory=TargetPerceptionRefs)

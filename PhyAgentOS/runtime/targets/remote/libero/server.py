@@ -22,11 +22,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import functools
+import hashlib
 import json
 import os
 import time
 import traceback
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse, urlunparse
 from urllib import error as url_error, request as url_request
 
@@ -194,6 +195,7 @@ class LiberoRealRuntime:
         self._episode_idx = 0
         self._last_video_path = None
         self._last_status = {"accepted": True, "safety_status": "idle", "executed_steps": 0}
+        self._benchmark_jobs: Dict[str, Dict[str, Any]] = {}
 
     # -- lifecycle --
     def _ensure_env(self):
@@ -242,6 +244,14 @@ class LiberoRealRuntime:
             "task_description": self.language,
             "num_tasks": len(self._task_list()),
             "task_list": self._task_list(),
+            "benchmark_capabilities": [{
+                "benchmark_id": "libero",
+                "suites": ["libero_spatial", "libero_object", "libero_goal", "libero_10"],
+                "execution_modes": [
+                    {"mode": "policy_loop", "interface": "rollout_episode_v1", "reset_owner": "session_runner"},
+                    {"mode": "target_native", "interface": "target_benchmark_job_v1", "reset_owner": "skillruntime"},
+                ],
+            }],
             "observation_schema": {
                 "agentview_image": {"dtype": "uint8", "layout": "HWC"},
                 "robot0_eye_in_hand_image": {"dtype": "uint8", "layout": "HWC"},
@@ -393,6 +403,82 @@ class LiberoRealRuntime:
         self._env_key = None
         return {"closed": True}
 
+    def benchmark_start(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if payload.get("schema_version") != "benchmark_job_request_v1":
+            raise TargetProtocolError("UNSUPPORTED_BENCHMARK_SCHEMA")
+        active = [job for job in self._benchmark_jobs.values() if job["state"] in {"pending", "running", "cancelling"}]
+        if active:
+            raise TargetProtocolError("a LIBERO benchmark job is already active")
+        job_id = "libero_job_%d" % time.time_ns()
+        config = dict(payload.get("options") or {})
+        config.update({key: value for key, value in payload.items() if key != "options"})
+        config["suite"] = payload.get("suite_id")
+        config["job_id"] = job_id
+        job = {
+            "job_id": job_id,
+            "state": "pending",
+            "completed_episodes": 0,
+            "total_episodes": len(config.get("episodes") or []),
+            "heartbeat_ns": time.time_ns(),
+            "result": None,
+            "error_code": None,
+            "error_message": None,
+        }
+        self._benchmark_jobs[job_id] = job
+
+        async def run() -> None:
+            job.update({"state": "running", "heartbeat_ns": time.time_ns()})
+            try:
+                result = await self.benchmark(config)
+                result["schema_version"] = "benchmark_execution_result_v1"
+                job.update({
+                    "state": "succeeded" if result.get("status") == "succeeded" else "failed",
+                    "completed_episodes": int(result.get("completed_episodes") or 0),
+                    "result": result,
+                    "heartbeat_ns": time.time_ns(),
+                })
+            except asyncio.CancelledError:
+                job.update({"state": "cancelled", "heartbeat_ns": time.time_ns()})
+                job["result"] = {
+                    "schema_version": "benchmark_execution_result_v1", "status": "cancelled",
+                    "run_id": str(config.get("run_id") or ""), "suite": str(config.get("suite") or ""),
+                    "execution_mode": "target_native", "episodes": [],
+                }
+            except Exception as exc:  # noqa: BLE001
+                job.update({"state": "failed", "error_code": type(exc).__name__, "error_message": str(exc), "heartbeat_ns": time.time_ns()})
+                job["result"] = {
+                    "schema_version": "benchmark_execution_result_v1", "status": "failed",
+                    "run_id": str(config.get("run_id") or ""), "suite": str(config.get("suite") or ""),
+                    "execution_mode": "target_native", "episodes": [],
+                    "error_code": type(exc).__name__, "error_message": str(exc),
+                }
+
+        job["task"] = asyncio.create_task(run())
+        return {"schema_version": "benchmark_job_ref_v1", "job_id": job_id}
+
+    def benchmark_status(self, job_id: str) -> Dict[str, Any]:
+        job = self._benchmark_job(job_id)
+        return {"schema_version": "benchmark_job_status_v1", **{key: value for key, value in job.items() if key in {"job_id", "state", "completed_episodes", "total_episodes", "heartbeat_ns", "error_code", "error_message"}}}
+
+    def benchmark_result(self, job_id: str) -> Dict[str, Any]:
+        job = self._benchmark_job(job_id)
+        if job["state"] not in {"succeeded", "failed", "cancelled"}:
+            raise TargetProtocolError("benchmark job has not completed")
+        return dict(job["result"])
+
+    def benchmark_cancel(self, job_id: str, reason: str) -> Dict[str, Any]:
+        job = self._benchmark_job(job_id)
+        if job["state"] in {"pending", "running"}:
+            job.update({"state": "cancelling", "heartbeat_ns": time.time_ns(), "error_message": reason})
+            job["task"].cancel()
+        return self.benchmark_status(job_id)
+
+    def _benchmark_job(self, job_id: str) -> Dict[str, Any]:
+        job = self._benchmark_jobs.get(job_id)
+        if job is None:
+            raise TargetProtocolError("unknown benchmark job: %s" % job_id)
+        return job
+
     async def benchmark(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         config = dict(payload or {})
         suite = str(config.get("suite") or config.get("benchmark_name") or self.config.get("benchmark_name"))
@@ -405,10 +491,12 @@ class LiberoRealRuntime:
         control_mode = str(config.get("control_mode", self.config.get("control_mode", "relative")))
         evidence_mode = str(config.get("evidence_mode") or ("all" if config.get("include_evidence") else "none"))
         attempt_index = int(config.get("attempt_index", 0))
-        agent_assist = _agent_assist_config(config)
-        inline_assist = bool(agent_assist.get("enabled")) and str(agent_assist.get("mode")) == "retry" and bool(agent_assist.get("inline"))
-        if inline_assist:
+        verification = _verification_config(config)
+        verification_enabled = verification["profile"] != "strict"
+        if verification_enabled:
             evidence_mode = "failed"
+        configured_verifier_budget = max(0, int(verification["max_verifier_calls_per_run"])) if verification_enabled else 0
+        effective_verifier_budget = min(configured_verifier_budget, len(episode_specs))
         status(
             "benchmark start session=%s suite=%s episodes=%d policy=%s"
             % (self.session_id or config.get("session_id") or "<none>", suite, len(episode_specs), policy_endpoint)
@@ -427,8 +515,8 @@ class LiberoRealRuntime:
             for episode_spec in episode_specs:
                 task_id = int(episode_spec["task_id"])
                 init_state_id = int(episode_spec["init_state_id"])
-                if inline_assist:
-                    episode, episode_attempts, episode_verifier_attempts = await self._run_assisted_benchmark_episode(
+                if verification_enabled:
+                    episode, episode_attempts, episode_verifier_attempts = await self._run_verified_benchmark_episode(
                         policy,
                         suite=suite,
                         task_id=task_id,
@@ -437,7 +525,9 @@ class LiberoRealRuntime:
                         control_mode=control_mode,
                         evidence_mode=evidence_mode,
                         config=config,
-                        agent_assist=agent_assist,
+                        verification=verification,
+                        task_description=episode_spec.get("task_description"),
+                        verifier_calls_remaining=max(0, effective_verifier_budget - len(verifier_attempts)),
                     )
                 else:
                     episode = await self._run_benchmark_episode(
@@ -450,10 +540,14 @@ class LiberoRealRuntime:
                         attempt_index=attempt_index,
                         evidence_mode=evidence_mode,
                         config=config,
+                        task_description=episode_spec.get("task_description"),
                     )
                     episode_attempts = [_attempt_record(episode)]
                     episode_verifier_attempts = []
                 episodes.append(episode)
+                job = self._benchmark_jobs.get(str(config.get("job_id") or ""))
+                if job is not None:
+                    job.update({"completed_episodes": len(episodes), "heartbeat_ns": time.time_ns()})
                 attempts.extend(episode_attempts)
                 verifier_attempts.extend(episode_verifier_attempts)
                 total_steps += sum(int(item.get("num_steps") or 0) for item in episode_attempts)
@@ -484,7 +578,7 @@ class LiberoRealRuntime:
             "run_id": str(config.get("run_id") or config.get("session_id") or self.session_id or ""),
             "suite": suite,
             "execution_mode": "target_native",
-            "assist_mode": str(config.get("assist_mode") or "disabled"),
+            "verification_profile": verification["profile"],
             "control_mode": control_mode,
             "max_steps": max_steps,
             "successes": first_successes,
@@ -496,9 +590,14 @@ class LiberoRealRuntime:
             "total_attempts": len(attempts) if attempts else total,
             "success_rate": float(first_successes / total) if total else 0.0,
             "final_success_rate": float(final_successes / total) if total else 0.0,
+            "first_attempt_score": float(first_successes / total) if total else 0.0,
+            "assisted_final_score": float(final_successes / total) if total else 0.0,
             "episodes_replanned": episodes_replanned,
             "recovered_after_replan": recovered_after_replan,
             "verifier_calls": len(verifier_attempts),
+            "configured_max_verifier_calls_per_run": configured_verifier_budget,
+            "effective_max_verifier_calls_per_run": effective_verifier_budget,
+            "remaining_verifier_calls": max(0, effective_verifier_budget - len(verifier_attempts)),
             "verifier_skipped": sum(1 for item in verifier_attempts if item.get("verdict") == "skipped"),
             "num_steps": total_steps,
             "mean_policy_latency_ms": float(np.mean(latencies)) if latencies else None,
@@ -513,7 +612,7 @@ class LiberoRealRuntime:
         )
         return result
 
-    async def _run_assisted_benchmark_episode(
+    async def _run_verified_benchmark_episode(
         self,
         policy,
         *,
@@ -524,13 +623,17 @@ class LiberoRealRuntime:
         control_mode: str,
         evidence_mode: str,
         config: Dict[str, Any],
-        agent_assist: Dict[str, Any],
-    ) -> tuple[Dict[str, Any], list[Dict[str, Any]], list[Dict[str, Any]]]:
-        max_replans = max(0, int(agent_assist.get("max_replans_per_episode", 1)))
+        verification: Dict[str, Any],
+        task_description: Optional[str],
+        verifier_calls_remaining: int,
+    ) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]:
+        profile = str(verification["profile"])
+        max_replans = max(0, int(verification["max_replans_per_episode"])) if profile == "recovery" else 0
         attempts = []
         verifier_attempts = []
         first_episode = None
         final_episode = None
+        current_task_description = task_description
         for attempt_index in range(max_replans + 1):
             episode = await self._run_benchmark_episode(
                 policy,
@@ -542,6 +645,8 @@ class LiberoRealRuntime:
                 attempt_index=attempt_index,
                 evidence_mode=evidence_mode,
                 config=config,
+                task_description=current_task_description,
+                reset_environment=attempt_index == 0,
             )
             if first_episode is None:
                 first_episode = episode
@@ -550,7 +655,7 @@ class LiberoRealRuntime:
             if episode.get("success"):
                 if attempt_index > 0:
                     status(
-                        "agent assist retry result suite=%s t%d_i%d attempt=%d success=True steps=%d error_code=%s error_message=%s"
+                        "verification recovery result suite=%s t%d_i%d attempt=%d success=True steps=%d error_code=%s error_message=%s"
                         % (
                             suite,
                             task_id,
@@ -575,41 +680,32 @@ class LiberoRealRuntime:
                     str(episode.get("error_message")),
                 )
             )
-            if attempt_index >= max_replans:
-                if attempt_index > 0:
-                    status(
-                        "agent assist retry result suite=%s t%d_i%d attempt=%d success=False steps=%d error_code=%s error_message=%s"
-                        % (
-                            suite,
-                            task_id,
-                            init_state_id,
-                            attempt_index,
-                            int(episode.get("num_steps") or 0),
-                            str(episode.get("error_code")),
-                            str(episode.get("error_message")),
-                        )
-                    )
-                break
-            if len(verifier_attempts) >= int(agent_assist.get("max_verifier_calls_per_suite", 50)):
+            if len(verifier_attempts) >= verifier_calls_remaining:
                 status(
-                    "agent assist verifier skipped suite=%s t%d_i%d attempt=%d reason=verifier_budget_exhausted"
+                    "episode verifier skipped suite=%s t%d_i%d attempt=%d reason=verifier_budget_exhausted"
                     % (suite, task_id, init_state_id, attempt_index)
                 )
                 break
             status(
-                "agent assist verifier start suite=%s t%d_i%d attempt=%d endpoint=%s"
+                "episode verifier start suite=%s t%d_i%d attempt=%d endpoint=%s"
                 % (
                     suite,
                     task_id,
                     init_state_id,
                     attempt_index,
-                    str(agent_assist.get("verifier_endpoint") or "<none>"),
+                    str(verification.get("endpoint") or "<none>"),
                 )
             )
-            verdict = await _verify_episode_attempt(config, episode, agent_assist)
+            verdict = await _verify_episode_attempt(config, episode, verification)
             verifier_attempts.append(verdict)
+            episode.pop("evidence", None)
+            if verdict.get("verdict") == "success":
+                episode["success"] = True
+                episode["status"] = "succeeded"
+                episode["success_authority"] = "verifier"
+                break
             status(
-                "agent assist verifier verdict suite=%s t%d_i%d attempt=%d verdict=%s verifier_status=%s failure_reason=%s"
+                "episode verifier verdict suite=%s t%d_i%d attempt=%d verdict=%s verifier_status=%s failure_reason=%s"
                 % (
                     suite,
                     task_id,
@@ -620,14 +716,15 @@ class LiberoRealRuntime:
                     str(verdict.get("failure_reason")),
                 )
             )
-            if verdict.get("verdict") != "replan":
+            if verdict.get("verdict") != "replan" or profile != "recovery" or attempt_index >= max_replans:
                 status(
-                    "agent assist retry skipped suite=%s t%d_i%d attempt=%d verdict=%s"
+                    "verification recovery skipped suite=%s t%d_i%d attempt=%d verdict=%s"
                     % (suite, task_id, init_state_id, attempt_index, str(verdict.get("verdict")))
                 )
                 break
+            current_task_description = str(verdict["replan_task_description"])
             status(
-                "agent assist retry start suite=%s t%d_i%d next_attempt=%d"
+                "verification recovery start suite=%s t%d_i%d next_attempt=%d"
                 % (suite, task_id, init_state_id, attempt_index + 1)
             )
         first_success = bool(first_episode and first_episode.get("success"))
@@ -639,6 +736,7 @@ class LiberoRealRuntime:
         merged["final_status"] = "succeeded" if final_success else "failed"
         merged["attempts"] = attempts
         if final_episode is not None:
+            merged["task_description"] = final_episode.get("task_description")
             merged["num_steps"] = int(final_episode.get("num_steps") or 0)
             merged["return_value"] = float(final_episode.get("return_value") or 0.0)
             merged["mean_policy_latency_ms"] = final_episode.get("mean_policy_latency_ms")
@@ -657,6 +755,8 @@ class LiberoRealRuntime:
         attempt_index: int,
         evidence_mode: str,
         config: Dict[str, Any],
+        task_description: Optional[str] = None,
+        reset_environment: bool = True,
     ) -> Dict[str, Any]:
         self.config.update(
             {
@@ -675,14 +775,24 @@ class LiberoRealRuntime:
         if attempt_index:
             episode_session_id = "%s_a%d" % (episode_session_id, attempt_index)
         episode_id = "%s_t%d_i%d" % (suite, task_id, init_state_id)
-        self.reset({"session_id": episode_session_id, "libero": dict(self.config)})
+        if reset_environment:
+            self.reset({"session_id": episode_session_id, "libero": dict(self.config)})
+        else:
+            self.session_id = episode_session_id
+            self.step_idx = 0
+            self.success = False
+            self.done = False
+            self._total_reward = 0.0
+            self._episode_chunks = []
+            self._initial_obs = self._last_obs
         policy.reset_session(episode_session_id)
+        effective_task_description = str(task_description).strip() if task_description is not None else self.language
         episode_latencies = []
         error_code = None
         error_message = None
         try:
             while not self.done and self.step_idx < max_steps:
-                observation = _policy_observation(self._last_obs, self.language, episode_session_id)
+                observation = _policy_observation(self._last_obs, effective_task_description, episode_session_id)
                 policy_output = await policy.infer(observation)
                 policy_meta = dict(policy_output.get("policy_meta") or {})
                 if policy_meta.get("policy_latency_ms") is not None:
@@ -694,6 +804,9 @@ class LiberoRealRuntime:
                         "actions": actions,
                     }
                 )
+                job = self._benchmark_jobs.get(str(config.get("job_id") or ""))
+                if job is not None:
+                    job["heartbeat_ns"] = time.time_ns()
         except Exception as exc:  # noqa: BLE001
             error_code = type(exc).__name__
             error_message = str(exc)
@@ -706,7 +819,7 @@ class LiberoRealRuntime:
             "init_state_id": int(init_state_id),
             "attempt_index": int(attempt_index),
             "policy_session_id": episode_session_id,
-            "task_description": self.language,
+            "task_description": effective_task_description,
             "success": bool(self.success),
             "first_attempt_success": bool(self.success) if int(attempt_index) == 0 else None,
             "final_success": bool(self.success),
@@ -999,7 +1112,7 @@ def _mat_to_quat(mat: np.ndarray) -> np.ndarray:
     return quat[[1, 2, 3, 0]].astype(np.float32)
 
 
-def _parse_id_list(value: Any, *, default: list[int]) -> list[int]:
+def _parse_id_list(value: Any, *, default: List[int]) -> List[int]:
     if value is None:
         return list(default)
     if isinstance(value, (list, tuple)):
@@ -1020,19 +1133,20 @@ def _parse_id_list(value: Any, *, default: list[int]) -> list[int]:
     return sorted(dict.fromkeys(ids))
 
 
-def _parse_episode_specs(config: Dict[str, Any]) -> list[dict[str, int]]:
+def _parse_episode_specs(config: Dict[str, Any]) -> List[Dict[str, Any]]:
     explicit = config.get("episodes")
     if isinstance(explicit, list):
         episodes = []
         for item in explicit:
             if not isinstance(item, dict):
                 continue
-            episodes.append(
-                {
-                    "task_id": int(item["task_id"]),
-                    "init_state_id": int(item["init_state_id"]),
-                }
-            )
+            episode = {
+                "task_id": int(item["task_id"]),
+                "init_state_id": int(item["init_state_id"]),
+            }
+            if item.get("task_description") is not None:
+                episode["task_description"] = str(item["task_description"])
+            episodes.append(episode)
         return episodes
     task_ids = _parse_id_list(config.get("task_ids"), default=list(range(10)))
     init_state_ids = _parse_id_list(config.get("init_state_ids"), default=list(range(50)))
@@ -1043,38 +1157,36 @@ def _parse_episode_specs(config: Dict[str, Any]) -> list[dict[str, int]]:
     ]
 
 
-def _agent_assist_config(config: Dict[str, Any]) -> Dict[str, Any]:
-    raw = config.get("agent_assist")
-    if not isinstance(raw, dict):
-        return {"enabled": False, "mode": "disabled", "inline": False}
-    mode = str(raw.get("mode") or raw.get("assist_mode") or ("retry" if raw.get("enabled") else "disabled"))
+def _verification_config(config: Dict[str, Any]) -> Dict[str, Any]:
+    profile = str(config.get("verification_profile") or "strict")
+    if profile not in {"strict", "audit", "recovery"}:
+        raise TargetProtocolError("unsupported verification profile: %s" % profile)
     return {
-        "enabled": bool(raw.get("enabled")) and mode != "disabled",
-        "mode": mode,
-        "inline": bool(raw.get("inline", True)),
-        "verifier_endpoint": raw.get("verifier_endpoint"),
-        "verifier_timeout_s": float(raw.get("verifier_timeout_s") or 60.0),
-        "verifier_failure_policy": str(raw.get("verifier_failure_policy") or "skip"),
-        "max_replans_per_episode": int(raw.get("max_replans_per_episode") or 1),
-        "max_verifier_calls_per_suite": int(raw.get("max_verifier_calls_per_suite") or 50),
+        "profile": profile,
+        "endpoint": config.get("verification_endpoint"),
+        "token": config.get("verification_token"),
+        "timeout_s": float(config.get("verification_timeout_s") or 60.0),
+        "max_replans_per_episode": _int_config(config, "max_replans_per_episode", 2),
+        "max_verifier_calls_per_run": _int_config(config, "max_verifier_calls_per_run", 50),
     }
 
 
 async def _verify_episode_attempt(
     config: Dict[str, Any],
     episode: Dict[str, Any],
-    agent_assist: Dict[str, Any],
+    verification: Dict[str, Any],
 ) -> Dict[str, Any]:
-    endpoint = agent_assist.get("verifier_endpoint")
+    endpoint = verification.get("endpoint")
     bundle = _episode_verification_bundle(config, episode)
+    started = time.time()
     verdict = await _run_blocking(
         _post_verifier,
         str(endpoint or ""),
         bundle,
-        float(agent_assist.get("verifier_timeout_s") or 60.0),
-        str(agent_assist.get("verifier_failure_policy") or "skip"),
+        float(verification.get("timeout_s") or 60.0),
+        str(verification.get("token") or ""),
     )
-    return {
+    record = {
         "run_id": config.get("run_id") or config.get("session_id"),
         "suite": config.get("suite") or config.get("benchmark_name"),
         "episode_id": episode.get("episode_id"),
@@ -1087,17 +1199,45 @@ async def _verify_episode_attempt(
         "replan_task_description": verdict.get("replan_task_description"),
         "lesson": verdict.get("lesson"),
         "verifier_status": verdict.get("verifier_status"),
+        "latency_ms": (time.time() - started) * 1000.0,
+        "evidence_digest": hashlib.sha256(
+            json.dumps(_jsonable(bundle), ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest(),
+        "evidence_retention": "deleted_after_verification",
     }
+    return _validate_replan_record(record, "verifier_rewrite")
+
+
+def _validate_replan_record(record: Dict[str, Any], retry_instruction_mode: str) -> Dict[str, Any]:
+    if record.get("verdict") != "replan":
+        return record
+    if retry_instruction_mode != "verifier_rewrite":
+        raise TargetProtocolError("unsupported retry_instruction_mode: %s" % retry_instruction_mode)
+    rewrite = record.get("replan_task_description")
+    rewrite = str(rewrite).strip() if rewrite is not None else ""
+    if rewrite:
+        record["replan_task_description"] = rewrite
+        return record
+    record["verdict"] = "failure"
+    record["failure_reason"] = "replan verdict requires a non-empty replan_task_description"
+    record["verifier_status"] = "invalid_response"
+    record["replan_task_description"] = None
+    return record
+
+
+def _int_config(config: Dict[str, Any], key: str, default: int) -> int:
+    value = config.get(key)
+    return int(default if value is None else value)
 
 
 def _post_verifier(
     endpoint: str,
     bundle: Dict[str, Any],
     timeout_s: float,
-    failure_policy: str,
+    token: str,
 ) -> Dict[str, Any]:
     if not endpoint:
-        return _verifier_fallback("verifier endpoint is not configured", failure_policy)
+        return _verifier_error("verifier endpoint is not configured")
     if endpoint.startswith("mock://"):
         mode = endpoint[len("mock://") :]
         if mode in {"replan", "replan_failed"}:
@@ -1109,21 +1249,24 @@ def _post_verifier(
                 "lesson": "Mock verifier retries failed benchmark episodes.",
                 "verifier_status": "mock",
             }
-        return _verifier_fallback("mock verifier did not request retry", failure_policy)
+        return _verifier_error("mock verifier did not request retry")
     try:
+        if endpoint.startswith(("http://", "https://")) and not endpoint.rstrip("/").endswith("/v1/verify-episode"):
+            endpoint = endpoint.rstrip("/") + "/v1/verify-episode"
         payload = json.dumps(_jsonable(bundle), ensure_ascii=False).encode("utf-8")
         req = url_request.Request(
             endpoint,
             data=payload,
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "Authorization": "Bearer " + token},
             method="POST",
         )
-        with url_request.urlopen(req, timeout=timeout_s) as response:  # noqa: S310 - user-configured local verifier
+        opener = url_request.build_opener(url_request.ProxyHandler({}))
+        with opener.open(req, timeout=timeout_s) as response:  # noqa: S310 - configured verifier
             data = json.loads(response.read().decode("utf-8"))
     except (OSError, TimeoutError, url_error.URLError, json.JSONDecodeError) as exc:
-        return _verifier_fallback(str(exc), failure_policy)
+        return _verifier_error(str(exc))
     if not isinstance(data, dict):
-        return _verifier_fallback("verifier response is not a JSON object", failure_policy)
+        return _verifier_error("verifier response is not a JSON object")
     verdict = str(data.get("verdict") or "failure")
     if verdict not in {"success", "replan", "failure", "skipped"}:
         verdict = "failure"
@@ -1140,32 +1283,14 @@ def _post_verifier(
     }
 
 
-def _verifier_fallback(reason: str, failure_policy: str) -> Dict[str, Any]:
-    if failure_policy == "retry":
-        return {
-            "verdict": "replan",
-            "evidence": ["verifier fallback retry: %s" % reason],
-            "failure_reason": None,
-            "replan_task_description": None,
-            "lesson": "Retry selected by verifier failure policy.",
-            "verifier_status": "fallback_retry",
-        }
-    if failure_policy == "failure":
-        return {
-            "verdict": "failure",
-            "evidence": ["verifier fallback failure: %s" % reason],
-            "failure_reason": reason,
-            "replan_task_description": None,
-            "lesson": "Episode remained failed because verifier was unavailable.",
-            "verifier_status": "fallback_failure",
-        }
+def _verifier_error(reason: str) -> Dict[str, Any]:
     return {
-        "verdict": "skipped",
-        "evidence": ["verifier skipped: %s" % reason],
+        "verdict": "failure",
+        "evidence": ["verifier service error: %s" % reason],
         "failure_reason": reason,
         "replan_task_description": None,
-        "lesson": "Episode verification was skipped.",
-        "verifier_status": "skipped",
+        "lesson": "Verification failed and no recovery was attempted.",
+        "verifier_status": "error",
     }
 
 
@@ -1173,6 +1298,7 @@ def _episode_verification_bundle(config: Dict[str, Any], episode: Dict[str, Any]
     evidence = episode.get("evidence") if isinstance(episode.get("evidence"), dict) else {}
     return {
         "version": "benchmark_episode_verification_v1",
+        "session_id": config.get("session_id"),
         "run_id": config.get("run_id") or config.get("session_id"),
         "suite_id": episode.get("suite") or config.get("suite") or config.get("benchmark_name"),
         "episode_id": episode.get("episode_id"),
@@ -1203,6 +1329,7 @@ def _attempt_record(episode: Dict[str, Any]) -> Dict[str, Any]:
         "init_state_id": episode.get("init_state_id"),
         "attempt_index": int(episode.get("attempt_index") or 0),
         "policy_session_id": episode.get("policy_session_id"),
+        "task_description": episode.get("task_description"),
         "success": bool(episode.get("success")),
         "status": episode.get("status"),
         "num_steps": episode.get("num_steps"),
@@ -1228,6 +1355,8 @@ def _jsonable(value: Any) -> Any:
 async def _dispatch(runtime: LiberoRealRuntime, request: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     rtype = request.get("type")
     payload = request.get("payload") or {}
+    if rtype == "target.benchmark":
+        raise TargetProtocolError("UNSUPPORTED_BENCHMARK_SCHEMA")
     if rtype == "target.describe":
         return rtype, runtime.describe()
     if rtype == "target.configure_session":
@@ -1240,8 +1369,14 @@ async def _dispatch(runtime: LiberoRealRuntime, request: Dict[str, Any]) -> Tupl
         return "target.observation", runtime.observe(payload)
     if rtype == "target.action_chunk":
         return rtype, runtime.action_chunk(payload)
-    if rtype == "target.benchmark":
-        return rtype, await runtime.benchmark(payload)
+    if rtype == "target.benchmark.start":
+        return rtype, runtime.benchmark_start(payload)
+    if rtype == "target.benchmark.status":
+        return rtype, runtime.benchmark_status(str(payload.get("job_id") or ""))
+    if rtype == "target.benchmark.result":
+        return rtype, runtime.benchmark_result(str(payload.get("job_id") or ""))
+    if rtype == "target.benchmark.cancel":
+        return rtype, runtime.benchmark_cancel(str(payload.get("job_id") or ""), str(payload.get("reason") or "cancelled"))
     if rtype == "target.execution_status":
         return rtype, runtime.execution_status()
     if rtype == "target.cancel":

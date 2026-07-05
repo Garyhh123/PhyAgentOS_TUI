@@ -8,6 +8,7 @@ from typing import Any
 from PhyAgentOS.runtime.perception.config_resolver import ResolvedPerceptionPlan
 from PhyAgentOS.runtime.perception.perception_runtime import PerceptionRuntime
 from PhyAgentOS.runtime.schemas import AdapterPlan, SessionSpec, SkillRuntimeSpec, TargetSpec, TargetToolManifest
+from PhyAgentOS.runtime.schemas import BenchmarkExecutionResultV1, BenchmarkJobRef, BenchmarkJobRequest, BenchmarkJobStatus
 from PhyAgentOS.runtime.sessions.models import EnvironmentRequest, EnvironmentSnapshot, RuntimeObservation, SessionState
 
 
@@ -111,12 +112,42 @@ class TargetSessionHandle:
         self.session_state.heartbeat()
         return result
 
-    def run_benchmark(self, payload: dict[str, Any]) -> dict[str, Any]:
-        result = self._target.run_benchmark(payload)
-        self.session_state.last_status = result
-        self.session_state.step_index = int(result.get("num_steps", self.session_state.step_index) or 0)
+    def benchmark_start(self, request: BenchmarkJobRequest) -> BenchmarkJobRef:
+        self._require_target_native_benchmark()
+        payload = request.model_dump(mode="json")
+        payload.update({"session_id": self.session.session_id, "target_id": self.target_spec.id, "skillruntime_id": self.skillruntime_spec.id, "trace_id": self.session_state.trace_id})
+        result = BenchmarkJobRef.model_validate(self._target.benchmark_start(payload))
+        self.session_state.last_status = result.model_dump(mode="json")
         self.session_state.heartbeat()
         return result
+
+    def benchmark_status(self, job_id: str) -> BenchmarkJobStatus:
+        self._require_target_native_benchmark()
+        result = BenchmarkJobStatus.model_validate(self._target.benchmark_status(job_id))
+        self.session_state.last_status = result.model_dump(mode="json")
+        self.session_state.heartbeat()
+        return result
+
+    def benchmark_result(self, job_id: str) -> BenchmarkExecutionResultV1:
+        self._require_target_native_benchmark()
+        result = BenchmarkExecutionResultV1.model_validate(self._target.benchmark_result(job_id))
+        self.session_state.last_status = result.model_dump(mode="json")
+        payload = result.model_dump(mode="json")
+        self.session_state.step_index = int(payload.get("num_steps", self.session_state.step_index) or 0)
+        self.session_state.heartbeat()
+        return result
+
+    def benchmark_cancel(self, job_id: str, reason: str) -> BenchmarkJobStatus:
+        self._require_target_native_benchmark()
+        result = BenchmarkJobStatus.model_validate(self._target.benchmark_cancel(job_id, reason))
+        self.session_state.heartbeat()
+        return result
+
+    def _require_target_native_benchmark(self) -> None:
+        meta = self.session.benchmark
+        cap = self.skillruntime_spec.benchmark
+        if meta is None or meta.execution_mode != "target_native" or cap is None or cap.execution_mode != "target_native":
+            raise PermissionError("target-native benchmark capability was not granted by preflight")
 
     def stop(self, reason: str) -> None:
         self.session_state.cancelled = True

@@ -39,6 +39,17 @@ targets:
     workspace: workspaces/libero_real
     supported_skillruntimes:
       - pi05_libero_remote
+      - libero_target_benchmark
+    benchmark_capabilities:
+      - benchmark_id: libero
+        suites: [libero_spatial, libero_object, libero_goal, libero_10]
+        execution_modes:
+          - mode: policy_loop
+            interface: rollout_episode_v1
+            reset_owner: session_runner
+          - mode: target_native
+            interface: target_benchmark_job_v1
+            reset_owner: skillruntime
     runtime:
       target_runtime: LiberoRemoteTargetProxy
       target_endpoint: targetws://libero-host:9002

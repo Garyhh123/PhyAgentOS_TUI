@@ -296,12 +296,20 @@ class AgentModes(Base):
 
 
 class AgentVerificationConfig(Base):
-    """Agent-side semantic verification for completed runtime sessions."""
+    """Global verification service and budget configuration."""
 
-    enabled: bool = False
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
+
+    service_enabled: bool = True
     model: str | None = None
-    max_replans: int = Field(default=1, ge=0)
-    rgb_retention: Literal["all", "failed", "none"] = "failed"
+    provider: str | None = None
+    timeout_s: float = Field(default=60.0, gt=0)
+    evidence_retention: Literal["all", "failed", "none"] = "none"
+    max_replans_per_episode: int = Field(default=2, ge=0)
+    max_verifier_calls_per_run: int = Field(default=50, ge=0)
+    service_host: str = "127.0.0.1"
+    service_port: int = Field(default=8100, ge=1, le=65535)
+    remote_target_url: str | None = None
 
 
 class AgentsConfig(Base):

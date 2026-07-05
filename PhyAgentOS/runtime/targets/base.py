@@ -53,9 +53,17 @@ class BaseRolloutTarget(ABC):
         """Call an exposed target tool."""
         raise NotImplementedError(f"target tool is not implemented: {tool_name}")
 
-    def run_benchmark(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """Run a target-native benchmark loop."""
-        raise NotImplementedError("target benchmark is not implemented")
+    def benchmark_start(self, payload: dict[str, Any]) -> dict[str, Any]:
+        raise NotImplementedError("target benchmark jobs are not implemented")
+
+    def benchmark_status(self, job_id: str) -> dict[str, Any]:
+        raise NotImplementedError("target benchmark jobs are not implemented")
+
+    def benchmark_result(self, job_id: str) -> dict[str, Any]:
+        raise NotImplementedError("target benchmark jobs are not implemented")
+
+    def benchmark_cancel(self, job_id: str, reason: str) -> dict[str, Any]:
+        raise NotImplementedError("target benchmark jobs are not implemented")
 
     @abstractmethod
     def cancel(self, reason: str) -> None:

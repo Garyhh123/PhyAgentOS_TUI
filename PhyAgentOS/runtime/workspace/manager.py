@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 import threading
 import time
 from dataclasses import dataclass, field
@@ -53,6 +54,7 @@ sessions:
     target_ref: target://target_id_from_TARGETS
     skillruntime_ref: skillruntime://skillruntime_id_from_SKILLRUNTIME
     task_description: user-facing task description
+    verification_profile: strict
     status: pending
     priority: normal
     timeouts:
@@ -73,6 +75,7 @@ sessions:
       replan_every_steps: 5
       action_chunk_mode: chunk_buffer
       chunk_switch_mode: hard_switch
+      reset_policy: session_runner
       steps: null
     runtime_hints:
       perception_queries: []
@@ -94,6 +97,19 @@ Rules:
   that target's `supported_skillruntimes`.
 - Use endpoint values declared in `TARGETS.md` unless the user explicitly
   provides a different endpoint.
+- For benchmark work, match `TARGETS.md benchmark_capabilities` against the
+  structured `SKILLRUNTIME.md benchmark` declaration before writing a Session.
+  Record `benchmark.execution_mode` explicitly; never infer it from
+  `runtime_kind`.
+- A `policy_loop` benchmark uses one root Session per episode and
+  `execution.reset_policy: session_runner`. A `target_native` benchmark uses
+  one root Session per suite, a benchmark-specific BuiltinSkillRuntime, and
+  `execution.reset_policy: skillruntime_managed`.
+- Set the Session-level `verification_profile` to `strict`, `audit`, or
+  `recovery`. Verification provider, endpoint, timeout, retention, and budget
+  are global Agent configuration and must not be copied into the Session.
+- Never call `target.benchmark.*` directly. Target-native access belongs to the
+  selected BuiltinSkillRuntime through `TargetSessionHandle`.
 - Builtin command runtimes such as `go2_builtin_command` must include
   structured `execution.steps`; do not rely on `task_description` for the
   executable command. For Go2, use commands exposed by the target, for example:
@@ -152,6 +168,7 @@ class RuntimeWorkspaceManager:
         self.workspace = config.runtime_workspace_path
         self.environment_workspace = config.workspace_path
         self._watchdog: BackgroundWatchdog | None = None
+        self._verification_token = secrets.token_urlsafe(32)
 
     def provision(self) -> RuntimeWorkspaceReport:
         report = RuntimeWorkspaceReport(workspace=self.workspace)
@@ -176,7 +193,15 @@ class RuntimeWorkspaceManager:
                 self.workspace,
                 environment_workspace=self.environment_workspace,
                 poll_interval_s=self.config.runtime.watchdog_poll_interval_s,
-                verification_enabled=self.config.agents.verification.enabled,
+                verification_enabled=self.config.agents.verification.service_enabled,
+                verification_settings={
+                    "local_service_url": f"http://{'127.0.0.1' if self.config.agents.verification.service_host == '0.0.0.0' else self.config.agents.verification.service_host}:{self.config.agents.verification.service_port}",
+                    "remote_target_url": self.config.agents.verification.remote_target_url,
+                    "max_replans_per_episode": self.config.agents.verification.max_replans_per_episode,
+                    "max_verifier_calls_per_run": self.config.agents.verification.max_verifier_calls_per_run,
+                    "timeout_s": self.config.agents.verification.timeout_s,
+                    "episode_token": self._verification_token,
+                },
             )
             self._watchdog.start()
             report.watchdog_started = True
@@ -187,6 +212,10 @@ class RuntimeWorkspaceManager:
             return
         self._watchdog.stop()
         self._watchdog = None
+
+    @property
+    def verification_token(self) -> str:
+        return self._verification_token
 
     def _copy_missing_templates(self, templates: Any, report: RuntimeWorkspaceReport) -> None:
         for name in RUNTIME_TEMPLATE_NAMES:
@@ -397,11 +426,13 @@ class BackgroundWatchdog:
         environment_workspace: Path,
         poll_interval_s: float,
         verification_enabled: bool,
+        verification_settings: dict[str, Any],
     ):
         self.workspace = workspace
         self.environment_workspace = environment_workspace
         self.poll_interval_s = max(0.05, float(poll_interval_s))
         self.verification_enabled = verification_enabled
+        self.verification_settings = dict(verification_settings)
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="phyagentos-runtime-watchdog", daemon=True)
 
@@ -417,6 +448,7 @@ class BackgroundWatchdog:
             self.workspace,
             environment_workspace=self.environment_workspace,
             verification_enabled=self.verification_enabled,
+            verification_settings=self.verification_settings,
         )
         while not self._stop.is_set():
             try:

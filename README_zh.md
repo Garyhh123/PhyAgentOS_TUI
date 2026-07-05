@@ -32,6 +32,7 @@
 
 | 版本 | 日期 | 更新内容 |
 |:-----|:-----|:---------|
+| ![v0.1.7](https://img.shields.io/badge/v0.1.7-47A882) | 2026-07-5 | 支持 Policy loop 以及 Target native builtin 路径的 Benchmarking，并加入了 Agent 验证与失败恢复服务 ｜
 | ![v0.1.6](https://img.shields.io/badge/v0.1.6-47A882) | 2026-06-27 | 支持 Behavior 1K Benchmark；用于 Agent 校验的 SessionVerfier; VerifySessionTool|
 | ![v0.1.5](https://img.shields.io/badge/v0.1.5-47A882) | 2026-06-11 | 清理协议文件及文档，game 场景分离至 `general-game-agent` 分支独立推进；当前分支聚焦仿真 & 真机重构 |
 | ![v0.1.4](https://img.shields.io/badge/v0.1.4-11648A) | 2026-06-5 | 优化用户友好的启动流程; 通信协议规范; 更合理的代码规范; Game Agent & Benchmarking 就绪 |
@@ -153,28 +154,39 @@ paos agent
 
 **可选：连接 Runtime 服务**
 
-```bash
-# LIBERO benchmark TargetWS 机器
-MUJOCO_GL=egl PYTHONWARNINGS=ignore \
-conda run -n liberopi python PhyAgentOS/runtime/targets/remote/libero/server.py \
-  --host 0.0.0.0 --port 9002
+下面的示例通过 `LiberoBenchmarkSkillRuntime` 的 builtin 路径，在启用
+episode replan 的情况下使用官方 PI0.5 policy 评估 `libero_spatial`。
+三个终端位于同一主机，所有命令均从项目根目录执行。
 
-# pi0.5 policy 机器
-conda run -n lerobot-pi python -m PhyAgentOS.runtime.policy.openpi.lerobot_pi0_server \
-  --model-dir /path/to/pi05/checkpoint --host 0.0.0.0 --port 8000
+```bash
+# 终端 1：LIBERO TargetWS
+MUJOCO_GL=egl PYTHONWARNINGS=ignore \
+conda run --no-capture-output -n libero \
+  python PhyAgentOS/runtime/targets/remote/libero/server.py \
+  --host 0.0.0.0 --port 9002 \
+  --camera-height 256 --camera-width 256 \
+  --max-steps 300 --num-steps-wait 10 \
+  --control-mode relative
+
+# 终端 2：官方 OpenPI PI0.5 policy server
+conda run --no-capture-output -n openpi \
+  python -m PhyAgentOS.runtime.policy.openpi.native_openpi_server \
+  --policy-config pi05_libero \
+  --checkpoint-dir gs://openpi-assets/checkpoints/pi05_libero \
+  --host 0.0.0.0 --port 8000
+
+# 终端 3：Agent、Watchdog 与 Verification Service
+paos agent --workspace ~/.PhyAgentOS/workspace -m \
+  "使用 PI0.5 评估 LIBERO 的 libero_spatial suite。选择 libero_real_remote target、libero_target_benchmark builtin runtime、target_native 执行路径和 recovery 校验；task id 使用 0-9，init-state id 使用 0-49，max_steps 设为 300，policy endpoint 使用 openpi://127.0.0.1:8000。"
 ```
 </td>
 </tr>
 </table>
 
-当 config 启用 runtime 时，`paos agent` 和 `paos gateway` 会自动创建
-runtime workspace，并启动 session watchdog。Runtime target 由
-`TARGETS.md` 声明，可执行运行时由 `SKILLRUNTIME.md` 声明；Agent 通过向
-`SESSIONS.md` 追加 session 来排队执行任务。
-
-```bash
-paos agent -m "运行已配置的 LIBERO benchmark 任务"
-```
+启动终端 3 前，需要启用 `libero_real_remote` 并配置 Runtime verification。
+完整的全局配置、Target、SkillRuntime、Session、benchmark、verification 和
+远程部署参数参见 [Runtime 参数配置参考](docs/zh/04-runtime-configuration-reference.md)，
+其中包含 LIBERO 配置示例。
 
 ---
 

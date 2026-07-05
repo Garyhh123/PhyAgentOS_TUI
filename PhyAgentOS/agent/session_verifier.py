@@ -11,10 +11,11 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
-import json_repair
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from PhyAgentOS.providers.base import LLMProvider
+from PhyAgentOS.verification.engine import VerificationEngine
+from PhyAgentOS.verification.service import VerificationServiceProcess
 from PhyAgentOS.runtime.schemas import SessionResult, SessionSpec, SessionStatus
 from PhyAgentOS.runtime.schemas.common import utc_now
 from PhyAgentOS.runtime.state_io.atomic_file import atomic_write_text
@@ -65,10 +66,16 @@ class SessionVerifier:
         rgb_retention: Literal["all", "failed", "none"] = "failed",
         poll_interval_s: float = 1.0,
         worker_id: str | None = None,
+        timeout_s: float = 60.0,
+        service_host: str = "127.0.0.1",
+        service_port: int = 8100,
+        episode_token: str | None = None,
+        service_provider_spec: dict[str, Any] | None = None,
     ):
         self.workspace = Path(workspace).expanduser()
         self.provider = provider
         self.model = model
+        self.engine = VerificationEngine(provider=provider, model=model, timeout_s=timeout_s)
         self.max_replans = max_replans
         self.rgb_retention = rgb_retention
         self.poll_interval_s = max(0.05, float(poll_interval_s))
@@ -76,8 +83,21 @@ class SessionVerifier:
         self.registry = SessionRegistry(self.workspace / "SESSIONS.md")
         self.result_writer = ResultWriter(self.workspace)
         self._stopped = False
+        self.service = VerificationServiceProcess(
+            engine=self.engine,
+            host=service_host,
+            port=service_port,
+            episode_token=episode_token or "episode-verification-disabled",
+            provider_spec=service_provider_spec,
+        )
+
+    async def start(self) -> None:
+        """Start the child service and wait until its readiness probe succeeds."""
+        if not self._stopped:
+            await asyncio.to_thread(self.service.start)
 
     async def run(self) -> None:
+        await self.start()
         while not self._stopped:
             ran = await self.run_once()
             if not ran:
@@ -85,6 +105,7 @@ class SessionVerifier:
 
     def stop(self) -> None:
         self._stopped = True
+        self.service.stop()
 
     async def run_once(self) -> bool:
         session = self.registry.first_awaiting_verification()
@@ -139,6 +160,13 @@ class SessionVerifier:
         except asyncio.CancelledError:
             self.registry.release_verification(session.session_id, self.worker_id)
             raise
+        except VerificationEvidenceError as exc:
+            result = session.result.model_copy(deep=True)
+            result.metadata["verification"] = {
+                "status": "skipped", "reason": str(exc), "bundle": "agent_session_verification_v2"
+            }
+            self.registry.mark_finished(session.session_id, result)
+            return self._outcome(True, "skipped", session.session_id, mode="apply", status=result.status, message=str(exc))
         except Exception as exc:
             logger.exception("session verification failed for %s", session.session_id)
             self._mark_verification_error(session, exc, source)
@@ -252,10 +280,11 @@ class SessionVerifier:
 
     async def _verify(self, session: SessionSpec) -> VerificationVerdict:
         bundle = self._load_bundle(session)
-        rgb_paths = bundle.get("rgb_paths")
-        if not isinstance(rgb_paths, list) or not rgb_paths:
+        initial_paths = bundle.get("initial_rgb_paths")
+        final_paths = bundle.get("final_rgb_paths")
+        if not isinstance(initial_paths, list) or not initial_paths or not isinstance(final_paths, list) or not final_paths:
             raise VerificationEvidenceError(
-                "verification RGB evidence is unavailable or was removed by retention policy"
+                "paired initial/final RGB evidence is unavailable"
             )
         content: list[dict] = [
             {
@@ -263,12 +292,12 @@ class SessionVerifier:
                 "text": (
                     "Verify whether the physical task is semantically complete. Runtime success only "
                     "means execution finished; it is not proof of task completion. Use the task, final "
-                    "RGB evidence, runtime result, ENVIRONMENT.md, history, and lessons below.\n\n"
+                    "initial/final RGB evidence, runtime result, ENVIRONMENT.md, history, and lessons below.\n\n"
                     f"VERIFICATION_BUNDLE:\n{json.dumps(bundle, ensure_ascii=False, indent=2)}"
                 ),
             }
         ]
-        for relative_path in rgb_paths:
+        for relative_path in [*initial_paths, *final_paths]:
             image_path = self._workspace_path(str(relative_path))
             if not image_path.is_file():
                 raise VerificationEvidenceError(f"verification RGB evidence does not exist: {relative_path}")
@@ -277,27 +306,17 @@ class SessionVerifier:
                 {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}"}}
             )
 
-        response = await self.provider.chat_with_retry(
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are the Agent session verifier. Return one JSON object only with keys: "
-                        "verdict (success|replan|failure), evidence (non-empty string array), "
-                        "failure_reason (string|null), replan_task_description (string|null), and "
-                        "lesson (non-empty string). Choose replan only when another executable session "
-                        "can correct the task; choose failure when the task cannot be corrected by replanning."
-                    ),
-                },
-                {"role": "user", "content": content},
-            ],
-            model=self.model,
-            tools=None,
-            temperature=0.0,
+        data = await self.engine.complete(
+            system_prompt=(
+                "You are the Agent session verifier. Return one JSON object only with keys: "
+                "verdict (success|replan|failure), evidence (non-empty string array), "
+                "failure_reason (string|null), replan_task_description (string|null), and "
+                "lesson (non-empty string). Choose replan only when another executable session "
+                "can correct the task; choose failure when the task cannot be corrected by replanning."
+            ),
+            content=content,
         )
-        if response.finish_reason == "error" or not response.content:
-            raise RuntimeError(response.content or "verifier model returned no content")
-        return VerificationVerdict.model_validate(json_repair.loads(response.content))
+        return VerificationVerdict.model_validate(data)
 
     def _load_bundle(self, session: SessionSpec) -> dict[str, Any]:
         if not session.result.artifact_dir:
@@ -306,7 +325,7 @@ class SessionVerifier:
         if not path.is_file():
             raise VerificationEvidenceError(f"verification bundle does not exist: {path}")
         payload = json.loads(path.read_text(encoding="utf-8"))
-        if payload.get("version") != "agent_session_verification_v1":
+        if payload.get("version") != "agent_session_verification_v2":
             raise VerificationEvidenceError("unsupported verification bundle version")
         return payload
 
@@ -388,7 +407,7 @@ class SessionVerifier:
         )
         session = self.registry.get_session(session_id)
         bundle = self._load_bundle(session)
-        paths = [str(path) for path in bundle.get("rgb_paths", [])]
+        paths = [str(path) for key in ("initial_rgb_paths", "final_rgb_paths") for path in bundle.get(key, [])]
         deleted: list[str] = []
         remaining: list[str] = []
         errors: list[dict[str, str]] = []
@@ -420,7 +439,9 @@ class SessionVerifier:
             "deleted_paths": deleted,
             "errors": errors,
         }
-        bundle["rgb_paths"] = remaining
+        remaining_set = set(remaining)
+        bundle["initial_rgb_paths"] = [path for path in bundle.get("initial_rgb_paths", []) if path in remaining_set]
+        bundle["final_rgb_paths"] = [path for path in bundle.get("final_rgb_paths", []) if path in remaining_set]
         bundle["rgb_retention"] = record
         bundle_path = self._workspace_path(session.result.artifact_dir or "") / "verification_bundle.json"
         atomic_write_text(bundle_path, json.dumps(bundle, indent=2, sort_keys=True) + "\n")

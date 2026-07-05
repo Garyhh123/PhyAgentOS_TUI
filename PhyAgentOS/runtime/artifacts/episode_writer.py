@@ -62,7 +62,7 @@ class EpisodeWriter:
         atomic_write_text(episode_path, json.dumps(_jsonable(payload), indent=2, sort_keys=True) + "\n")
         return artifact_dir
 
-    def write_rgb_frames(self, artifact_dir: Path, observation: dict[str, Any] | None) -> list[Path]:
+    def write_rgb_frames(self, artifact_dir: Path, observation: dict[str, Any] | None, *, phase: str = "final") -> list[Path]:
         """Persist every RGB array in the final raw observation as a PNG."""
         if not observation:
             return []
@@ -70,7 +70,7 @@ class EpisodeWriter:
         paths: list[Path] = []
         for index, (name, array) in enumerate(_find_rgb_arrays(observation), start=1):
             rgb_dir.mkdir(parents=True, exist_ok=True)
-            path = rgb_dir / f"final_{index:02d}_{_safe_name(name)}.png"
+            path = rgb_dir / f"{phase}_{index:02d}_{_safe_name(name)}.png"
             path.write_bytes(_encode_rgb_png(array))
             paths.append(path)
         return paths

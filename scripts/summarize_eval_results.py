@@ -57,7 +57,7 @@ def summarize_workspace(workspace: Path) -> tuple[int, int, int]:
         benchmark_first_success += first
         benchmark_final_success += final
         benchmark_total += int(benchmark.get("total_episodes") or 0)
-        has_final = has_final or final != first or str(benchmark.get("assist_mode", "disabled")) != "disabled"
+        has_final = has_final or final != first or str(benchmark.get("verification_profile", "strict")) == "recovery"
     if benchmark_total:
         success = benchmark_first_success
         total = benchmark_total

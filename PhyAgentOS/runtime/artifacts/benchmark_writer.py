@@ -171,7 +171,7 @@ def _summary(
         "suite_id": benchmark.get("suite") or (session.benchmark.suite_id if session.benchmark else None),
         "policy_id": session.benchmark.policy_id if session.benchmark else None,
         "execution_mode": benchmark.get("execution_mode", "target_native"),
-        "assist_mode": benchmark.get("assist_mode", "disabled"),
+        "verification_profile": benchmark.get("verification_profile", session.verification_profile),
         "status": benchmark.get("status"),
         "execution_success": benchmark.get("status") == "succeeded",
         "target_id": target.id,
@@ -184,6 +184,8 @@ def _summary(
             "final_outcome_successful": final_successes,
         },
         "metrics": {
+            "first_attempt_score": float(first_successes / total) if total else 0.0,
+            "assisted_final_score": float(final_successes / total) if total else 0.0,
             "official_first_attempt_success_rate": float(first_successes / total) if total else 0.0,
             "final_outcome_success_rate": float(final_successes / total) if total else 0.0,
             "mean_policy_latency_ms": benchmark.get("mean_policy_latency_ms"),
@@ -195,6 +197,9 @@ def _summary(
             "recovered_after_replan": recovered,
             "verifier_calls": int(benchmark.get("verifier_calls") or len(verifier_attempts)),
             "verifier_skipped": int(benchmark.get("verifier_skipped") or 0),
+            "configured_max_verifier_calls_per_run": int(benchmark.get("configured_max_verifier_calls_per_run") or 0),
+            "effective_max_verifier_calls_per_run": int(benchmark.get("effective_max_verifier_calls_per_run") or 0),
+            "remaining_verifier_calls": int(benchmark.get("remaining_verifier_calls") or 0),
         },
         "artifacts": {
             "manifest": str((artifact_dir / "manifest.json").relative_to(self_workspace(artifact_dir))),
@@ -228,7 +233,7 @@ def _manifest(
             "target_id": target.id,
             "skillruntime_id": skillruntime_id,
             "suite": benchmark.get("suite"),
-            "assist_mode": benchmark.get("assist_mode", "disabled"),
+            "verification_profile": benchmark.get("verification_profile", session.verification_profile),
             "control_mode": benchmark.get("control_mode"),
             "max_steps": benchmark.get("max_steps"),
         }

@@ -44,6 +44,12 @@ skillruntimes:
   - id: pi05_libero_remote
     runtime: OpenPISkillRuntime
     runtime_kind: policy
+    benchmark:
+      benchmark_id: libero
+      execution_mode: policy_loop
+      target_interface: rollout_episode_v1
+      result_schema: benchmark_execution_result_v1
+      reset_owner: session_runner
     loop_mode: policy_closed_loop
     agent_exposure: none
     supported_target_kinds:
@@ -89,6 +95,30 @@ skillruntimes:
       forbidden:
         - implicit_shape_truncation
         - implicit_representation_cast
+  - id: libero_target_benchmark
+    runtime: LiberoBenchmarkSkillRuntime
+    runtime_kind: builtin
+    loop_mode: target_native_benchmark
+    agent_exposure: none
+    supported_target_kinds: [simulation]
+    observation_contract:
+      observation_type: multimodal
+      empty_observation_allowed: false
+    supports_chunk: false
+    default_replan_every: 1
+    requires:
+      sensors: []
+      environment_outputs: []
+      strict_environment_contract: true
+    adapter_requirements:
+      allowed_bridges: []
+      forbidden: []
+    benchmark:
+      benchmark_id: libero
+      execution_mode: target_native
+      target_interface: target_benchmark_job_v1
+      result_schema: benchmark_execution_result_v1
+      reset_owner: skillruntime
   - id: pipergo2_isaac_vla
     runtime: OpenPISkillRuntime
     runtime_kind: policy

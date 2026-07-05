@@ -35,6 +35,7 @@ class WatchdogSupervisor:
         worker_id: str | None = None,
         environment_workspace: str | Path | None = None,
         verification_enabled: bool = False,
+        verification_settings: dict | None = None,
     ):
         self.paths = RuntimeWorkspacePaths.from_path(workspace)
         self.workspace = self.paths.workspace
@@ -43,6 +44,7 @@ class WatchdogSupervisor:
         )
         self.worker_id = worker_id or f"runtime-watchdog@{socket.gethostname()}"
         self.verification_enabled = verification_enabled
+        self.verification_settings = dict(verification_settings or {})
         self.registry = SessionRegistry(self.paths.sessions)
         self.result_writer = ResultWriter(self.workspace)
         self.watcher = WorkspaceWatcher(self.paths)
@@ -108,6 +110,9 @@ class WatchdogSupervisor:
                 self.registry.mark_rejected(session_id, result)
                 return True
 
+            if session.verification_profile != "strict":
+                self._wait_for_verification_service(session, scheduled.target_spec)
+
             self._write_preflight_metadata(session_id, preflight_result)
 
             self.registry.mark_running(session_id)
@@ -133,6 +138,7 @@ class WatchdogSupervisor:
                     perception_runtime=self.perception_runtime,
                     perception_plan=perception_plan,
                     target_tool_manifest=preflight_result.target_tool_manifest,
+                    verification_settings=self.verification_settings,
                 )
                 thread_handle = RunnerThreadHandle(runner)
                 thread_handle.start()
@@ -189,13 +195,20 @@ class WatchdogSupervisor:
                 result,
             )
             self.result_writer.write_session_history(session, scheduled.target_spec, result)
-            if self.verification_enabled and result.success:
+            verification_profile = session.verification_profile
+            session_verification = (
+                self.verification_enabled
+                and verification_profile in {"audit", "recovery"}
+                and (session.benchmark is None or session.benchmark.execution_mode == "policy_loop")
+            )
+            if session_verification:
                 self.result_writer.write_verification_bundle(
                     session,
                     scheduled.target_spec,
                     scheduled.skillruntime_id,
                     result,
                     environment_workspace=self.environment_workspace,
+                    initial_observation=runner.initial_observation if runner is not None else None,
                     final_observation=runner.final_observation if runner is not None else None,
                 )
                 self.registry.mark_awaiting_verification(session_id, result)
@@ -214,7 +227,10 @@ class WatchdogSupervisor:
             skillruntimes_doc = SkillRuntimeDocument.model_validate(read_yaml_block(self.paths.skillruntimes))
             return sessions_doc, targets_doc, skillruntimes_doc
         except ValidationError as exc:
-            raise SchemaValidationError(str(exc)) from exc
+            message = str(exc)
+            if "benchmark" in message or "verification_profile" in message:
+                message = "UNSUPPORTED_BENCHMARK_SCHEMA: " + message
+            raise SchemaValidationError(message) from exc
 
     def _load_registries(self) -> tuple[TargetsDocument, SkillRuntimeDocument]:
         try:
@@ -222,7 +238,10 @@ class WatchdogSupervisor:
             skillruntimes_doc = SkillRuntimeDocument.model_validate(read_yaml_block(self.paths.skillruntimes))
             return targets_doc, skillruntimes_doc
         except ValidationError as exc:
-            raise SchemaValidationError(str(exc)) from exc
+            message = str(exc)
+            if "benchmark" in message:
+                message = "UNSUPPORTED_BENCHMARK_SCHEMA: " + message
+            raise SchemaValidationError(message) from exc
 
     def _build_policy_client(self, session, target_spec):
         action_cfg = target_spec.config.get("action", {})
@@ -248,6 +267,37 @@ class WatchdogSupervisor:
 
         timeout_s = float(session.timeouts.execute_timeout_s)
         time.sleep(max(0.01, min(0.05, timeout_s / 10.0)))
+
+    def _wait_for_verification_service(self, session, target_spec) -> None:
+        import time
+        from urllib import error, request
+        from urllib.parse import urlparse
+
+        service_url = str(self.verification_settings.get("local_service_url") or "").rstrip("/")
+        if not self.verification_enabled or not service_url:
+            raise SchemaValidationError("VERIFICATION_SERVICE_UNAVAILABLE: global verification service is disabled")
+        target_endpoint = session.routing.target_endpoint or target_spec.runtime.target_endpoint
+        target_host = urlparse(str(target_endpoint or "").replace("targetws://", "ws://", 1)).hostname
+        if (
+            session.benchmark is not None
+            and session.benchmark.execution_mode == "target_native"
+            and target_spec.target_class == "remote"
+            and target_host not in {None, "localhost", "127.0.0.1", "::1"}
+            and not self.verification_settings.get("remote_target_url")
+        ):
+            raise SchemaValidationError("VERIFICATION_REMOTE_URL_REQUIRED: configure agents.verification.remoteTargetUrl")
+        opener = request.build_opener(request.ProxyHandler({}))
+        deadline = time.monotonic() + float(session.timeouts.preflight_timeout_s)
+        last_error = "not ready"
+        while time.monotonic() < deadline:
+            try:
+                with opener.open(service_url + "/healthz", timeout=0.5) as response:  # noqa: S310
+                    if response.status == 200:
+                        return
+            except (OSError, TimeoutError, error.URLError) as exc:
+                last_error = str(exc)
+            time.sleep(0.05)
+        raise SchemaValidationError("VERIFICATION_SERVICE_UNAVAILABLE: " + last_error)
 
     def _preflight_error_message(self, preflight_result) -> str:
         if not preflight_result.missing_items:

@@ -86,20 +86,23 @@ class ResultWriter:
         result: SessionResult,
         *,
         environment_workspace: Path,
+        initial_observation: dict[str, Any] | None,
         final_observation: dict[str, Any] | None,
     ) -> Path:
         """Write the immutable evidence consumed by the Agent verifier."""
         if not result.artifact_dir:
             raise ValueError("verification bundle requires an episode artifact directory")
         artifact_dir = self.workspace / result.artifact_dir
-        rgb_paths = self.episode_writer.write_rgb_frames(artifact_dir, final_observation)
+        initial_paths = self.episode_writer.write_rgb_frames(artifact_dir, initial_observation, phase="initial")
+        final_paths = self.episode_writer.write_rgb_frames(artifact_dir, final_observation, phase="final")
         payload = {
-            "version": "agent_session_verification_v1",
+            "version": "agent_session_verification_v2",
             "session": session.model_dump(mode="json", exclude_none=True),
             "target_id": target.id,
             "skillruntime_id": skillruntime_id,
             "runtime_result": result.model_dump(mode="json", exclude_none=True),
-            "rgb_paths": [str(path.relative_to(self.workspace)) for path in rgb_paths],
+            "initial_rgb_paths": [str(path.relative_to(self.workspace)) for path in initial_paths],
+            "final_rgb_paths": [str(path.relative_to(self.workspace)) for path in final_paths],
             "environment_md": self._read_optional(environment_workspace / "ENVIRONMENT.md"),
             "history_md": self._read_optional(self.workspace / "LOG.md"),
             "lessons_md": self._read_optional(self.workspace / "LESSONS.md"),

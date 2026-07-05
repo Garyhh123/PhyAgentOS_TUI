@@ -63,11 +63,10 @@ former and `lerobot_pi0_server.py` for the latter.
 
 ## Official PI0.5 4-Suite LIBERO Evaluation
 
-This is the updated target-native benchmark flow. It creates one PAOS session
+The target-native benchmark flow creates one PAOS session
 per suite and lets the LIBERO target run the 10 tasks x 50 init states loop
-internally against the PI0.5 policy endpoint. Restart the LIBERO TargetWS
-server from this checkout before using this flow, because it requires the
-`target.benchmark` RPC.
+internally against the PI0.5 policy endpoint. The LIBERO TargetWS server uses
+the typed `target.benchmark.*` job RPCs for this path.
 
 Start both servers from the repository root.
 
@@ -133,71 +132,26 @@ conda run --no-capture-output -n paos python \
   --run-root "$RUN_ROOT"
 ```
 
-### Optional Agent-assisted Target-native Evaluation
+### Target-native Recovery Evaluation
 
-Agent-assisted target-native evaluation still creates one PAOS session per
+Target-native recovery creates one PAOS session per
 suite. The first attempt is preserved as the official score. When an episode
 fails, the LIBERO target immediately sends that episode's initial/final RGB
 evidence to the verifier and retries the same task/init-state inside the same
 suite session when the verifier returns `replan`. The summary reports both
 first-attempt and final-outcome rates.
 
-Start the verifier service in the `paos` environment:
+The Verification Service is started and supervised by `paos agent`; no fourth
+terminal is required.
+
+Configure the Agent verification settings and enable `libero_real_remote` in
+`TARGETS.md` as described in the project README. With the LIBERO and PI0.5
+servers running, use the Agent as the third terminal:
 
 ```bash
-export DMXAPI_API_KEY="..."
-PYTHONPATH=$(pwd) conda run --no-capture-output -n paos python \
-  scripts/run_benchmark_episode_verifier.py \
-  --host 127.0.0.1 --port 8100 \
-  --base-url https://www.dmxapi.cn/v1 \
-  --model qwen3.5-flash
+paos agent --workspace ~/.PhyAgentOS/workspace -m \
+  "Evaluate PI0.5 on all four LIBERO suites with libero_real_remote and libero_target_benchmark. Use target_native execution, recovery verification, task ids 0-9, init-state ids 0-49, relative control, max_steps 300, and policy endpoint openpi://127.0.0.1:8020."
 ```
-
-Use the same LIBERO TargetWS server and PI0.5 policy server from the official
-flow above, then generate agent-assisted workspaces:
-
-```bash
-RUN_ROOT=tests/openpi/pi05/libero_target_agent_assisted_$(date -u +%Y%m%dT%H%M%SZ)
-export RUN_ROOT
-mkdir -p "$RUN_ROOT"
-
-for SUITE in libero_spatial libero_object libero_goal libero_10; do
-  PYTHONPATH=$(pwd) conda run -n paos python scripts/prepare_libero_target_benchmark.py \
-    --workspace "$RUN_ROOT/$SUITE" \
-    --suite "$SUITE" \
-    --policy-id pi05 \
-    --target-endpoint targetws://127.0.0.1:9022 \
-    --policy-endpoint openpi://127.0.0.1:8020 \
-    --task-ids 0-9 \
-    --init-state-ids 0-49 \
-    --control-mode relative \
-    --agent-assist-mode retry \
-    --agent-assist-trigger failed_only \
-    --agent-assist-inline \
-    --verifier-endpoint http://127.0.0.1:8100/verify_benchmark_episode \
-    --verifier-failure-policy skip \
-    --max-replans-per-episode 1 \
-    --max-verifier-calls-per-suite 50 \
-    --force-init
-done
-
-PYTHONPATH=$(pwd) conda run --no-capture-output -n paos python \
-  scripts/run_eval_watchdog.py \
-  --run-root "$RUN_ROOT"
-
-conda run --no-capture-output -n paos python \
-  scripts/summarize_eval_results.py \
-  --run-root "$RUN_ROOT"
-```
-
-For PI0, use the same agent-assisted command and change only:
-
-| Location | PI0.5 value | PI0 value |
-| --- | --- | --- |
-| Policy server `--policy-config` | `pi05_libero` | `pi0_libero` |
-| Policy server `--checkpoint-dir` | `gs://openpi-assets/checkpoints/pi05_libero` | `gs://openpi-assets/checkpoints/pi0_libero` |
-| `RUN_ROOT` | `tests/openpi/pi05/libero_target_agent_assisted_...` | `tests/openpi/pi0/libero_target_agent_assisted_...` |
-| `prepare_libero_target_benchmark.py --policy-id` | `pi05` | `pi0` |
 
 ## PI0 Eval
 

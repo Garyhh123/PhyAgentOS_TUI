@@ -51,6 +51,7 @@ def main() -> int:
     )
     parser.add_argument("--execute-timeout-s", type=float, default=900)
     parser.add_argument("--policy-timeout-s", type=float, default=180)
+    parser.add_argument("--verification-profile", default="strict", choices=["strict", "audit", "recovery"])
     parser.add_argument("--force-init", action="store_true", help="Overwrite existing runtime template files")
     parser.add_argument("--allow-duplicate-session-ids", action="store_true")
     parser.add_argument("--no-live-discovery", action="store_true")
@@ -90,7 +91,7 @@ def main() -> int:
     print(f"control_mode: {control_mode}")
     print(f"sessions_added: {created}")
     print("next:")
-    print(f"  PYTHONPATH={ROOT} conda run -n paos python scripts/run_runtime_watchdog.py --workspace {workspace}")
+    print(f"  paos agent --workspace {workspace}")
     return 0
 
 
@@ -191,6 +192,14 @@ def _upsert_target(workspace: Path, args, skillruntime_id: str, max_steps: int, 
     if skillruntime_id not in supported:
         supported.append(skillruntime_id)
     target["supported_skillruntimes"] = supported
+    target["benchmark_capabilities"] = [{
+        "benchmark_id": "libero",
+        "suites": ["libero_spatial", "libero_object", "libero_goal", "libero_10"],
+        "execution_modes": [
+            {"mode": "policy_loop", "interface": "rollout_episode_v1", "reset_owner": "session_runner"},
+            {"mode": "target_native", "interface": "target_benchmark_job_v1", "reset_owner": "skillruntime"},
+        ],
+    }]
     target.setdefault("observation", {"observation_type": "multimodal", "empty_observation_allowed": False})
     target.setdefault("perception", {"enabled": False, "strict_preflight": True})
     target["config"] = {
@@ -229,6 +238,11 @@ def _upsert_skillruntime(workspace: Path, skillruntime_id: str, policy_id: str, 
         "observation_contract": {"observation_type": "multimodal", "empty_observation_allowed": False},
         "supports_chunk": True,
         "default_replan_every": 10,
+        "benchmark": {
+            "benchmark_id": "libero", "execution_mode": "policy_loop",
+            "target_interface": "rollout_episode_v1", "result_schema": "benchmark_execution_result_v1",
+            "reset_owner": "session_runner",
+        },
         "requires": {"sensors": [], "environment_outputs": [], "strict_environment_contract": True},
         "output_contract": {
             "action": {
@@ -282,6 +296,7 @@ def _append_sessions(
                     "target_ref": f"target://{args.target_id}",
                     "skillruntime_ref": f"skillruntime://{skillruntime_id}",
                     "task_description": language,
+                    "verification_profile": args.verification_profile,
                     "status": "pending",
                     "priority": "normal",
                     "timeouts": {
@@ -321,6 +336,7 @@ def _append_sessions(
                         "instance_id": init_id,
                         "policy_id": args.policy_id,
                         "run_id": run_id,
+                        "execution_mode": "policy_loop",
                     },
                     "result": {},
                 }

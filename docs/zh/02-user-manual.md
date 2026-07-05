@@ -232,18 +232,20 @@ v0.1.6 当前源码没有可安装的 `hal` Driver Runtime。对应 JSON 示例�
 {
   "agents": {
     "verification": {
-      "enabled": true,
+      "serviceEnabled": true,
       "model": null,
-      "maxReplans": 1,
-      "rgbRetention": "failed"
+      "timeoutS": 60,
+      "evidenceRetention": "none",
+      "maxReplansPerEpisode": 2,
+      "maxVerifierCallsPerRun": 50
     }
   }
 }
 ```
 
 - `all`：所有终态保留 RGB。
-- `failed`：成功后删除 RGB，失败/replan 保留；这是默认值。
-- `none`：有效 verdict 后删除 RGB。
+- `failed`：成功后删除 RGB，失败/replan 保留。
+- `none`：有效 verdict 后删除 RGB；这是默认值。
 
 证据位于 `artifacts/runtime/<session_id>/`。验收失败不会把 Runtime 执行事实改写为另一次执行；它通过 Session 终态、Verification Attempt 和 LESSONS 记录语义结论。
 
@@ -297,10 +299,11 @@ python scripts/init_runtime_workspace.py --workspace /path/to/workspace
 
 ### Session 执行成功但未终态
 
-如果启用了 `agents.verification.enabled`，这是预期的 `awaiting_verification`。保持 Agent/Verifier 运行，或由 Agent 调用 `verify_session`。
+如果 Session 选择了 `audit` 或 `recovery`，这是预期的 `awaiting_verification`。保持 `paos agent` 运行，或由 Agent 调用 `verify_session`。
 
 ## 后续阅读
 
 - [框架介绍](01-framework-introduction.md)
+- [Runtime 参数配置参考](04-runtime-configuration-reference.md)
 - [开发者手册](03-developer-manual.md)
 - [文档索引](../README.md)

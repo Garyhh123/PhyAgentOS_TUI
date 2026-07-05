@@ -232,18 +232,20 @@ The v0.1.6 source does not ship an installable `hal` Driver Runtime. Historical 
 {
   "agents": {
     "verification": {
-      "enabled": true,
+      "serviceEnabled": true,
       "model": null,
-      "maxReplans": 1,
-      "rgbRetention": "failed"
+      "timeoutS": 60,
+      "evidenceRetention": "none",
+      "maxReplansPerEpisode": 2,
+      "maxVerifierCallsPerRun": 50
     }
   }
 }
 ```
 
 - `all`: keep RGB for every terminal state.
-- `failed`: delete RGB after success and retain it for failure/replan; this is the default.
-- `none`: delete RGB after any valid verdict.
+- `failed`: delete RGB after success and retain it for failure/replan.
+- `none`: delete RGB after any valid verdict; this is the default.
 
 Evidence lives under `artifacts/runtime/<session_id>/`. A failed semantic verdict does not rewrite Runtime execution as another execution. The Session state, verification attempt, and LESSONS record the semantic conclusion.
 
@@ -297,10 +299,11 @@ Start the service before the Watchdog, verify host/port reachability, and ensure
 
 ### Runtime succeeded but the Session is not terminal
 
-With `agents.verification.enabled`, `awaiting_verification` is expected. Keep the Agent/Verifier running or ask the Agent to call `verify_session`.
+With a Session `audit` or `recovery` profile, `awaiting_verification` is expected. Keep `paos agent` running or ask the Agent to call `verify_session`.
 
 ## Further Reading
 
 - [Framework Introduction](01-framework-introduction.md)
+- [Runtime Configuration Reference](04-runtime-configuration-reference.md)
 - [Developer Manual](03-developer-manual.md)
 - [Documentation Index](../README.md)
