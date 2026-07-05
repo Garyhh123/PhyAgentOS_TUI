@@ -159,12 +159,12 @@ conda run --no-capture-output -n paos python \
   --run-root "$RUN_ROOT"
 ```
 
-## 4-Suite LIBERO Result
+Agent-assisted run completed successfully with the following results:
 
-| Suite | Success | Success rate |
+| Suite | First attempt(original) | Final after agent retry |
 | --- | ---: | ---: |
-| `libero_spatial` | 485 / 500 | 97.0% |
-| `libero_object` | 485 / 500 | 97.0% |
-| `libero_goal` | 492 / 500 | 98.4% |
-| `libero_10` | 480 / 500 | 96.0% |
-| Overall | 1942 / 2000 | 97.1% |
+| `libero_spatial` | 486 / 500 = 97.2% | 495 / 500 = 99.0% |
+| `libero_object` | 487 / 500 = 97.4% | 489 / 500 = 97.8% |
+| `libero_goal` | 490 / 500 = 98.0% | 495 / 500 = 99.0% |
+| `libero_10` | 483 / 500 = 96.6% | 493 / 500 = 98.6% |
+| Overall | 1946 / 2000 = 97.3% | 1972 / 2000 = 98.6% |
