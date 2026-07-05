@@ -1,29 +1,34 @@
 """Standalone TargetWS server backed by a REAL LIBERO simulation.
 
-Runs in the `liberopi` conda env (cloned from `libero`, py3.8) which has
+Runs in a LIBERO conda env (for example `libero`, py3.8) which has
 libero + robosuite + mujoco. Deliberately self-contained: it does NOT import
 the PhyAgentOS package (that would pull pydantic / py3.10+ syntax into py3.8).
 It speaks the TargetWS msgpack-over-websocket wire format, so the runtime side
 (`LiberoRemoteTargetProxy` + `LiberoTargetAdapter`, in the `paos` env) talks to
 it transparently.
 
-Launch (liberopi env):
+Launch (LIBERO env):
 
   MUJOCO_GL=egl PYTHONWARNINGS=ignore \
-  conda run -n liberopi python PhyAgentOS/runtime/targets/remote/libero/server.py \
+  conda run --no-capture-output -n libero python PhyAgentOS/runtime/targets/remote/libero/server.py \
     --host 0.0.0.0 --port 9002 \
     --benchmark-name libero_spatial --task-id 0 --init-state-id 0 \
-    --camera-height 256 --camera-width 256 --max-steps 300 --num-steps-wait 10
+    --camera-height 256 --camera-width 256 --max-steps 300 --num-steps-wait 10 \
+    --control-mode relative
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import functools
+import json
 import os
 import time
 import traceback
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Tuple
+from urllib.parse import urlparse, urlunparse
+from urllib import error as url_error, request as url_request
 
 import numpy as np
 
@@ -72,6 +77,52 @@ def unpackb(data: bytes) -> Any:
     return msgpack.unpackb(data, raw=False, object_hook=_unpack_array)
 
 
+def _pack_policy_array(obj: Any) -> Any:
+    if isinstance(obj, (np.ndarray, np.generic)) and obj.dtype.kind in ("V", "O", "c"):
+        raise ValueError("Unsupported dtype: %s" % obj.dtype)
+    if isinstance(obj, np.ndarray):
+        return {
+            b"__ndarray__": True,
+            b"data": obj.tobytes(),
+            b"dtype": obj.dtype.str,
+            b"shape": obj.shape,
+        }
+    if isinstance(obj, np.generic):
+        return {b"__npgeneric__": True, b"data": obj.item(), b"dtype": obj.dtype.str}
+    return obj
+
+
+def _unpack_policy_array(obj: Dict[Any, Any]) -> Any:
+    if b"__ndarray__" in obj:
+        return np.ndarray(buffer=obj[b"data"], dtype=np.dtype(obj[b"dtype"]), shape=obj[b"shape"])
+    if b"__npgeneric__" in obj:
+        return np.dtype(obj[b"dtype"]).type(obj[b"data"])
+    return obj
+
+
+def policy_packb(payload: Any) -> bytes:
+    return msgpack.packb(payload, default=_pack_policy_array)
+
+
+def policy_unpackb(payload: bytes) -> Any:
+    return _decode_policy_keys(msgpack.unpackb(payload, object_hook=_unpack_policy_array))
+
+
+def _decode_policy_keys(value: Any) -> Any:
+    if isinstance(value, dict):
+        decoded: Dict[Any, Any] = {}
+        for key, item in value.items():
+            if isinstance(key, bytes):
+                key = key.decode("utf-8")
+            decoded[key] = _decode_policy_keys(item)
+        return decoded
+    if isinstance(value, list):
+        return [_decode_policy_keys(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_decode_policy_keys(item) for item in value)
+    return value
+
+
 def make_response(request: Dict[str, Any], response_type: str, payload: Dict[str, Any]) -> bytes:
     return packb(
         {
@@ -93,6 +144,15 @@ class TargetProtocolError(Exception):
     pass
 
 
+def status(message: str) -> None:
+    print("[libero-target] %s" % message, flush=True)
+
+
+async def _run_blocking(func: Any, *args: Any, **kwargs: Any) -> Any:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, functools.partial(func, *args, **kwargs))
+
+
 # --- real LIBERO runtime ------------------------------------------------------
 
 LIBERO_DEFAULT_CONFIG = {
@@ -104,6 +164,7 @@ LIBERO_DEFAULT_CONFIG = {
     "max_chunk_size": 50,
     "max_steps": 300,
     "num_steps_wait": 10,
+    "control_mode": "relative",
     "record_dir": None,
     "record_fps": 20,
 }
@@ -112,7 +173,7 @@ LIBERO_DEFAULT_CONFIG = {
 class LiberoRealRuntime:
     """Real LIBERO benchmark target runtime (one session == one episode)."""
 
-    def __init__(self, config: Dict[str, Any] | None = None):
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.config = dict(LIBERO_DEFAULT_CONFIG)
         self.config.update(config or {})
         self.session_id = None
@@ -128,6 +189,7 @@ class LiberoRealRuntime:
         self._total_reward = 0.0
         self._episode_chunks = []
         self._last_obs = None
+        self._initial_obs = None
         self._frames = []
         self._episode_idx = 0
         self._last_video_path = None
@@ -144,6 +206,10 @@ class LiberoRealRuntime:
         key = (bn, tid, int(self.config["camera_height"]), int(self.config["camera_width"]))
         if self.env is not None and self._env_key == key:
             return
+        status(
+            "loading LIBERO env suite=%s task_id=%d camera=%dx%d"
+            % (bn, tid, int(self.config["camera_width"]), int(self.config["camera_height"]))
+        )
         suite = benchmark.get_benchmark_dict()[bn]()
         task = suite.get_task(tid)
         bddl = os.path.join(get_libero_path("bddl_files"), task.problem_folder, task.bddl_file)
@@ -162,6 +228,10 @@ class LiberoRealRuntime:
         self.init_states = suite.get_task_init_states(tid)
         self.language = str(getattr(task, "language", task.name))
         self._env_key = key
+        status(
+            "env ready suite=%s task_id=%d init_states=%d task=\"%s\""
+            % (bn, tid, len(self.init_states), self.language)
+        )
 
     def describe(self) -> Dict[str, Any]:
         self._ensure_env()
@@ -177,6 +247,7 @@ class LiberoRealRuntime:
                 "robot0_eye_in_hand_image": {"dtype": "uint8", "layout": "HWC"},
                 "robot0_eef_pos": {"dtype": "float32", "shape": [3]},
                 "robot0_eef_quat": {"dtype": "float32", "shape": [4]},
+                "robot0_eef_mat": {"dtype": "float32", "shape": [3, 3]},
                 "robot0_gripper_qpos": {"dtype": "float32", "shape": [2]},
             },
             "action_contract": {
@@ -185,6 +256,7 @@ class LiberoRealRuntime:
                 "dtype": "float32",
                 "normalized": False,
                 "frame": "base",
+                "control_mode": str(self.config.get("control_mode", "relative")),
                 "max_chunk_size": int(self.config["max_chunk_size"]),
             },
         }
@@ -192,6 +264,7 @@ class LiberoRealRuntime:
     def configure_session(self, ctx: Dict[str, Any]) -> Dict[str, Any]:
         self.session_id = ctx.get("session_id", self.session_id)
         self.config.update(ctx.get("libero", {}))
+        status("configured session=%s %s" % (self.session_id or "<none>", self._short_config()))
         return {"configured": True, "session_id": self.session_id, "libero": self._libero_metadata()}
 
     def start_session(self, ctx: Dict[str, Any]) -> Dict[str, Any]:
@@ -201,16 +274,22 @@ class LiberoRealRuntime:
     def reset(self, ctx: Dict[str, Any]) -> Dict[str, Any]:
         self.session_id = ctx.get("session_id", self.session_id)
         self.config.update(ctx.get("libero", {}))
+        status("reset requested session=%s %s" % (self.session_id or "<none>", self._short_config()))
         self._ensure_env()
         self.env.reset()
         isid = int(self.config.get("init_state_id", 0))
         obs = self.env.set_init_state(self.init_states[isid])
         for _ in range(int(self.config.get("num_steps_wait", 10))):
             obs, _, _, _ = self.env.step(LIBERO_DUMMY_ACTION)
-        # pi05 emits relative/delta end-effector actions; match the official
-        # LiberoEnv which sets the OSC controller to delta mode after settling.
+        # Most OpenPI/OpenVLA LIBERO policies emit relative/delta end-effector
+        # actions. Some LeRobot/X-VLA evaluations use absolute control.
+        use_delta = str(self.config.get("control_mode", "relative")).lower() not in {"absolute", "abs"}
         for robot in self.env.robots:
-            robot.controller.use_delta = True
+            robot.controller.use_delta = use_delta
+        status(
+            "episode ready session=%s control_mode=%s use_delta=%s task=\"%s\""
+            % (self.session_id or "<none>", str(self.config.get("control_mode", "relative")), use_delta, self.language)
+        )
         self.step_idx = 0
         self.success = False
         self.done = False
@@ -220,6 +299,7 @@ class LiberoRealRuntime:
         self._last_video_path = None
         self._record_frame(obs)
         self._last_obs = self._format_obs(obs)
+        self._initial_obs = self._last_obs
         self._last_status = {
             "accepted": True,
             "safety_status": "ok",
@@ -232,7 +312,7 @@ class LiberoRealRuntime:
         }
         return self._last_obs
 
-    def observe(self, payload: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    def observe(self, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         if self._last_obs is None:
             raise TargetProtocolError("LIBERO observe before reset")
         return self._last_obs
@@ -313,6 +393,344 @@ class LiberoRealRuntime:
         self._env_key = None
         return {"closed": True}
 
+    async def benchmark(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        config = dict(payload or {})
+        suite = str(config.get("suite") or config.get("benchmark_name") or self.config.get("benchmark_name"))
+        policy_endpoint = str(config.get("policy_endpoint") or "")
+        if not policy_endpoint:
+            raise TargetProtocolError("benchmark requires policy_endpoint")
+        episode_specs = _parse_episode_specs(config)
+        max_steps = int(config.get("max_steps", self.config.get("max_steps", 300)))
+        policy_timeout_s = float(config.get("policy_timeout_s", 180.0))
+        control_mode = str(config.get("control_mode", self.config.get("control_mode", "relative")))
+        evidence_mode = str(config.get("evidence_mode") or ("all" if config.get("include_evidence") else "none"))
+        attempt_index = int(config.get("attempt_index", 0))
+        agent_assist = _agent_assist_config(config)
+        inline_assist = bool(agent_assist.get("enabled")) and str(agent_assist.get("mode")) == "retry" and bool(agent_assist.get("inline"))
+        if inline_assist:
+            evidence_mode = "failed"
+        status(
+            "benchmark start session=%s suite=%s episodes=%d policy=%s"
+            % (self.session_id or config.get("session_id") or "<none>", suite, len(episode_specs), policy_endpoint)
+        )
+        episodes = []
+        total_steps = 0
+        latencies = []
+        first_successes = 0
+        final_successes = 0
+        verifier_attempts = []
+        attempts = []
+        episodes_replanned = 0
+        recovered_after_replan = 0
+        started = time.time()
+        async with _PolicyWsClient(policy_endpoint, timeout_s=policy_timeout_s) as policy:
+            for episode_spec in episode_specs:
+                task_id = int(episode_spec["task_id"])
+                init_state_id = int(episode_spec["init_state_id"])
+                if inline_assist:
+                    episode, episode_attempts, episode_verifier_attempts = await self._run_assisted_benchmark_episode(
+                        policy,
+                        suite=suite,
+                        task_id=task_id,
+                        init_state_id=init_state_id,
+                        max_steps=max_steps,
+                        control_mode=control_mode,
+                        evidence_mode=evidence_mode,
+                        config=config,
+                        agent_assist=agent_assist,
+                    )
+                else:
+                    episode = await self._run_benchmark_episode(
+                        policy,
+                        suite=suite,
+                        task_id=task_id,
+                        init_state_id=init_state_id,
+                        max_steps=max_steps,
+                        control_mode=control_mode,
+                        attempt_index=attempt_index,
+                        evidence_mode=evidence_mode,
+                        config=config,
+                    )
+                    episode_attempts = [_attempt_record(episode)]
+                    episode_verifier_attempts = []
+                episodes.append(episode)
+                attempts.extend(episode_attempts)
+                verifier_attempts.extend(episode_verifier_attempts)
+                total_steps += sum(int(item.get("num_steps") or 0) for item in episode_attempts)
+                first_successes += 1 if episode.get("first_attempt_success", episode.get("success")) else 0
+                final_successes += 1 if episode.get("final_success", episode.get("success")) else 0
+                if len(episode_attempts) > 1:
+                    episodes_replanned += 1
+                    if episode.get("final_success") and not episode.get("first_attempt_success"):
+                        recovered_after_replan += 1
+                if episode.get("mean_policy_latency_ms") is not None:
+                    latencies.append(float(episode["mean_policy_latency_ms"]))
+                status(
+                    "benchmark episode suite=%s t%d_i%d first=%s final=%s steps=%d rate=%d/%d"
+                    % (
+                        suite,
+                        task_id,
+                        init_state_id,
+                        bool(episode.get("first_attempt_success", episode.get("success"))),
+                        bool(episode.get("final_success", episode.get("success"))),
+                        int(episode.get("num_steps") or 0),
+                        final_successes,
+                        len(episodes),
+                    )
+                )
+        total = len(episodes)
+        result = {
+            "status": "succeeded" if total else "failed",
+            "run_id": str(config.get("run_id") or config.get("session_id") or self.session_id or ""),
+            "suite": suite,
+            "execution_mode": "target_native",
+            "assist_mode": str(config.get("assist_mode") or "disabled"),
+            "control_mode": control_mode,
+            "max_steps": max_steps,
+            "successes": first_successes,
+            "first_attempt_successes": first_successes if attempt_index == 0 else 0,
+            "final_successes": final_successes,
+            "total_episodes": total,
+            "completed_episodes": total,
+            "valid_episodes": total,
+            "total_attempts": len(attempts) if attempts else total,
+            "success_rate": float(first_successes / total) if total else 0.0,
+            "final_success_rate": float(final_successes / total) if total else 0.0,
+            "episodes_replanned": episodes_replanned,
+            "recovered_after_replan": recovered_after_replan,
+            "verifier_calls": len(verifier_attempts),
+            "verifier_skipped": sum(1 for item in verifier_attempts if item.get("verdict") == "skipped"),
+            "num_steps": total_steps,
+            "mean_policy_latency_ms": float(np.mean(latencies)) if latencies else None,
+            "elapsed_s": float(time.time() - started),
+            "episodes": episodes,
+            "attempts": attempts,
+            "verifier_attempts": verifier_attempts,
+        }
+        status(
+            "benchmark finished suite=%s first=%d/%d final=%d/%d elapsed_s=%.1f"
+            % (suite, first_successes, total, final_successes, total, float(result["elapsed_s"]))
+        )
+        return result
+
+    async def _run_assisted_benchmark_episode(
+        self,
+        policy,
+        *,
+        suite: str,
+        task_id: int,
+        init_state_id: int,
+        max_steps: int,
+        control_mode: str,
+        evidence_mode: str,
+        config: Dict[str, Any],
+        agent_assist: Dict[str, Any],
+    ) -> tuple[Dict[str, Any], list[Dict[str, Any]], list[Dict[str, Any]]]:
+        max_replans = max(0, int(agent_assist.get("max_replans_per_episode", 1)))
+        attempts = []
+        verifier_attempts = []
+        first_episode = None
+        final_episode = None
+        for attempt_index in range(max_replans + 1):
+            episode = await self._run_benchmark_episode(
+                policy,
+                suite=suite,
+                task_id=task_id,
+                init_state_id=init_state_id,
+                max_steps=max_steps,
+                control_mode=control_mode,
+                attempt_index=attempt_index,
+                evidence_mode=evidence_mode,
+                config=config,
+            )
+            if first_episode is None:
+                first_episode = episode
+            attempts.append(_attempt_record(episode))
+            final_episode = episode
+            if episode.get("success"):
+                if attempt_index > 0:
+                    status(
+                        "agent assist retry result suite=%s t%d_i%d attempt=%d success=True steps=%d error_code=%s error_message=%s"
+                        % (
+                            suite,
+                            task_id,
+                            init_state_id,
+                            attempt_index,
+                            int(episode.get("num_steps") or 0),
+                            str(episode.get("error_code")),
+                            str(episode.get("error_message")),
+                        )
+                    )
+                break
+            status(
+                "benchmark attempt failed suite=%s t%d_i%d attempt=%d steps=%d max_steps=%d error_code=%s error_message=%s"
+                % (
+                    suite,
+                    task_id,
+                    init_state_id,
+                    attempt_index,
+                    int(episode.get("num_steps") or 0),
+                    max_steps,
+                    str(episode.get("error_code")),
+                    str(episode.get("error_message")),
+                )
+            )
+            if attempt_index >= max_replans:
+                if attempt_index > 0:
+                    status(
+                        "agent assist retry result suite=%s t%d_i%d attempt=%d success=False steps=%d error_code=%s error_message=%s"
+                        % (
+                            suite,
+                            task_id,
+                            init_state_id,
+                            attempt_index,
+                            int(episode.get("num_steps") or 0),
+                            str(episode.get("error_code")),
+                            str(episode.get("error_message")),
+                        )
+                    )
+                break
+            if len(verifier_attempts) >= int(agent_assist.get("max_verifier_calls_per_suite", 50)):
+                status(
+                    "agent assist verifier skipped suite=%s t%d_i%d attempt=%d reason=verifier_budget_exhausted"
+                    % (suite, task_id, init_state_id, attempt_index)
+                )
+                break
+            status(
+                "agent assist verifier start suite=%s t%d_i%d attempt=%d endpoint=%s"
+                % (
+                    suite,
+                    task_id,
+                    init_state_id,
+                    attempt_index,
+                    str(agent_assist.get("verifier_endpoint") or "<none>"),
+                )
+            )
+            verdict = await _verify_episode_attempt(config, episode, agent_assist)
+            verifier_attempts.append(verdict)
+            status(
+                "agent assist verifier verdict suite=%s t%d_i%d attempt=%d verdict=%s verifier_status=%s failure_reason=%s"
+                % (
+                    suite,
+                    task_id,
+                    init_state_id,
+                    attempt_index,
+                    str(verdict.get("verdict")),
+                    str(verdict.get("verifier_status")),
+                    str(verdict.get("failure_reason")),
+                )
+            )
+            if verdict.get("verdict") != "replan":
+                status(
+                    "agent assist retry skipped suite=%s t%d_i%d attempt=%d verdict=%s"
+                    % (suite, task_id, init_state_id, attempt_index, str(verdict.get("verdict")))
+                )
+                break
+            status(
+                "agent assist retry start suite=%s t%d_i%d next_attempt=%d"
+                % (suite, task_id, init_state_id, attempt_index + 1)
+            )
+        first_success = bool(first_episode and first_episode.get("success"))
+        final_success = bool(final_episode and final_episode.get("success"))
+        merged = dict(first_episode or final_episode or {})
+        merged.pop("evidence", None)
+        merged["first_attempt_success"] = first_success
+        merged["final_success"] = final_success
+        merged["final_status"] = "succeeded" if final_success else "failed"
+        merged["attempts"] = attempts
+        if final_episode is not None:
+            merged["num_steps"] = int(final_episode.get("num_steps") or 0)
+            merged["return_value"] = float(final_episode.get("return_value") or 0.0)
+            merged["mean_policy_latency_ms"] = final_episode.get("mean_policy_latency_ms")
+            merged["status"] = str(final_episode.get("status") or merged.get("status") or "failed")
+        return merged, attempts, verifier_attempts
+
+    async def _run_benchmark_episode(
+        self,
+        policy,
+        *,
+        suite: str,
+        task_id: int,
+        init_state_id: int,
+        max_steps: int,
+        control_mode: str,
+        attempt_index: int,
+        evidence_mode: str,
+        config: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        self.config.update(
+            {
+                "benchmark_name": suite,
+                "task_id": int(task_id),
+                "init_state_id": int(init_state_id),
+                "max_steps": int(max_steps),
+                "control_mode": control_mode,
+                "camera_height": int(config.get("camera_height", self.config.get("camera_height", 256))),
+                "camera_width": int(config.get("camera_width", self.config.get("camera_width", 256))),
+                "num_steps_wait": int(config.get("num_steps_wait", self.config.get("num_steps_wait", 10))),
+                "record_dir": config.get("record_dir", self.config.get("record_dir")),
+            }
+        )
+        episode_session_id = "%s_t%d_i%d" % (str(config.get("session_id") or self.session_id or "benchmark"), task_id, init_state_id)
+        if attempt_index:
+            episode_session_id = "%s_a%d" % (episode_session_id, attempt_index)
+        episode_id = "%s_t%d_i%d" % (suite, task_id, init_state_id)
+        self.reset({"session_id": episode_session_id, "libero": dict(self.config)})
+        policy.reset_session(episode_session_id)
+        episode_latencies = []
+        error_code = None
+        error_message = None
+        try:
+            while not self.done and self.step_idx < max_steps:
+                observation = _policy_observation(self._last_obs, self.language, episode_session_id)
+                policy_output = await policy.infer(observation)
+                policy_meta = dict(policy_output.get("policy_meta") or {})
+                if policy_meta.get("policy_latency_ms") is not None:
+                    episode_latencies.append(float(policy_meta["policy_latency_ms"]))
+                actions = _policy_actions(policy_output)
+                self.action_chunk(
+                    {
+                        "chunk_id": "benchmark_policy_chunk_%d" % len(self._episode_chunks),
+                        "actions": actions,
+                    }
+                )
+        except Exception as exc:  # noqa: BLE001
+            error_code = type(exc).__name__
+            error_message = str(exc)
+            self.done = True
+        summary = self._episode_summary()
+        episode = {
+            "episode_id": episode_id,
+            "suite": suite,
+            "task_id": int(task_id),
+            "init_state_id": int(init_state_id),
+            "attempt_index": int(attempt_index),
+            "policy_session_id": episode_session_id,
+            "task_description": self.language,
+            "success": bool(self.success),
+            "first_attempt_success": bool(self.success) if int(attempt_index) == 0 else None,
+            "final_success": bool(self.success),
+            "status": "succeeded" if bool(self.success) else "failed",
+            "num_steps": int(self.step_idx),
+            "return_value": float(self._total_reward),
+            "mean_policy_latency_ms": float(np.mean(episode_latencies)) if episode_latencies else None,
+            "error_code": error_code,
+            "error_message": error_message,
+            "episode_summary": {
+                key: value
+                for key, value in summary.items()
+                if key not in {"chunks"}
+            },
+        }
+        include_evidence = evidence_mode == "all" or (evidence_mode == "failed" and not bool(self.success))
+        if include_evidence:
+            episode["evidence"] = {
+                "version": "benchmark_episode_evidence_v1",
+                "initial_observation": self._initial_obs,
+                "final_observation": self._last_obs,
+            }
+        return episode
+
     # -- helpers --
     def _format_obs(self, obs: Dict[str, Any]) -> Dict[str, Any]:
         self._raw_obs = obs
@@ -325,6 +743,7 @@ class LiberoRealRuntime:
             "robot0_eye_in_hand_image": wrist.astype(np.uint8, copy=False),
             "robot0_eef_pos": np.asarray(obs["robot0_eef_pos"], dtype=np.float32),
             "robot0_eef_quat": np.asarray(obs["robot0_eef_quat"], dtype=np.float32),
+            "robot0_eef_mat": np.asarray(self.env.robots[0].controller.ee_ori_mat, dtype=np.float32),
             "robot0_gripper_qpos": np.asarray(obs["robot0_gripper_qpos"], dtype=np.float32),
             "benchmark_name": self.config["benchmark_name"],
             "task_id": int(self.config["task_id"]),
@@ -375,7 +794,20 @@ class LiberoRealRuntime:
             "init_state_id": int(self.config.get("init_state_id", 0)),
             "step_index": self.step_idx,
             "task_description": self.language,
+            "control_mode": str(self.config.get("control_mode", "relative")),
         }
+
+    def _short_config(self) -> str:
+        return (
+            "suite=%s task_id=%d init_state_id=%d control_mode=%s max_steps=%d"
+            % (
+                str(self.config.get("benchmark_name")),
+                int(self.config.get("task_id", 0)),
+                int(self.config.get("init_state_id", 0)),
+                str(self.config.get("control_mode", "relative")),
+                int(self.config.get("max_steps", 300)),
+            )
+        )
 
     def _episode_summary(self) -> Dict[str, Any]:
         summary = {
@@ -424,7 +856,376 @@ class LiberoRealRuntime:
         return tasks
 
 
-def _dispatch(runtime: LiberoRealRuntime, request: Dict[str, Any]) -> (str, Dict[str, Any]):
+class _PolicyWsClient:
+    def __init__(self, endpoint: str, *, timeout_s: float):
+        self.endpoint = endpoint
+        self.timeout_s = float(timeout_s)
+        self._ws = None
+        self._last_session_id = None
+
+    async def __aenter__(self):
+        import websockets
+
+        self._ws = await asyncio.wait_for(
+            websockets.connect(_policy_ws_url(self.endpoint), max_size=None, compression=None),
+            timeout=self.timeout_s,
+        )
+        metadata = await asyncio.wait_for(self._ws.recv(), timeout=self.timeout_s)
+        if isinstance(metadata, str):
+            raise TargetProtocolError("policy server returned text metadata: %s" % metadata)
+        self.metadata = policy_unpackb(metadata)
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        if self._ws is not None:
+            await self._ws.close()
+        self._ws = None
+
+    def reset_session(self, session_id: str) -> None:
+        self._last_session_id = str(session_id)
+
+    async def infer(self, observation: Dict[str, Any]) -> Dict[str, Any]:
+        if self._ws is None:
+            raise TargetProtocolError("policy websocket is not connected")
+        if self._last_session_id is not None:
+            observation = dict(observation)
+            observation["session_id"] = self._last_session_id
+        started = time.perf_counter()
+        await asyncio.wait_for(self._ws.send(policy_packb(observation)), timeout=self.timeout_s)
+        response = await asyncio.wait_for(self._ws.recv(), timeout=self.timeout_s)
+        if isinstance(response, str):
+            raise TargetProtocolError("policy server returned text error: %s" % response)
+        output = policy_unpackb(response)
+        if not isinstance(output, dict) or "actions" not in output:
+            raise TargetProtocolError("policy response missing actions")
+        output.setdefault("policy_meta", {})
+        output["policy_meta"]["policy_latency_ms"] = (time.perf_counter() - started) * 1000.0
+        return output
+
+
+def _policy_ws_url(endpoint: str) -> str:
+    parsed = urlparse(endpoint)
+    if parsed.scheme == "openpi":
+        return urlunparse(("ws", parsed.netloc, parsed.path, parsed.params, parsed.query, parsed.fragment))
+    if parsed.scheme in {"ws", "wss"}:
+        return endpoint
+    raise TargetProtocolError("unsupported policy endpoint for benchmark: %s" % endpoint)
+
+
+def _policy_observation(obs: Dict[str, Any], task: str, session_id: str) -> Dict[str, Any]:
+    return {
+        "observation/image": np.ascontiguousarray(obs["agentview_image"]),
+        "observation/wrist_image": np.ascontiguousarray(obs["robot0_eye_in_hand_image"]),
+        "observation/state": _libero_state(obs),
+        "observation/eef_mat": np.ascontiguousarray(np.asarray(obs["robot0_eef_mat"], dtype=np.float32)),
+        "prompt": str(task),
+        "session_id": session_id,
+    }
+
+
+def _libero_state(obs: Dict[str, Any]) -> np.ndarray:
+    eef_pos = np.asarray(obs["robot0_eef_pos"], dtype=np.float32).reshape(3)
+    eef_quat = np.asarray(obs["robot0_eef_quat"], dtype=np.float32).reshape(4)
+    gripper = np.asarray(obs["robot0_gripper_qpos"], dtype=np.float32).reshape(-1)
+    if gripper.size == 0:
+        gripper = np.zeros(2, dtype=np.float32)
+    if gripper.size == 1:
+        gripper = np.repeat(gripper, 2)
+    return np.ascontiguousarray(np.concatenate([eef_pos, _quat_to_axisangle(eef_quat), gripper[:2]], axis=0), dtype=np.float32)
+
+
+def _quat_to_axisangle(quat: np.ndarray) -> np.ndarray:
+    quat = quat.astype(np.float32, copy=True)
+    quat[3] = np.clip(quat[3], -1.0, 1.0)
+    den = np.sqrt(max(0.0, 1.0 - float(quat[3] * quat[3])))
+    if den < 1e-8:
+        return np.zeros(3, dtype=np.float32)
+    return (quat[:3] * (2.0 * np.arccos(quat[3]) / den)).astype(np.float32)
+
+
+def _policy_actions(policy_output: Dict[str, Any]) -> np.ndarray:
+    actions = np.asarray(policy_output["actions"], dtype=np.float32)
+    if actions.ndim == 3 and actions.shape[0] == 1:
+        actions = actions[0]
+    if actions.ndim == 1:
+        actions = actions[None, :]
+    if actions.ndim != 2:
+        raise TargetProtocolError("policy action must have shape [A] or [T,A], got %s" % (actions.shape,))
+    if actions.shape[1] == 7:
+        return np.ascontiguousarray(actions, dtype=np.float32)
+    if actions.shape[1] >= 10:
+        return _ee6d_action_to_libero(actions)
+    raise TargetProtocolError("policy action must have 7 dims or ee6d dims >=10, got %s" % (actions.shape,))
+
+
+def _ee6d_action_to_libero(actions: np.ndarray) -> np.ndarray:
+    target_eef = actions[:, :3]
+    target_axis = _rotate6d_to_axis_angle(actions[:, 3:9])
+    gripper = np.where(actions[:, 9:10] > 0.5, 1.0, -1.0)
+    return np.ascontiguousarray(np.concatenate([target_eef, target_axis, gripper], axis=-1), dtype=np.float32)
+
+
+def _rotate6d_to_axis_angle(rotation_6d: np.ndarray) -> np.ndarray:
+    a1 = rotation_6d[:, 0:3]
+    a2 = rotation_6d[:, 3:6]
+    b1 = a1 / (np.linalg.norm(a1, axis=-1, keepdims=True) + 1e-6)
+    dot_prod = np.sum(b1 * a2, axis=-1, keepdims=True)
+    b2_orth = a2 - dot_prod * b1
+    b2 = b2_orth / (np.linalg.norm(b2_orth, axis=-1, keepdims=True) + 1e-6)
+    b3 = np.cross(b1, b2, axis=-1)
+    rotation_matrix = np.stack([b1, b2, b3], axis=-1)
+    return np.stack([_quat_to_axis_angle(_mat_to_quat(mat)) for mat in rotation_matrix], axis=0).astype(np.float32)
+
+
+def _mat_to_quat(mat: np.ndarray) -> np.ndarray:
+    mat = np.asarray(mat, dtype=np.float32)[:3, :3]
+    m00, m01, m02 = mat[0]
+    m10, m11, m12 = mat[1]
+    m20, m21, m22 = mat[2]
+    k = np.array(
+        [
+            [m00 - m11 - m22, 0.0, 0.0, 0.0],
+            [m01 + m10, m11 - m00 - m22, 0.0, 0.0],
+            [m02 + m20, m12 + m21, m22 - m00 - m11, 0.0],
+            [m21 - m12, m02 - m20, m10 - m01, m00 + m11 + m22],
+        ],
+        dtype=np.float32,
+    )
+    k /= 3.0
+    values, vectors = np.linalg.eigh(k)
+    quat = vectors[[3, 0, 1, 2], np.argmax(values)]
+    if quat[0] < 0.0:
+        quat = -quat
+    return quat[[1, 2, 3, 0]].astype(np.float32)
+
+
+def _parse_id_list(value: Any, *, default: list[int]) -> list[int]:
+    if value is None:
+        return list(default)
+    if isinstance(value, (list, tuple)):
+        return [int(item) for item in value]
+    spec = str(value).strip()
+    if spec == "all":
+        return list(default)
+    ids = []
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            start, end = part.split("-", 1)
+            ids.extend(range(int(start), int(end) + 1))
+        else:
+            ids.append(int(part))
+    return sorted(dict.fromkeys(ids))
+
+
+def _parse_episode_specs(config: Dict[str, Any]) -> list[dict[str, int]]:
+    explicit = config.get("episodes")
+    if isinstance(explicit, list):
+        episodes = []
+        for item in explicit:
+            if not isinstance(item, dict):
+                continue
+            episodes.append(
+                {
+                    "task_id": int(item["task_id"]),
+                    "init_state_id": int(item["init_state_id"]),
+                }
+            )
+        return episodes
+    task_ids = _parse_id_list(config.get("task_ids"), default=list(range(10)))
+    init_state_ids = _parse_id_list(config.get("init_state_ids"), default=list(range(50)))
+    return [
+        {"task_id": int(task_id), "init_state_id": int(init_state_id)}
+        for task_id in task_ids
+        for init_state_id in init_state_ids
+    ]
+
+
+def _agent_assist_config(config: Dict[str, Any]) -> Dict[str, Any]:
+    raw = config.get("agent_assist")
+    if not isinstance(raw, dict):
+        return {"enabled": False, "mode": "disabled", "inline": False}
+    mode = str(raw.get("mode") or raw.get("assist_mode") or ("retry" if raw.get("enabled") else "disabled"))
+    return {
+        "enabled": bool(raw.get("enabled")) and mode != "disabled",
+        "mode": mode,
+        "inline": bool(raw.get("inline", True)),
+        "verifier_endpoint": raw.get("verifier_endpoint"),
+        "verifier_timeout_s": float(raw.get("verifier_timeout_s") or 60.0),
+        "verifier_failure_policy": str(raw.get("verifier_failure_policy") or "skip"),
+        "max_replans_per_episode": int(raw.get("max_replans_per_episode") or 1),
+        "max_verifier_calls_per_suite": int(raw.get("max_verifier_calls_per_suite") or 50),
+    }
+
+
+async def _verify_episode_attempt(
+    config: Dict[str, Any],
+    episode: Dict[str, Any],
+    agent_assist: Dict[str, Any],
+) -> Dict[str, Any]:
+    endpoint = agent_assist.get("verifier_endpoint")
+    bundle = _episode_verification_bundle(config, episode)
+    verdict = await _run_blocking(
+        _post_verifier,
+        str(endpoint or ""),
+        bundle,
+        float(agent_assist.get("verifier_timeout_s") or 60.0),
+        str(agent_assist.get("verifier_failure_policy") or "skip"),
+    )
+    return {
+        "run_id": config.get("run_id") or config.get("session_id"),
+        "suite": config.get("suite") or config.get("benchmark_name"),
+        "episode_id": episode.get("episode_id"),
+        "task_id": episode.get("task_id"),
+        "init_state_id": episode.get("init_state_id"),
+        "attempt_index": episode.get("attempt_index", 0),
+        "verdict": verdict.get("verdict"),
+        "evidence": verdict.get("evidence"),
+        "failure_reason": verdict.get("failure_reason"),
+        "replan_task_description": verdict.get("replan_task_description"),
+        "lesson": verdict.get("lesson"),
+        "verifier_status": verdict.get("verifier_status"),
+    }
+
+
+def _post_verifier(
+    endpoint: str,
+    bundle: Dict[str, Any],
+    timeout_s: float,
+    failure_policy: str,
+) -> Dict[str, Any]:
+    if not endpoint:
+        return _verifier_fallback("verifier endpoint is not configured", failure_policy)
+    if endpoint.startswith("mock://"):
+        mode = endpoint[len("mock://") :]
+        if mode in {"replan", "replan_failed"}:
+            return {
+                "verdict": "replan",
+                "evidence": ["mock verifier requested retry"],
+                "failure_reason": None,
+                "replan_task_description": bundle.get("task_description"),
+                "lesson": "Mock verifier retries failed benchmark episodes.",
+                "verifier_status": "mock",
+            }
+        return _verifier_fallback("mock verifier did not request retry", failure_policy)
+    try:
+        payload = json.dumps(_jsonable(bundle), ensure_ascii=False).encode("utf-8")
+        req = url_request.Request(
+            endpoint,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with url_request.urlopen(req, timeout=timeout_s) as response:  # noqa: S310 - user-configured local verifier
+            data = json.loads(response.read().decode("utf-8"))
+    except (OSError, TimeoutError, url_error.URLError, json.JSONDecodeError) as exc:
+        return _verifier_fallback(str(exc), failure_policy)
+    if not isinstance(data, dict):
+        return _verifier_fallback("verifier response is not a JSON object", failure_policy)
+    verdict = str(data.get("verdict") or "failure")
+    if verdict not in {"success", "replan", "failure", "skipped"}:
+        verdict = "failure"
+    evidence = data.get("evidence")
+    if not isinstance(evidence, list) or not evidence:
+        evidence = ["verifier did not provide evidence"]
+    return {
+        "verdict": verdict,
+        "evidence": [str(item) for item in evidence],
+        "failure_reason": data.get("failure_reason"),
+        "replan_task_description": data.get("replan_task_description"),
+        "lesson": str(data.get("lesson") or "No verifier lesson was provided."),
+        "verifier_status": str(data.get("verifier_status") or "completed"),
+    }
+
+
+def _verifier_fallback(reason: str, failure_policy: str) -> Dict[str, Any]:
+    if failure_policy == "retry":
+        return {
+            "verdict": "replan",
+            "evidence": ["verifier fallback retry: %s" % reason],
+            "failure_reason": None,
+            "replan_task_description": None,
+            "lesson": "Retry selected by verifier failure policy.",
+            "verifier_status": "fallback_retry",
+        }
+    if failure_policy == "failure":
+        return {
+            "verdict": "failure",
+            "evidence": ["verifier fallback failure: %s" % reason],
+            "failure_reason": reason,
+            "replan_task_description": None,
+            "lesson": "Episode remained failed because verifier was unavailable.",
+            "verifier_status": "fallback_failure",
+        }
+    return {
+        "verdict": "skipped",
+        "evidence": ["verifier skipped: %s" % reason],
+        "failure_reason": reason,
+        "replan_task_description": None,
+        "lesson": "Episode verification was skipped.",
+        "verifier_status": "skipped",
+    }
+
+
+def _episode_verification_bundle(config: Dict[str, Any], episode: Dict[str, Any]) -> Dict[str, Any]:
+    evidence = episode.get("evidence") if isinstance(episode.get("evidence"), dict) else {}
+    return {
+        "version": "benchmark_episode_verification_v1",
+        "run_id": config.get("run_id") or config.get("session_id"),
+        "suite_id": episode.get("suite") or config.get("suite") or config.get("benchmark_name"),
+        "episode_id": episode.get("episode_id"),
+        "task_index": episode.get("task_id"),
+        "instance_id": episode.get("init_state_id"),
+        "attempt_index": episode.get("attempt_index", 0),
+        "task_description": episode.get("task_description"),
+        "runtime_claim": {
+            "success": bool(episode.get("success")),
+            "source": "target_environment",
+            "authority": "target",
+        },
+        "initial_observation": evidence.get("initial_observation"),
+        "final_observation": evidence.get("final_observation"),
+        "final_status": {
+            "steps": episode.get("num_steps"),
+            "reward": episode.get("return_value"),
+            "done": True,
+        },
+    }
+
+
+def _attempt_record(episode: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "episode_id": episode.get("episode_id"),
+        "suite": episode.get("suite"),
+        "task_id": episode.get("task_id"),
+        "init_state_id": episode.get("init_state_id"),
+        "attempt_index": int(episode.get("attempt_index") or 0),
+        "policy_session_id": episode.get("policy_session_id"),
+        "success": bool(episode.get("success")),
+        "status": episode.get("status"),
+        "num_steps": episode.get("num_steps"),
+        "return_value": episode.get("return_value"),
+        "mean_policy_latency_ms": episode.get("mean_policy_latency_ms"),
+        "error_code": episode.get("error_code"),
+        "error_message": episode.get("error_message"),
+    }
+
+
+def _jsonable(value: Any) -> Any:
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, dict):
+        return {str(key): _jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(item) for item in value]
+    return value
+
+
+async def _dispatch(runtime: LiberoRealRuntime, request: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     rtype = request.get("type")
     payload = request.get("payload") or {}
     if rtype == "target.describe":
@@ -439,6 +1240,8 @@ def _dispatch(runtime: LiberoRealRuntime, request: Dict[str, Any]) -> (str, Dict
         return "target.observation", runtime.observe(payload)
     if rtype == "target.action_chunk":
         return rtype, runtime.action_chunk(payload)
+    if rtype == "target.benchmark":
+        return rtype, await runtime.benchmark(payload)
     if rtype == "target.execution_status":
         return rtype, runtime.execution_status()
     if rtype == "target.cancel":
@@ -460,7 +1263,7 @@ async def serve(runtime: LiberoRealRuntime, host: str, port: int) -> None:
                 continue
             request = unpackb(message)
             try:
-                rtype, payload = _dispatch(runtime, request)
+                rtype, payload = await _dispatch(runtime, request)
                 await ws.send(make_response(request, rtype, payload))
             except Exception as exc:  # noqa: BLE001
                 await ws.send(
@@ -472,7 +1275,9 @@ async def serve(runtime: LiberoRealRuntime, host: str, port: int) -> None:
                 )
 
     async with websockets.serve(handler, host, port, max_size=None, compression=None):
-        print("LIBERO real target server listening on ws://%s:%d" % (host, port), flush=True)
+        status("listening on ws://%s:%d" % (host, port))
+        status("use target endpoint targetws://%s:%d from PAOS" % (host, port))
+        status("waiting for target.describe / target.reset requests")
         await asyncio.Future()
 
 
@@ -487,9 +1292,21 @@ def main() -> None:
     parser.add_argument("--camera-width", type=int, default=256)
     parser.add_argument("--max-steps", type=int, default=300)
     parser.add_argument("--num-steps-wait", type=int, default=10)
+    parser.add_argument("--control-mode", choices=["relative", "absolute"], default="relative")
     parser.add_argument("--record-dir", default=None, help="if set, write an mp4 per episode here")
     parser.add_argument("--record-fps", type=int, default=20)
     args = parser.parse_args()
+    status("starting LIBERO TargetWS server")
+    status(
+        "default suite=%s task_id=%d init_state_id=%d control_mode=%s"
+        % (args.benchmark_name, args.task_id, args.init_state_id, args.control_mode)
+    )
+    status(
+        "bind=%s:%d camera=%dx%d max_steps=%d num_steps_wait=%d"
+        % (args.host, args.port, args.camera_width, args.camera_height, args.max_steps, args.num_steps_wait)
+    )
+    if args.record_dir:
+        status("recording enabled record_dir=%s fps=%d" % (args.record_dir, args.record_fps))
     runtime = LiberoRealRuntime(
         {
             "benchmark_name": args.benchmark_name,
@@ -499,6 +1316,7 @@ def main() -> None:
             "camera_width": args.camera_width,
             "max_steps": args.max_steps,
             "num_steps_wait": args.num_steps_wait,
+            "control_mode": args.control_mode,
             "record_dir": args.record_dir,
             "record_fps": args.record_fps,
         }

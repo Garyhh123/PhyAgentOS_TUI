@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from PhyAgentOS.runtime.artifacts.benchmark_writer import BenchmarkArtifactWriter, compact_benchmark_result
 from PhyAgentOS.runtime.artifacts.episode_writer import EpisodeWriter
 from PhyAgentOS.runtime.schemas import SessionResult, SessionSpec, TargetSpec
 from PhyAgentOS.runtime.schemas.common import utc_now
@@ -16,6 +17,7 @@ from PhyAgentOS.runtime.state_io.markdown_yaml import read_yaml_block, write_yam
 class ResultWriter:
     def __init__(self, workspace: Path):
         self.workspace = workspace
+        self.benchmark_writer = BenchmarkArtifactWriter(workspace)
         self.episode_writer = EpisodeWriter(workspace / "artifacts" / "runtime")
 
     def write_episode(
@@ -25,6 +27,11 @@ class ResultWriter:
         skillruntime_id: str,
         result: SessionResult,
     ) -> SessionResult:
+        benchmark = result.metadata.get("benchmark_result")
+        if isinstance(benchmark, dict) and benchmark.get("total_episodes") is not None:
+            summary = self.benchmark_writer.write_benchmark(session, target, skillruntime_id, result)
+            result.metadata["benchmark_summary"] = summary
+            result.metadata["benchmark_result"] = compact_benchmark_result(benchmark, summary)
         artifact_dir = self.episode_writer.write_episode(session, target, skillruntime_id, result)
         result.artifact_dir = str(artifact_dir.relative_to(self.workspace))
         return result
