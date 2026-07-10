@@ -209,19 +209,3 @@ one agent-assisted retry after a failed episode.
 | `libero_goal` | 373 / 500 = 74.6% | 376 / 500 = 75.2% |
 | `libero_10` | 263 / 500 = 52.6% | 267 / 500 = 53.4% |
 | Overall | 1490 / 2000 = 74.5% | 1510 / 2000 = 75.5% |
-
-## Official OpenVLA LIBERO Reference
-
-The official OpenVLA README reports finetuned OpenVLA results over 3 random
-seeds x 500 rollouts per suite:
-
-| Suite | Official OpenVLA success rate |
-| --- | --- |
-| LIBERO-Spatial | 84.7 +/- 0.9% |
-| LIBERO-Object | 88.4 +/- 0.8% |
-| LIBERO-Goal | 79.2 +/- 1.0% |
-| LIBERO-Long / LIBERO-10 | 53.7 +/- 1.3% |
-| Average | 76.5 +/- 0.6% |
-
-See the official OpenVLA LIBERO section for upstream details:
-`https://github.com/openvla/openvla#libero-simulation-benchmark-evaluations`.
