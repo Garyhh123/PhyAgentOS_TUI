@@ -7,7 +7,7 @@ from typing import Any
 
 
 class VerificationEngine:
-    def __init__(self, *, provider: Any, model: str, timeout_s: float = 60.0) -> None:
+    def __init__(self, *, provider: Any, model: str, timeout_s: float = 180.0) -> None:
         self.provider = provider
         self.model = model
         self.timeout_s = float(timeout_s)

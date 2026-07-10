@@ -110,6 +110,8 @@ for SUITE in libero_spatial libero_object libero_goal libero_10; do
     --task-ids 0-9 \
     --init-state-ids 0-49 \
     --control-mode relative \
+    --replan-every-steps 5 \
+    --seed 7 \
     --force-init
 done
 ```
@@ -156,8 +158,9 @@ paos agent --workspace ~/.PhyAgentOS/workspace -m \
 ## PI0 Eval
 
 PI0 uses the same LIBERO TargetWS server, OpenPI-native policy server,
-relative control mode, session generator, watchdog, and result summarizer. To
-run PI0 instead of PI0.5, change only these fields:
+relative control mode, session generator, watchdog, and result summarizer. Keep
+`--replan-every-steps 5` and `--seed 7`, matching OpenPI's official LIBERO
+eval script. To run PI0 instead of PI0.5, change only these fields:
 
 | Location | PI0.5 value | PI0 value |
 | --- | --- | --- |
@@ -184,5 +187,29 @@ RUN_ROOT=tests/openpi/pi0/libero_target_benchmark_$(date -u +%Y%m%dT%H%M%SZ)
     --policy-id pi0 \
 ```
 
-Keep `--control-mode relative`, the four suite names, `--init-state-ids 0-49`,
-and the watchdog/result commands unchanged.
+Keep `--control-mode relative`, `--replan-every-steps 5`, `--seed 7`, the four
+suite names, `--init-state-ids 0-49`, and the watchdog/result commands
+unchanged.
+
+
+### PAOS PI0/PI0.5 Agent-assisted Results
+
+#### PI0
+
+| Suite | First attempt(original) | Final after agent retry |
+| --- | ---: | ---: |
+| `libero_spatial` | 484 / 500 = 96.8% | 488 / 500 = 97.6% |
+| `libero_object` | 491 / 500 = 98.2% | 491 / 500 = 98.2% |
+| `libero_goal` | 467 / 500 = 93.4% | 471 / 500 = 94.2% |
+| `libero_10` | 413 / 500 = 82.6% | 413 / 500 = 82.6% |
+| Overall | 1855 / 2000 = 92.8% | 1863 / 2000 = 93.2% |
+
+#### PI0.5
+
+| Suite | First attempt(original) | Final after agent retry |
+| --- | ---: | ---: |
+| `libero_spatial` | 497 / 500 = 99.4% | 498 / 500 = 99.6% |
+| `libero_object` | 494 / 500 = 98.8% | 494 / 500 = 98.8% |
+| `libero_goal` | 486 / 500 = 97.2% | 490 / 500 = 98.0% |
+| `libero_10` | 464 / 500 = 92.8% | 473 / 500 = 94.6% |
+| Overall | 1941 / 2000 = 97.0% | 1955 / 2000 = 97.8% |

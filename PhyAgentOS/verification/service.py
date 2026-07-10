@@ -9,6 +9,7 @@ import json
 import hashlib
 import hmac
 import os
+import socket
 import subprocess
 import sys
 import threading
@@ -22,8 +23,16 @@ from PhyAgentOS.runtime.artifacts.episode_writer import _encode_rgb_png
 
 
 EPISODE_PROMPT = """You are a benchmark episode verifier. Return one JSON object with keys verdict
-(success|replan|failure), evidence, failure_reason, replan_task_description, and lesson.
-Compare the initial and final observations. Use replan only when a rewritten instruction can recover the task."""
+(success|replan|failure), evidence, failure_reason, replan_task_description, and lesson. evidence must be an array of short strings.
+Compare the initial and final observations. Use success only when the original task is already complete.
+When the task is not complete, prefer replan whenever the scene still contains the required target objects,
+the robot/environment can plausibly continue from the final observation, and another attempt with the original
+task instruction could still complete the task. This includes wrong object picks, missed grasps, incomplete
+placements, unopened drawers, or reaching max steps while the goal remains physically possible. Do not rewrite
+the task instruction; always set replan_task_description to null for replan. Use failure only when continuing
+from the final observation is physically impossible or clearly unrecoverable, such as the required object being
+absent, inaccessible, irreversibly displaced out of the workspace, or the scene state preventing the original
+task from being completed."""
 
 
 class VerificationServiceProcess:
@@ -125,28 +134,39 @@ def _handler(engine: VerificationEngine, episode_token: str, session_token: str)
                 if not _valid_episode_token(token, episode_token, bundle):
                     self._send({"error": "invalid or expired episode verification token"}, 403)
                     return
+            except Exception as exc:  # noqa: BLE001
+                self._send({"error": str(exc) or type(exc).__name__}, 400)
+                return
+            try:
                 data = asyncio.run(engine.complete(system_prompt=EPISODE_PROMPT, content=_episode_content(bundle)))
                 self._send(_normalize(data), 200)
             except Exception as exc:  # noqa: BLE001
-                self._send({"verdict": "failure", "evidence": [str(exc)], "failure_reason": str(exc), "replan_task_description": None, "lesson": "Verification failed.", "verifier_status": "error"}, 500)
+                self._send(_error_payload(exc), 200)
 
         def _verify_session(self) -> None:
             try:
                 bundle = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)))
                 if bundle.get("version") != "agent_session_verification_v2" or not isinstance(bundle.get("content"), list):
                     raise ValueError("unsupported session verification bundle")
+            except Exception as exc:  # noqa: BLE001
+                self._send({"error": str(exc) or type(exc).__name__}, 400)
+                return
+            try:
                 data = asyncio.run(engine.complete(system_prompt="Verify the Agent session and return a semantic verdict JSON object.", content=bundle["content"]))
                 self._send(_normalize(data), 200)
             except Exception as exc:  # noqa: BLE001
-                self._send({"verdict": "failure", "evidence": [str(exc)], "failure_reason": str(exc), "replan_task_description": None, "lesson": "Verification failed.", "verifier_status": "error"}, 500)
+                self._send(_error_payload(exc), 200)
 
         def _send(self, payload: dict, status: int) -> None:
             body = json.dumps(payload, ensure_ascii=False).encode()
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError, socket.timeout):
+                return
 
         def log_message(self, format: str, *args: Any) -> None:
             return
@@ -184,11 +204,26 @@ def _normalize(data: dict) -> dict:
     if verdict not in {"success", "replan", "failure"}:
         verdict = "failure"
     rewrite = str(data.get("replan_task_description") or "").strip()
+    evidence = data.get("evidence") or ["no evidence"]
+    if isinstance(evidence, str):
+        evidence = [evidence]
+    elif not isinstance(evidence, list):
+        evidence = [str(evidence)]
     status = "completed"
     reason = data.get("failure_reason")
-    if verdict == "replan" and not rewrite:
-        verdict, status, reason = "failure", "invalid_response", "replan requires non-empty replan_task_description"
-    return {"verdict": verdict, "evidence": [str(item) for item in (data.get("evidence") or ["no evidence"])], "failure_reason": reason, "replan_task_description": rewrite or None, "lesson": str(data.get("lesson") or "No lesson provided."), "verifier_status": status}
+    return {"verdict": verdict, "evidence": [str(item) for item in evidence], "failure_reason": reason, "replan_task_description": rewrite or None, "lesson": str(data.get("lesson") or "No lesson provided."), "verifier_status": status}
+
+
+def _error_payload(exc: Exception) -> dict:
+    reason = str(exc) or type(exc).__name__
+    return {
+        "verdict": "replan",
+        "evidence": [reason],
+        "failure_reason": reason,
+        "replan_task_description": None,
+        "lesson": "Verification failed; retry from the current state with the original instruction.",
+        "verifier_status": "error",
+    }
 
 
 def _valid_episode_token(token: str, secret: str, bundle: dict) -> bool:
@@ -208,14 +243,19 @@ def _valid_episode_token(token: str, secret: str, bundle: dict) -> bool:
         return False
 
 
-def _provider(spec: dict):
+def _provider(spec: dict, timeout_s: float | None = None):
     from PhyAgentOS.providers.base import GenerationSettings
 
     name = str(spec["provider_name"])
     model = str(spec["model"])
     if name == "custom":
         from PhyAgentOS.providers.custom_provider import CustomProvider
-        provider = CustomProvider(api_key=spec.get("api_key") or "no-key", api_base=spec.get("api_base") or "http://localhost:8000/v1", default_model=model)
+        provider = CustomProvider(
+            api_key=spec.get("api_key") or "no-key",
+            api_base=spec.get("api_base") or "http://localhost:8000/v1",
+            default_model=model,
+            timeout_s=float(timeout_s or spec.get("timeout_s") or os.environ.get("PAOS_VERIFICATION_TIMEOUT_S", 180.0)),
+        )
     elif name == "azure_openai":
         from PhyAgentOS.providers.azure_openai_provider import AzureOpenAIProvider
         provider = AzureOpenAIProvider(api_key=spec.get("api_key"), api_base=spec.get("api_base"), default_model=model)
@@ -231,8 +271,9 @@ def _provider(spec: dict):
 
 def main() -> int:
     settings = json.loads(os.environ["PAOS_VERIFICATION_SERVICE_CONFIG"])
-    provider = _provider(settings["provider"])
-    engine = VerificationEngine(provider=provider, model=settings["provider"]["model"], timeout_s=float(settings["timeout_s"]))
+    timeout_s = float(settings["timeout_s"])
+    provider = _provider(settings["provider"], timeout_s=timeout_s)
+    engine = VerificationEngine(provider=provider, model=settings["provider"]["model"], timeout_s=timeout_s)
     serve_verification_service(engine, settings["host"], int(settings["port"]), settings["episode_token"], settings["session_token"])
     return 0
 

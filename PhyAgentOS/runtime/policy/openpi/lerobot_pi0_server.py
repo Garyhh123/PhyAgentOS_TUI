@@ -17,6 +17,11 @@ from PhyAgentOS.runtime.policy.msgpack_numpy import packb, unpackb
 from PhyAgentOS.runtime.watchdog.errors import PolicyProtocolError
 
 
+WEBSOCKET_KEEPALIVE_DISABLED = {
+    "ping_interval": None,
+    "ping_timeout": None,
+}
+
 # Map a LeRobot checkpoint `config.json` ``type`` to its policy class import path.
 _POLICY_IMPORTS: dict[str, tuple[str, str]] = {
     "pi0": ("lerobot.policies.pi0", "PI0Policy"),
@@ -217,6 +222,7 @@ async def serve_policy(policy: LeRobotPI0Policy, *, host: str, port: int) -> Non
         compression=None,
         max_size=None,
         process_request=_health_check,
+        **WEBSOCKET_KEEPALIVE_DISABLED,
     ) as server:
         await server.serve_forever()
 

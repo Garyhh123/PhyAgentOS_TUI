@@ -82,6 +82,11 @@ def _benchmark_request(skill_ctx: SkillContext) -> BenchmarkJobRequest:
     init_state_ids = _hint(session, "init_state_ids", list(range(50)))
     episodes = [{"task_id": int(task_id), "init_state_id": int(init_id)} for task_id in task_ids for init_id in init_state_ids]
     verification = dict(skill_ctx.metadata.get("verification") or {})
+    replan_every_steps = (
+        session.execution.replan_every_steps
+        or session.runtime_hints.preferred_replan_every_steps
+        or session.execution.replan_every
+    )
     return BenchmarkJobRequest(
         benchmark_id=str(benchmark.benchmark_id),
         suite_id=benchmark.suite_id,
@@ -96,9 +101,9 @@ def _benchmark_request(skill_ctx: SkillContext) -> BenchmarkJobRequest:
         verification_endpoint=_verification_endpoint(skill_ctx, verification),
         verification_token=_episode_token(
             str(verification.get("episode_token") or ""), session.session_id, benchmark.run_id or session.session_id,
-            int(session.timeouts.execute_timeout_s + float(verification.get("timeout_s", 60.0))),
+            int(session.timeouts.execute_timeout_s + float(verification.get("timeout_s", 180.0))),
         ) if verification.get("episode_token") else None,
-        verification_timeout_s=float(verification.get("timeout_s", 60.0)),
+        verification_timeout_s=float(verification.get("timeout_s", 180.0)),
         max_replans_per_episode=int(verification.get("max_replans_per_episode", 2)),
         max_verifier_calls_per_run=int(verification.get("max_verifier_calls_per_run", 50)),
         options={
@@ -107,6 +112,8 @@ def _benchmark_request(skill_ctx: SkillContext) -> BenchmarkJobRequest:
             "num_steps_wait": int(skill_ctx.target.config.get("num_steps_wait", 10)),
             "camera_height": int(skill_ctx.target.config.get("camera_height", 256)),
             "camera_width": int(skill_ctx.target.config.get("camera_width", 256)),
+            "seed": int(skill_ctx.target.config.get("seed", 0)),
+            "replan_every_steps": int(replan_every_steps),
             "record_dir": _hint(session, "record_dir", None),
         },
     )

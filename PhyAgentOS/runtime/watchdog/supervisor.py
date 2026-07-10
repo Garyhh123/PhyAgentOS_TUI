@@ -123,6 +123,7 @@ class WatchdogSupervisor:
             policy_client = None
             runner = None
             cleanup_in_background = False
+            cleanup_error: Exception | None = None
             try:
                 if scheduled.skillruntime_spec.runtime_kind == "policy":
                     policy_client = self._build_policy_client(session, scheduled.target_spec)
@@ -183,10 +184,21 @@ class WatchdogSupervisor:
                 if cleanup_in_background:
                     pass
                 elif runner is not None:
-                    runner.close()
+                    cleanup_error = self._close_runner_best_effort(runner)
                 else:
-                    target.close()
+                    cleanup_error = self._close_target_best_effort(target)
 
+            if cleanup_error is not None:
+                cleanup = result.metadata.get("cleanup")
+                if not isinstance(cleanup, dict):
+                    cleanup = {}
+                cleanup.update(
+                    {
+                        "close_error_code": type(cleanup_error).__name__,
+                        "close_error_message": str(cleanup_error),
+                    }
+                )
+                result.metadata["cleanup"] = cleanup
             self.registry.mark_finalizing(session_id)
             result = self.result_writer.write_episode(
                 session,
@@ -261,6 +273,30 @@ class WatchdogSupervisor:
             policy_client.close()
         except Exception:
             pass
+
+    def _close_runner_best_effort(self, runner: SessionRunner) -> Exception | None:
+        try:
+            runner.close()
+        except Exception as exc:  # noqa: BLE001
+            print(
+                "[runtime-watchdog] warning: runner cleanup close failed for "
+                f"{runner.session.session_id}: {type(exc).__name__}: {exc}",
+                flush=True,
+            )
+            return exc
+        return None
+
+    def _close_target_best_effort(self, target) -> Exception | None:
+        try:
+            target.close()
+        except Exception as exc:  # noqa: BLE001
+            print(
+                "[runtime-watchdog] warning: target cleanup close failed: "
+                f"{type(exc).__name__}: {exc}",
+                flush=True,
+            )
+            return exc
+        return None
 
     def _sleep_runner_poll_interval(self, session) -> None:
         import time

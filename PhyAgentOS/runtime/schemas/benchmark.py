@@ -23,7 +23,7 @@ class BenchmarkJobRequest(BaseModel):
     verification_profile: Literal["strict", "audit", "recovery"] = "strict"
     verification_endpoint: str | None = None
     verification_token: str | None = None
-    verification_timeout_s: float = Field(default=60.0, gt=0)
+    verification_timeout_s: float = Field(default=180.0, gt=0)
     max_replans_per_episode: int = Field(default=2, ge=0)
     max_verifier_calls_per_run: int = Field(default=50, ge=0)
     options: dict[str, Any] = Field(default_factory=dict)

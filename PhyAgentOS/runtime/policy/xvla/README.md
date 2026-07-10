@@ -126,6 +126,8 @@ done
 
 Target-native recovery run completed successfully with the following results:
 
+### PAOS X-VLA Agent-assisted Results
+
 | Suite | First attempt(original) | Final after agent retry |
 | --- | ---: | ---: |
 | `libero_spatial` | 486 / 500 = 97.2% | 495 / 500 = 99.0% |

@@ -66,7 +66,7 @@ class SessionVerifier:
         rgb_retention: Literal["all", "failed", "none"] = "failed",
         poll_interval_s: float = 1.0,
         worker_id: str | None = None,
-        timeout_s: float = 60.0,
+        timeout_s: float = 180.0,
         service_host: str = "127.0.0.1",
         service_port: int = 8100,
         episode_token: str | None = None,

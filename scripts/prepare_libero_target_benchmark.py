@@ -35,6 +35,8 @@ def main() -> int:
     parser.add_argument("--execute-timeout-s", type=float, default=172800)
     parser.add_argument("--policy-timeout-s", type=float, default=180)
     parser.add_argument("--verification-profile", default="strict", choices=["strict", "audit", "recovery"])
+    parser.add_argument("--replan-every-steps", type=int, default=5)
+    parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--force-init", action="store_true")
     args = parser.parse_args()
 
@@ -102,6 +104,7 @@ def _write_target(workspace: Path, args: argparse.Namespace, skillruntime_id: st
                 "max_steps": max_steps,
                 "num_steps_wait": 10,
                 "control_mode": args.control_mode,
+                "seed": args.seed,
                 "target_ws_timeout_s": args.execute_timeout_s + 300,
                 "action": {"action_dim": 7, "max_chunk_size": 50},
             },
@@ -177,7 +180,7 @@ def _write_session(
             },
             "execution": {
                 "max_steps": max_steps,
-                "replan_every_steps": 1,
+                "replan_every_steps": args.replan_every_steps,
                 "action_chunk_mode": "chunk_buffer",
                 "chunk_switch_mode": "hard_switch",
                 "reset_policy": "skillruntime_managed",
@@ -188,7 +191,7 @@ def _write_session(
                     {"init_state_ids": _parse_ids(args.init_state_ids)},
                 ],
                 "force_environment_refresh": False,
-                "preferred_replan_every_steps": 1,
+                "preferred_replan_every_steps": args.replan_every_steps,
             },
             "safety_profile": {
                 "profile": "default_simulation",

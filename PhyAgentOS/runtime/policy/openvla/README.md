@@ -196,6 +196,20 @@ for SUITE in libero_spatial libero_object libero_goal libero_10; do
 done
 ```
 
+### PAOS OpenVLA Agent-assisted Results
+
+PAOS target-native OpenVLA evaluation over 10 tasks x 50 init states per suite.
+The first-attempt score is the original OpenVLA attempt; the final score allows
+one agent-assisted retry after a failed episode.
+
+| Suite | First attempt(original) | Final after agent retry |
+| --- | ---: | ---: |
+| `libero_spatial` | 422 / 500 = 84.4% | 429 / 500 = 85.8% |
+| `libero_object` | 432 / 500 = 86.4% | 438 / 500 = 87.6% |
+| `libero_goal` | 373 / 500 = 74.6% | 376 / 500 = 75.2% |
+| `libero_10` | 263 / 500 = 52.6% | 267 / 500 = 53.4% |
+| Overall | 1490 / 2000 = 74.5% | 1510 / 2000 = 75.5% |
+
 ## Official OpenVLA LIBERO Reference
 
 The official OpenVLA README reports finetuned OpenVLA results over 3 random
