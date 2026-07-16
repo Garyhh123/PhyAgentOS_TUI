@@ -84,7 +84,7 @@
 <tr>
   <td>⚡</td>
   <td><b>双轨 Skill 运行时</b></td>
-  <td><code>PolicySkillRuntime</code> 维护 policy 闭环 + <code>BuiltinSkillRuntime</code> 管理 agent 交互闭环</td>
+  <td><code>PolicySkillRuntime</code> 维护 policy 闭环 + <code>BuiltinSkillRuntime</code> 管理 target-native benchmark、受约束 agent 交互等内建闭环</td>
 </tr>
 <tr>
   <td>🛡️</td>
@@ -166,7 +166,7 @@ conda run --no-capture-output -n libero \
   --host 0.0.0.0 --port 9002 \
   --camera-height 256 --camera-width 256 \
   --max-steps 300 --num-steps-wait 10 \
-  --control-mode relative
+  --control-mode relative --seed 7
 
 # 终端 2：官方 OpenPI PI0.5 policy server
 conda run --no-capture-output -n openpi \
@@ -177,13 +177,16 @@ conda run --no-capture-output -n openpi \
 
 # 终端 3：Agent、Watchdog 与 Verification Service
 paos agent --workspace ~/.PhyAgentOS/workspace -m \
-  "使用 PI0.5 评估 LIBERO 的 libero_spatial suite。选择 libero_real_remote target、libero_target_benchmark builtin runtime、target_native 执行路径和 recovery 校验；task id 使用 0-9，init-state id 使用 0-49，max_steps 设为 300，policy endpoint 使用 openpi://127.0.0.1:8000。"
+  "使用 PI0.5 评估 LIBERO 的 libero_spatial suite。选择 libero_real_remote target、libero_target_benchmark builtin runtime、target_native 执行路径和 recovery 校验；task id 使用 0-9，init-state id 使用 0-49，max_steps 设为 300，replan_every_steps 设为 5，policy endpoint 使用 openpi://127.0.0.1:8000。"
 ```
 </td>
 </tr>
 </table>
 
-启动终端 3 前，需要启用 `libero_real_remote` 并配置 Runtime verification。
+启动终端 3 前，需要启用 `libero_real_remote`、配置 Runtime verification，
+并在 Target 配置中设置 `seed: 7` 和 `retry_instruction_mode: original`。
+后者使 recovery attempt 保持原任务指令；需要把 verifier 返回的非空 rewrite
+作为 policy 指令时，改用 `verifier_rewrite`。
 完整的全局配置、Target、SkillRuntime、Session、benchmark、verification 和
 远程部署参数参见 [Runtime 参数配置参考](docs/zh/04-runtime-configuration-reference.md)，
 其中包含 LIBERO 配置示例。

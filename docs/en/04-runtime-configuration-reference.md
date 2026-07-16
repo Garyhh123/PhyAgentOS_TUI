@@ -50,7 +50,7 @@ cannot be overridden by a Session. A Session only selects a
 | `serviceEnabled` | `true` | Starts the Agent-owned Verification Service child process. |
 | `provider` | `null` | Verification provider. `null` reuses the Agent default provider. |
 | `model` | `null` | Verification model. `null` reuses the Agent default model. |
-| `timeoutS` | `60` | Timeout in seconds for one verification request. Must be greater than zero. |
+| `timeoutS` | `180` | Timeout in seconds for one verification request. Must be greater than zero. |
 | `evidenceRetention` | `none` | SessionVerifier RGB retention: `all`, `failed`, or `none`. Target-native episode evidence is temporary and is always deleted after verification. |
 | `maxReplansPerEpisode` | `2` | Maximum additional recovery attempts for one episode. `0` disables recovery retries. |
 | `maxVerifierCallsPerRun` | `50` | Verifier-call budget shared by one target-native benchmark run. `0` disables verifier calls. |
@@ -65,7 +65,7 @@ cannot be overridden by a Session. A Session only selects a
       "serviceEnabled": true,
       "provider": null,
       "model": null,
-      "timeoutS": 60,
+      "timeoutS": 180,
       "evidenceRetention": "none",
       "maxReplansPerEpisode": 2,
       "maxVerifierCallsPerRun": 50,
@@ -83,9 +83,20 @@ Verification profiles have path-specific behavior:
 |:--|:--|:--|
 | `strict` | No verifier call. | No verifier call. |
 | `audit` | SessionVerifier validates the completed Session without recovery. | The benchmark job validates failed episodes without recovery. |
-| `recovery` | SessionVerifier may create a rewritten child Session. | The benchmark job may continue the failed episode using a verifier rewrite. |
+| `recovery` | SessionVerifier may create a child Session from the required verifier rewrite. | The benchmark job may continue the failed episode; the Target configuration selects whether the next attempt uses the original task or the verifier rewrite. |
 
-A target-native root Session is not passed through SessionVerifier again.
+Both policy-loop Session verification and target-native episode verification use
+the Agent-owned Verification Service for the model-backed verdict and strict
+response normalization. A target-native root Session is not passed through
+SessionVerifier again.
+
+A valid response has a supported verdict, a nonempty array of nonempty evidence
+strings, and a nonempty lesson. `failure` also requires a nonempty
+`failure_reason`; `replan` also requires a nonempty
+`replan_task_description`. A response that violates this contract is recorded
+as `failure` with `verifier_status: invalid_response`. Model timeouts, provider
+errors, service HTTP errors, and connection failures remain verification
+infrastructure errors and are never converted into `replan`.
 
 ## `TARGETS.md`
 
@@ -113,6 +124,15 @@ A target-native root Session is not passed through SessionVerifier again.
 | `perception.perception_config_ref` | no | Perception configuration file. |
 | `perception.artifact_dir` | no | Perception artifact directory. |
 | `config` | no | Target-specific parameters such as dimensions, limits, scene, control mode, and reset behavior; defaults to an empty map. |
+
+The LIBERO target-native benchmark reads these evaluation controls from the
+Target `config` map:
+
+| Field | Default | Meaning |
+|:--|:--|:--|
+| `control_mode` | `relative` | LIBERO action convention; use the convention required by the selected policy. |
+| `seed` | `0` | Environment seed applied to every benchmark episode. |
+| `retry_instruction_mode` | `original` | Recovery instruction behavior. `original` keeps the original task; `verifier_rewrite` replaces it with the verifier's nonempty `replan_task_description`. |
 
 ### Benchmark capability
 
@@ -217,7 +237,7 @@ Preflight, execution, finalization, verification, and a terminal state.
 | `execution.max_steps` | `600` | Maximum execution steps. |
 | `execution.control_hz` | `null` | Optional control frequency. |
 | `execution.replan_every` | `8` | Legacy/default policy refresh count used when a step-specific value is absent. |
-| `execution.replan_every_steps` | `null` | Explicit policy refresh cadence in steps. |
+| `execution.replan_every_steps` | `null` | Maximum action steps consumed from one policy response before requesting a new response. This policy refresh cadence is independent of verification `replan`. |
 | `execution.action_chunk_mode` | `chunk_buffer` | `chunk_buffer`, `open_loop`, or `single_step`. |
 | `execution.chunk_switch_mode` | `hard_switch` | `hard_switch` or `soft_blend`. |
 | `execution.reset_policy` | `session_runner` | `session_runner` for normal/policy-loop Sessions; `skillruntime_managed` for target-native benchmark Sessions. |
@@ -229,7 +249,7 @@ Preflight, execution, finalization, verification, and a terminal state.
 |:--|:--|:--|
 | `runtime_hints.perception_queries` | `[]` | Structured perception or benchmark selection hints. |
 | `runtime_hints.force_environment_refresh` | `false` | Requests an environment refresh before execution. |
-| `runtime_hints.preferred_replan_every_steps` | `null` | Preferred policy refresh cadence supplied to planning. |
+| `runtime_hints.preferred_replan_every_steps` | `null` | Preferred value for the same policy refresh cadence supplied to planning. |
 | `safety_profile.profile` | `default` | Named safety profile. |
 | `safety_profile.workspace_bounds` | `null` | Workspace bound reference. |
 | `safety_profile.stop_on_policy_timeout` | `true` | Stops execution when the policy times out. |
@@ -282,7 +302,7 @@ minimal configuration is:
       "serviceEnabled": true,
       "provider": null,
       "model": null,
-      "timeoutS": 60,
+      "timeoutS": 180,
       "evidenceRetention": "none",
       "maxReplansPerEpisode": 2,
       "maxVerifierCallsPerRun": 50,
@@ -317,6 +337,8 @@ benchmark_capabilities:
 config:
   control_mode: relative
   max_steps: 300
+  seed: 7
+  retry_instruction_mode: original
 ```
 
 The README service commands use these example-specific parameters:
@@ -328,6 +350,7 @@ The README service commands use these example-specific parameters:
 | Target `--max-steps` | `300` | Limits policy steps in one attempt. |
 | `--num-steps-wait` | `10` | Runs scene-settling steps after each episode reset. |
 | Target `--control-mode` | `relative` | Matches the PI0.5 LIBERO action convention. |
+| Target `--seed` | `7` | Matches the official OpenPI LIBERO evaluation seed. |
 | Policy `--policy-config` | `pi05_libero` | Selects the official PI0.5 LIBERO policy configuration. |
 | Policy `--checkpoint-dir` | `gs://openpi-assets/checkpoints/pi05_libero` | Loads the official PI0.5 checkpoint. |
 | Policy `--host` / `--port` | `0.0.0.0` / `8000` | Exposes the same-host endpoint `openpi://127.0.0.1:8000`. |
@@ -345,11 +368,14 @@ The Agent request selects:
 | Verification profile | `recovery` |
 | Policy endpoint | `openpi://127.0.0.1:8000` |
 | Task / init-state IDs | `0-9` / `0-49` in `runtime_hints.perception_queries` |
+| Policy refresh cadence | `execution.replan_every_steps: 5` |
 
-The Target resets once per logical episode. A nonempty verifier rewrite becomes
-the next policy task description, and that attempt continues from the failed
-environment state without another reset. Artifacts preserve first-attempt and
-recovery-final scores separately.
+The Target resets once per logical episode. Every `replan` verdict retains a
+nonempty `replan_task_description`. With the default
+`retry_instruction_mode: original`, the next attempt keeps the original task;
+set it to `verifier_rewrite` to use that description as the policy instruction.
+Either mode continues from the failed environment state without another reset.
+Artifacts preserve first-attempt and recovery-final scores separately.
 
 ## Related Documentation
 

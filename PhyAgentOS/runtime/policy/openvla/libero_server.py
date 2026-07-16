@@ -9,6 +9,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import random
 import time
 import traceback
 from typing import Any
@@ -21,6 +22,16 @@ os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
 
 from PhyAgentOS.runtime.policy.msgpack_numpy import packb, unpackb
 from PhyAgentOS.runtime.watchdog.errors import PolicyProtocolError
+
+
+OFFICIAL_OPENVLA_CENTER_CROP_AREA = 0.9
+OFFICIAL_OPENVLA_SEED = 7
+WEBSOCKET_KEEPALIVE_DISABLED = {
+    "ping_interval": None,
+    "ping_timeout": None,
+}
+_TF_MODULE: Any | None = None
+_TF_IMPORT_FAILED = False
 
 
 class OpenVLALiberoPolicy:
@@ -38,12 +49,14 @@ class OpenVLALiberoPolicy:
         load_in_8bit: bool,
         load_in_4bit: bool,
         attn_implementation: str | None,
+        seed: int | None,
     ):
         self.model_path = model_path
         self.unnorm_key = unnorm_key
         self.device = device
         self.image_size = int(image_size)
         self.center_crop = bool(center_crop)
+        self.seed = int(seed) if seed is not None else None
 
         try:
             import torch
@@ -54,6 +67,7 @@ class OpenVLALiberoPolicy:
                 "environment before running this server."
             ) from exc
 
+        _set_seed_everywhere(self.seed, torch)
         _register_openvla_classes()
         dtype = _torch_dtype(torch, torch_dtype)
         load_kwargs: dict[str, Any] = {
@@ -99,6 +113,7 @@ class OpenVLALiberoPolicy:
                 "action_dim": 7,
                 "image_size": self.image_size,
                 "center_crop": self.center_crop,
+                "seed": self.seed,
                 "recommended_control_mode": "relative",
                 "wire_protocol": "openpi_msgpack_numpy",
             }
@@ -162,6 +177,7 @@ async def serve_policy(policy: OpenVLALiberoPolicy, *, host: str, port: int) -> 
         compression=None,
         max_size=None,
         process_request=_health_check,
+        **WEBSOCKET_KEEPALIVE_DISABLED,
     ) as server:
         _status(f"listening on ws://{host}:{port}")
         _status(f"use policy endpoint openpi://{host}:{port} from PAOS")
@@ -181,6 +197,7 @@ def main() -> None:
     parser.add_argument("--load-in-8bit", action="store_true")
     parser.add_argument("--load-in-4bit", action="store_true")
     parser.add_argument("--attn-implementation", default="flash_attention_2")
+    parser.add_argument("--seed", type=int, default=OFFICIAL_OPENVLA_SEED)
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--log-level", default="INFO")
@@ -191,7 +208,7 @@ def main() -> None:
     _status(f"model_path={args.model_path}")
     _status(f"unnorm_key={args.unnorm_key}")
     _status(f"bind={args.host}:{args.port}")
-    _status(f"image_size={args.image_size} center_crop={args.center_crop}")
+    _status(f"image_size={args.image_size} center_crop={args.center_crop} seed={args.seed}")
     _status("loading checkpoint; first start may download from Hugging Face and take a while")
     policy = OpenVLALiberoPolicy(
         model_path=args.model_path,
@@ -203,6 +220,7 @@ def main() -> None:
         load_in_8bit=args.load_in_8bit,
         load_in_4bit=args.load_in_4bit,
         attn_implementation=args.attn_implementation,
+        seed=args.seed,
     )
     _status("policy loaded; starting websocket server")
     logging.info("Loaded OpenVLA policy: %s", policy.metadata)
@@ -234,6 +252,16 @@ def _torch_dtype(torch, dtype: str):
     }[dtype]
 
 
+def _set_seed_everywhere(seed: int | None, torch: Any) -> None:
+    if seed is None:
+        return
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if getattr(torch, "cuda", None) is not None:
+        torch.cuda.manual_seed_all(seed)
+
+
 def _validate_observation(observation: dict[str, Any], *, require_prompt: bool) -> None:
     if not isinstance(observation, dict):
         raise PolicyProtocolError(f"policy observation must be a dict, got {type(observation).__name__}")
@@ -259,17 +287,83 @@ def _image_to_pil(image: Any, *, image_size: int, center_crop: bool):
         array = (np.clip(array, 0.0, 1.0) * 255.0).astype(np.uint8)
     else:
         array = array.astype(np.uint8, copy=False)
+    official_pil = _official_tf_image_to_pil(array, image_size=image_size, center_crop=center_crop)
+    if official_pil is not None:
+        return official_pil
     pil = Image.fromarray(np.ascontiguousarray(array))
-    if center_crop:
-        crop_scale = 0.9
-        width, height = pil.size
-        crop_w, crop_h = int(width * crop_scale), int(height * crop_scale)
-        left = max(0, (width - crop_w) // 2)
-        top = max(0, (height - crop_h) // 2)
-        pil = pil.crop((left, top, left + crop_w, top + crop_h))
     if pil.size != (image_size, image_size):
         pil = pil.resize((image_size, image_size), Image.Resampling.LANCZOS)
+    if center_crop:
+        # Match OpenVLA's eval preprocessing: crop by area scale after LIBERO
+        # images have been resized to the model input size, then resize back.
+        pil = _center_crop_by_area(pil, OFFICIAL_OPENVLA_CENTER_CROP_AREA)
+        if pil.size != (image_size, image_size):
+            pil = pil.resize((image_size, image_size), Image.Resampling.BILINEAR)
     return pil
+
+
+def _center_crop_by_area(image: Any, crop_area_scale: float):
+    width, height = image.size
+    left, top, right, bottom = _center_crop_box(width, height, crop_area_scale)
+    return image.crop((left, top, right, bottom))
+
+
+def _center_crop_box(width: int, height: int, crop_area_scale: float) -> tuple[int, int, int, int]:
+    side_scale = float(np.sqrt(np.clip(crop_area_scale, 0.0, 1.0)))
+    crop_w = max(1, min(int(round(width * side_scale)), width))
+    crop_h = max(1, min(int(round(height * side_scale)), height))
+    left = max(0, (width - crop_w) // 2)
+    top = max(0, (height - crop_h) // 2)
+    return left, top, left + crop_w, top + crop_h
+
+
+def _official_tf_image_to_pil(array: np.ndarray, *, image_size: int, center_crop: bool):
+    tf = _tensorflow_module()
+    if tf is None:
+        return None
+    try:
+        from PIL import Image
+
+        resize_size = (int(image_size), int(image_size))
+        image = tf.convert_to_tensor(np.ascontiguousarray(array))
+        image = tf.image.encode_jpeg(image)
+        image = tf.io.decode_image(image, expand_animations=False, dtype=tf.uint8)
+        image = tf.image.resize(image, resize_size, method="lanczos3", antialias=True)
+        image = tf.cast(tf.clip_by_value(tf.round(image), 0, 255), tf.uint8)
+        if center_crop:
+            image = tf.image.convert_image_dtype(image, tf.float32)
+            image = _tf_center_crop_and_resize(tf, image, OFFICIAL_OPENVLA_CENTER_CROP_AREA, resize_size)
+            image = tf.clip_by_value(image, 0, 1)
+            image = tf.image.convert_image_dtype(image, tf.uint8, saturate=True)
+        return Image.fromarray(image.numpy()).convert("RGB")
+    except Exception:
+        return None
+
+
+def _tf_center_crop_and_resize(tf: Any, image: Any, crop_area_scale: float, resize_size: tuple[int, int]):
+    image = tf.expand_dims(image, axis=0)
+    side_scale = tf.reshape(tf.clip_by_value(tf.sqrt(crop_area_scale), 0, 1), shape=(1,))
+    offsets = (1 - side_scale) / 2
+    bounding_boxes = tf.stack(
+        [offsets, offsets, offsets + side_scale, offsets + side_scale],
+        axis=1,
+    )
+    return tf.image.crop_and_resize(image, bounding_boxes, tf.range(1), resize_size)[0]
+
+
+def _tensorflow_module():
+    global _TF_IMPORT_FAILED, _TF_MODULE
+    if _TF_IMPORT_FAILED:
+        return None
+    if _TF_MODULE is not None:
+        return _TF_MODULE
+    try:
+        import tensorflow as tf
+    except Exception:
+        _TF_IMPORT_FAILED = True
+        return None
+    _TF_MODULE = tf
+    return tf
 
 
 def _openvla_prompt(task: str, model_path: str) -> str:
@@ -332,10 +426,8 @@ def _actions_to_numpy(action: Any) -> np.ndarray:
 
 def _normalize_and_invert_libero_gripper(actions: np.ndarray) -> np.ndarray:
     updated = np.array(actions, dtype=np.float32, copy=True)
-    gripper = updated[:, -1]
-    if np.nanmin(gripper) >= 0.0 and np.nanmax(gripper) <= 1.0:
-        gripper = 2.0 * gripper - 1.0
-    gripper = np.where(gripper >= 0.0, 1.0, -1.0)
+    gripper = 2.0 * updated[:, -1] - 1.0
+    gripper = np.sign(gripper)
     updated[:, -1] = -gripper
     return updated
 

@@ -116,7 +116,7 @@ python scripts/run_runtime_watchdog.py \
 
 ## 8. 语义验收运维
 
-Session 选择 `audit` 或 `recovery` 后，policy-loop 完成会进入 `awaiting_verification`。Verification Service 由 `paos agent` 自动管理。
+Session 选择 `audit` 或 `recovery` 后，policy-loop 完成会进入 `awaiting_verification`。Verification Service 由 `paos agent` 自动管理，SessionVerifier 与 target-native episode verification 都通过该服务取得模型 verdict。
 
 `evidenceRetention`：
 

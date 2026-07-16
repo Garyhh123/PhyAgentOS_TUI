@@ -208,7 +208,7 @@
           <div class="service"><h3>SessionManager</h3><p>按 channel:chat 保存 JSONL 对话；为 ContextBuilder 提供短期历史和 consolidation offset。</p></div>
           <div class="service"><h3>MemoryConsolidator</h3><p>上下文接近窗口上限时，调用模型压缩历史并写入 MEMORY.md / HISTORY.md。</p></div>
           <div class="service"><h3>SubagentManager</h3><p>为独立任务创建受限工具集的后台 Agent，完成后通过 MessageBus 报告主 Agent。</p></div>
-          <div class="service" style="border-top-color:var(--red)"><h3>SessionVerifier</h3><p>消费 runtime 完成证据，进行语义验收、replan、lesson 与 RGB retention；同时被 verify_session Tool 复用。</p></div>
+          <div class="service" style="border-top-color:var(--red)"><h3>Verification Service + SessionVerifier</h3><p>Service 统一管理模型 prompt、严格 verdict 规范化和基础设施错误边界；SessionVerifier 应用 policy-loop 语义结论、replan、lesson 与 RGB retention，并被 verify_session Tool 复用。</p></div>
         </div>
       </div>
 

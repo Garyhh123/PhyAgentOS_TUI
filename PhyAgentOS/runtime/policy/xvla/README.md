@@ -46,7 +46,7 @@ conda run --no-capture-output -n libero python PhyAgentOS/runtime/targets/remote
   --host 0.0.0.0 --port 9042 \
   --camera-height 256 --camera-width 256 \
   --max-steps 300 --num-steps-wait 10 \
-  --control-mode absolute
+  --control-mode absolute --seed 0
 ```
 
 2. Start the X-VLA policy server in the `xvla` environment:
@@ -79,6 +79,9 @@ for SUITE in libero_spatial libero_object libero_goal libero_10; do
     --task-ids 0-9 \
     --init-state-ids 0-49 \
     --control-mode absolute \
+    --replan-every-steps 5 \
+    --seed 0 \
+    --retry-instruction-mode original \
     --force-init
 done
 ```
@@ -110,6 +113,13 @@ evidence to the verifier and retries the same task/init-state inside the same
 suite session when the verifier returns `replan`. The summary reports both
 first-attempt and final-outcome rates.
 
+`replan_every_steps` is the policy refresh cadence: at most that many actions
+from one policy response are executed before requesting a new response. It is
+independent of verification recovery. The Target's `retry_instruction_mode`
+selects the recovery instruction: `original` (default) keeps the original task,
+while `verifier_rewrite` uses the verifier's required nonempty
+`replan_task_description`.
+
 The Verification Service is started and supervised by `paos agent`; no fourth
 terminal is required.
 
@@ -120,11 +130,16 @@ RGB observations to the configured multimodal model.
 ```bash
 for SUITE in libero_spatial libero_object libero_goal libero_10; do
   paos agent --workspace ~/.PhyAgentOS/workspace -m \
-    "Evaluate X-VLA on LIBERO suite ${SUITE} with libero_real_remote and libero_target_benchmark. Use target_native execution, recovery verification, task ids 0-9, init-state ids 0-49, absolute control, and policy endpoint openpi://127.0.0.1:8040."
+    "Evaluate X-VLA on LIBERO suite ${SUITE} with libero_real_remote and libero_target_benchmark. Use target_native execution, recovery verification, task ids 0-9, init-state ids 0-49, absolute control, replan_every_steps 5, and policy endpoint openpi://127.0.0.1:8040."
 done
 ```
 
 Target-native recovery run completed successfully with the following results:
+
+### PAOS X-VLA Agent-assisted Results
+
+These recovery runs used `retry_instruction_mode: verifier_rewrite` and allowed
+one retry after a failed episode.
 
 | Suite | First attempt(original) | Final after agent retry |
 | --- | ---: | ---: |

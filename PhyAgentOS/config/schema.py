@@ -303,7 +303,7 @@ class AgentVerificationConfig(Base):
     service_enabled: bool = True
     model: str | None = None
     provider: str | None = None
-    timeout_s: float = Field(default=60.0, gt=0)
+    timeout_s: float = Field(default=180.0, gt=0)
     evidence_retention: Literal["all", "failed", "none"] = "none"
     max_replans_per_episode: int = Field(default=2, ge=0)
     max_verifier_calls_per_run: int = Field(default=50, ge=0)

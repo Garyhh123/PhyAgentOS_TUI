@@ -84,7 +84,7 @@ Traditional "LLM-direct-to-hardware" approaches tightly couple reasoning to exec
 <tr>
   <td>⚡</td>
   <td><b>Dual Skill Runtimes</b></td>
-  <td><code>PolicySkillRuntime</code> maintains policy closed-loop + <code>BuiltinSkillRuntime</code> manages agent interactive loop</td>
+  <td><code>PolicySkillRuntime</code> maintains the policy closed loop + <code>BuiltinSkillRuntime</code> manages built-in loops such as target-native benchmarks and constrained agent interaction</td>
 </tr>
 <tr>
   <td>🛡️</td>
@@ -167,7 +167,7 @@ conda run --no-capture-output -n libero \
   --host 0.0.0.0 --port 9002 \
   --camera-height 256 --camera-width 256 \
   --max-steps 300 --num-steps-wait 10 \
-  --control-mode relative
+  --control-mode relative --seed 7
 
 # Terminal 2: official OpenPI PI0.5 policy server
 conda run --no-capture-output -n openpi \
@@ -178,14 +178,17 @@ conda run --no-capture-output -n openpi \
 
 # Terminal 3: Agent, Watchdog, and Verification Service
 paos agent --workspace ~/.PhyAgentOS/workspace -m \
-  "Evaluate PI0.5 on LIBERO suite libero_spatial. Use target libero_real_remote, the libero_target_benchmark builtin runtime, target_native execution, recovery verification, task ids 0-9, init-state ids 0-49, max_steps 300, and policy endpoint openpi://127.0.0.1:8000."
+  "Evaluate PI0.5 on LIBERO suite libero_spatial. Use target libero_real_remote, the libero_target_benchmark builtin runtime, target_native execution, recovery verification, task ids 0-9, init-state ids 0-49, max_steps 300, replan_every_steps 5, and policy endpoint openpi://127.0.0.1:8000."
 ```
 </td>
 </tr>
 </table>
 
-Before starting Terminal 3, enable `libero_real_remote` and configure Runtime
-verification. See the
+Before starting Terminal 3, enable `libero_real_remote`, configure Runtime
+verification, and set the Target configuration to `seed: 7` and
+`retry_instruction_mode: original`. The latter keeps the original task
+instruction on recovery attempts; use `verifier_rewrite` when the policy should
+receive the verifier's nonempty rewrite instead. See the
 [Runtime configuration reference](docs/en/04-runtime-configuration-reference.md)
 for the complete global, Target, SkillRuntime, Session, benchmark,
 verification, and remote-host parameter reference. The LIBERO setup is

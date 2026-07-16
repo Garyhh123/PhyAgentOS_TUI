@@ -42,6 +42,11 @@ except Exception:  # noqa: BLE001
 import msgpack
 
 RPC_VERSION = "phyagentos.runtime_rpc.v2"
+WEBSOCKET_KEEPALIVE_DISABLED = {
+    "ping_interval": None,
+    "ping_timeout": None,
+}
+VERIFIER_CLIENT_TIMEOUT_GRACE_S = 15.0
 
 # LIBERO dummy action keeps the gripper open while the scene settles.
 LIBERO_DUMMY_ACTION = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0]
@@ -166,6 +171,7 @@ LIBERO_DEFAULT_CONFIG = {
     "max_steps": 300,
     "num_steps_wait": 10,
     "control_mode": "relative",
+    "seed": 0,
     "record_dir": None,
     "record_fps": 20,
 }
@@ -205,7 +211,13 @@ class LiberoRealRuntime:
 
         bn = str(self.config["benchmark_name"])
         tid = int(self.config["task_id"])
-        key = (bn, tid, int(self.config["camera_height"]), int(self.config["camera_width"]))
+        key = (
+            bn,
+            tid,
+            int(self.config["camera_height"]),
+            int(self.config["camera_width"]),
+            int(self.config.get("seed", 0)),
+        )
         if self.env is not None and self._env_key == key:
             return
         status(
@@ -225,6 +237,9 @@ class LiberoRealRuntime:
             camera_heights=int(self.config["camera_height"]),
             camera_widths=int(self.config["camera_width"]),
         )
+        # Match OpenVLA's official LIBERO eval; the env seed affects object
+        # positions even when using fixed LIBERO init states.
+        self.env.seed(int(self.config.get("seed", 0)))
         self.suite = suite
         self.task = task
         self.init_states = suite.get_task_init_states(tid)
@@ -628,6 +643,7 @@ class LiberoRealRuntime:
         verifier_calls_remaining: int,
     ) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]:
         profile = str(verification["profile"])
+        retry_instruction_mode = str(verification["retry_instruction_mode"])
         max_replans = max(0, int(verification["max_replans_per_episode"])) if profile == "recovery" else 0
         attempts = []
         verifier_attempts = []
@@ -722,7 +738,15 @@ class LiberoRealRuntime:
                     % (suite, task_id, init_state_id, attempt_index, str(verdict.get("verdict")))
                 )
                 break
-            current_task_description = str(verdict["replan_task_description"])
+            if retry_instruction_mode == "verifier_rewrite":
+                current_task_description = str(verdict["replan_task_description"])
+            else:
+                current_task_description = task_description
+            verdict["applied_task_description"] = (
+                current_task_description
+                if current_task_description is not None
+                else episode.get("task_description")
+            )
             status(
                 "verification recovery start suite=%s t%d_i%d next_attempt=%d"
                 % (suite, task_id, init_state_id, attempt_index + 1)
@@ -765,6 +789,7 @@ class LiberoRealRuntime:
                 "init_state_id": int(init_state_id),
                 "max_steps": int(max_steps),
                 "control_mode": control_mode,
+                "seed": int(config.get("seed", self.config.get("seed", 0))),
                 "camera_height": int(config.get("camera_height", self.config.get("camera_height", 256))),
                 "camera_width": int(config.get("camera_width", self.config.get("camera_width", 256))),
                 "num_steps_wait": int(config.get("num_steps_wait", self.config.get("num_steps_wait", 10))),
@@ -787,6 +812,7 @@ class LiberoRealRuntime:
             self._initial_obs = self._last_obs
         policy.reset_session(episode_session_id)
         effective_task_description = str(task_description).strip() if task_description is not None else self.language
+        replan_every_steps = _benchmark_replan_every_steps(config)
         episode_latencies = []
         error_code = None
         error_message = None
@@ -798,6 +824,7 @@ class LiberoRealRuntime:
                 if policy_meta.get("policy_latency_ms") is not None:
                     episode_latencies.append(float(policy_meta["policy_latency_ms"]))
                 actions = _policy_actions(policy_output)
+                actions = actions[: min(replan_every_steps, actions.shape[0])]
                 self.action_chunk(
                     {
                         "chunk_id": "benchmark_policy_chunk_%d" % len(self._episode_chunks),
@@ -808,6 +835,11 @@ class LiberoRealRuntime:
                 if job is not None:
                     job["heartbeat_ns"] = time.time_ns()
         except Exception as exc:  # noqa: BLE001
+            if _is_policy_transport_error(exc):
+                raise TargetProtocolError(
+                    "policy transport failed during %s t%d_i%d attempt=%d: %s"
+                    % (suite, task_id, init_state_id, attempt_index, exc)
+                ) from exc
             error_code = type(exc).__name__
             error_message = str(exc)
             self.done = True
@@ -908,17 +940,19 @@ class LiberoRealRuntime:
             "step_index": self.step_idx,
             "task_description": self.language,
             "control_mode": str(self.config.get("control_mode", "relative")),
+            "seed": int(self.config.get("seed", 0)),
         }
 
     def _short_config(self) -> str:
         return (
-            "suite=%s task_id=%d init_state_id=%d control_mode=%s max_steps=%d"
+            "suite=%s task_id=%d init_state_id=%d control_mode=%s max_steps=%d seed=%d"
             % (
                 str(self.config.get("benchmark_name")),
                 int(self.config.get("task_id", 0)),
                 int(self.config.get("init_state_id", 0)),
                 str(self.config.get("control_mode", "relative")),
                 int(self.config.get("max_steps", 300)),
+                int(self.config.get("seed", 0)),
             )
         )
 
@@ -980,7 +1014,12 @@ class _PolicyWsClient:
         import websockets
 
         self._ws = await asyncio.wait_for(
-            websockets.connect(_policy_ws_url(self.endpoint), max_size=None, compression=None),
+            websockets.connect(
+                _policy_ws_url(self.endpoint),
+                max_size=None,
+                compression=None,
+                **WEBSOCKET_KEEPALIVE_DISABLED,
+            ),
             timeout=self.timeout_s,
         )
         metadata = await asyncio.wait_for(self._ws.recv(), timeout=self.timeout_s)
@@ -1023,6 +1062,23 @@ def _policy_ws_url(endpoint: str) -> str:
     if parsed.scheme in {"ws", "wss"}:
         return endpoint
     raise TargetProtocolError("unsupported policy endpoint for benchmark: %s" % endpoint)
+
+
+def _is_policy_transport_error(exc: Exception) -> bool:
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+        return True
+    name = type(exc).__name__
+    if name in {"ConnectionClosed", "ConnectionClosedError", "ConnectionClosedOK"}:
+        return True
+    message = str(exc)
+    return (
+        "policy websocket is not connected" in message
+        or "policy response missing actions" in message
+        or "policy server returned text" in message
+        or "timed out" in message.lower()
+        or "keepalive ping timeout" in message
+        or "no close frame received" in message
+    )
 
 
 def _policy_observation(obs: Dict[str, Any], task: str, session_id: str) -> Dict[str, Any]:
@@ -1069,6 +1125,17 @@ def _policy_actions(policy_output: Dict[str, Any]) -> np.ndarray:
     if actions.shape[1] >= 10:
         return _ee6d_action_to_libero(actions)
     raise TargetProtocolError("policy action must have 7 dims or ee6d dims >=10, got %s" % (actions.shape,))
+
+
+def _benchmark_replan_every_steps(config: Dict[str, Any]) -> int:
+    for key in ("replan_every_steps", "preferred_replan_every_steps", "policy_chunk_steps", "replan_every"):
+        value = config.get(key)
+        if value is None:
+            continue
+        steps = int(value)
+        if steps > 0:
+            return steps
+    return int(config.get("max_chunk_size", LIBERO_DEFAULT_CONFIG["max_chunk_size"]))
 
 
 def _ee6d_action_to_libero(actions: np.ndarray) -> np.ndarray:
@@ -1165,9 +1232,10 @@ def _verification_config(config: Dict[str, Any]) -> Dict[str, Any]:
         "profile": profile,
         "endpoint": config.get("verification_endpoint"),
         "token": config.get("verification_token"),
-        "timeout_s": float(config.get("verification_timeout_s") or 60.0),
+        "timeout_s": float(config.get("verification_timeout_s") or 180.0),
         "max_replans_per_episode": _int_config(config, "max_replans_per_episode", 2),
         "max_verifier_calls_per_run": _int_config(config, "max_verifier_calls_per_run", 50),
+        "retry_instruction_mode": str(config.get("retry_instruction_mode") or "original"),
     }
 
 
@@ -1183,7 +1251,7 @@ async def _verify_episode_attempt(
         _post_verifier,
         str(endpoint or ""),
         bundle,
-        float(verification.get("timeout_s") or 60.0),
+        float(verification.get("timeout_s") or 180.0),
         str(verification.get("token") or ""),
     )
     record = {
@@ -1199,29 +1267,13 @@ async def _verify_episode_attempt(
         "replan_task_description": verdict.get("replan_task_description"),
         "lesson": verdict.get("lesson"),
         "verifier_status": verdict.get("verifier_status"),
+        "retry_instruction_mode": verification["retry_instruction_mode"],
         "latency_ms": (time.time() - started) * 1000.0,
         "evidence_digest": hashlib.sha256(
             json.dumps(_jsonable(bundle), ensure_ascii=False, sort_keys=True).encode("utf-8")
         ).hexdigest(),
         "evidence_retention": "deleted_after_verification",
     }
-    return _validate_replan_record(record, "verifier_rewrite")
-
-
-def _validate_replan_record(record: Dict[str, Any], retry_instruction_mode: str) -> Dict[str, Any]:
-    if record.get("verdict") != "replan":
-        return record
-    if retry_instruction_mode != "verifier_rewrite":
-        raise TargetProtocolError("unsupported retry_instruction_mode: %s" % retry_instruction_mode)
-    rewrite = record.get("replan_task_description")
-    rewrite = str(rewrite).strip() if rewrite is not None else ""
-    if rewrite:
-        record["replan_task_description"] = rewrite
-        return record
-    record["verdict"] = "failure"
-    record["failure_reason"] = "replan verdict requires a non-empty replan_task_description"
-    record["verifier_status"] = "invalid_response"
-    record["replan_task_description"] = None
     return record
 
 
@@ -1261,8 +1313,11 @@ def _post_verifier(
             method="POST",
         )
         opener = url_request.build_opener(url_request.ProxyHandler({}))
-        with opener.open(req, timeout=timeout_s) as response:  # noqa: S310 - configured verifier
+        client_timeout_s = max(1.0, float(timeout_s) + VERIFIER_CLIENT_TIMEOUT_GRACE_S)
+        with opener.open(req, timeout=client_timeout_s) as response:  # noqa: S310 - configured verifier
             data = json.loads(response.read().decode("utf-8"))
+    except url_error.HTTPError as exc:
+        return _verifier_error(_http_error_message(exc))
     except (OSError, TimeoutError, url_error.URLError, json.JSONDecodeError) as exc:
         return _verifier_error(str(exc))
     if not isinstance(data, dict):
@@ -1292,6 +1347,16 @@ def _verifier_error(reason: str) -> Dict[str, Any]:
         "lesson": "Verification failed and no recovery was attempted.",
         "verifier_status": "error",
     }
+
+
+def _http_error_message(exc: url_error.HTTPError) -> str:
+    try:
+        body = exc.read().decode("utf-8", errors="replace").strip()
+    except Exception:  # noqa: BLE001
+        body = ""
+    if not body:
+        return "HTTP Error %s: %s" % (exc.code, exc.reason)
+    return "HTTP Error %s: %s: %s" % (exc.code, exc.reason, body[:500])
 
 
 def _episode_verification_bundle(config: Dict[str, Any], episode: Dict[str, Any]) -> Dict[str, Any]:
@@ -1409,7 +1474,14 @@ async def serve(runtime: LiberoRealRuntime, host: str, port: int) -> None:
                     )
                 )
 
-    async with websockets.serve(handler, host, port, max_size=None, compression=None):
+    async with websockets.serve(
+        handler,
+        host,
+        port,
+        max_size=None,
+        compression=None,
+        **WEBSOCKET_KEEPALIVE_DISABLED,
+    ):
         status("listening on ws://%s:%d" % (host, port))
         status("use target endpoint targetws://%s:%d from PAOS" % (host, port))
         status("waiting for target.describe / target.reset requests")
@@ -1428,6 +1500,7 @@ def main() -> None:
     parser.add_argument("--max-steps", type=int, default=300)
     parser.add_argument("--num-steps-wait", type=int, default=10)
     parser.add_argument("--control-mode", choices=["relative", "absolute"], default="relative")
+    parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--record-dir", default=None, help="if set, write an mp4 per episode here")
     parser.add_argument("--record-fps", type=int, default=20)
     args = parser.parse_args()
@@ -1437,8 +1510,16 @@ def main() -> None:
         % (args.benchmark_name, args.task_id, args.init_state_id, args.control_mode)
     )
     status(
-        "bind=%s:%d camera=%dx%d max_steps=%d num_steps_wait=%d"
-        % (args.host, args.port, args.camera_width, args.camera_height, args.max_steps, args.num_steps_wait)
+        "bind=%s:%d camera=%dx%d max_steps=%d num_steps_wait=%d seed=%d"
+        % (
+            args.host,
+            args.port,
+            args.camera_width,
+            args.camera_height,
+            args.max_steps,
+            args.num_steps_wait,
+            args.seed,
+        )
     )
     if args.record_dir:
         status("recording enabled record_dir=%s fps=%d" % (args.record_dir, args.record_fps))
@@ -1452,6 +1533,7 @@ def main() -> None:
             "max_steps": args.max_steps,
             "num_steps_wait": args.num_steps_wait,
             "control_mode": args.control_mode,
+            "seed": args.seed,
             "record_dir": args.record_dir,
             "record_fps": args.record_fps,
         }

@@ -27,6 +27,10 @@ _DEFAULT_LIBERO_CHECKPOINTS = {
     "pi05_libero": "gs://openpi-assets/checkpoints/pi05_libero",
     "pi0_fast_libero": "gs://openpi-assets/checkpoints/pi0_fast_libero",
 }
+WEBSOCKET_KEEPALIVE_DISABLED = {
+    "ping_interval": None,
+    "ping_timeout": None,
+}
 
 
 class NativeOpenPIPolicy:
@@ -145,6 +149,7 @@ async def serve_policy(policy: NativeOpenPIPolicy, *, host: str, port: int) -> N
         compression=None,
         max_size=None,
         process_request=_health_check,
+        **WEBSOCKET_KEEPALIVE_DISABLED,
     ) as server:
         _status(f"listening on ws://{host}:{port}")
         _status(f"use policy endpoint openpi://{host}:{port} from PAOS")

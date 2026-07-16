@@ -22,7 +22,7 @@ conda run --no-capture-output -n libero python PhyAgentOS/runtime/targets/remote
   --benchmark-name libero_spatial --task-id 0 --init-state-id 0 \
   --camera-height 256 --camera-width 256 \
   --max-steps 300 --num-steps-wait 10 \
-  --control-mode relative
+  --control-mode relative --seed 0
 ```
 
 The runtime target endpoint is:
@@ -116,8 +116,20 @@ PYTHONPATH=$(pwd) conda run -n paos python scripts/prepare_libero_target_benchma
   --task-ids 0-9 \
   --init-state-ids 0-49 \
   --control-mode absolute \
+  --replan-every-steps 5 \
+  --seed 0 \
+  --retry-instruction-mode original \
   --force-init
 ```
+
+`--replan-every-steps` controls how many actions are consumed before the next
+policy request, while `--seed` is forwarded to the LIBERO environment for every
+episode. With `--verification-profile recovery`, every verifier `replan` keeps
+its nonempty rewrite in the episode record. The workspace generator accepts
+`--retry-instruction-mode original` (the default) to continue with the original
+task instruction, or `--retry-instruction-mode verifier_rewrite` when the next
+policy attempt should receive the rewrite instead. Recovery verification
+requires the Verification Service managed by `paos agent`.
 
 Run the single benchmark session:
 
