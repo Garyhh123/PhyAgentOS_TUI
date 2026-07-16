@@ -7,6 +7,7 @@ from typing import Any
 
 from PhyAgentOS.runtime.adapters.bridges import SafetyClampBridge
 from PhyAgentOS.runtime.adapters.behavior1k.target_adapter import Behavior1kTargetAdapter
+from PhyAgentOS.runtime.adapters.go2.target_adapter import Go2BuiltinTargetAdapter
 from PhyAgentOS.runtime.adapters.isaacsim.target_adapter import IsaacSimTargetAdapter
 from PhyAgentOS.runtime.adapters.libero.target_adapter import LiberoTargetAdapter
 from PhyAgentOS.runtime.adapters.openpi.b1k_dummy_policy_adapter import Behavior1kDummyPolicyAdapter
@@ -82,6 +83,7 @@ register_target_adapter("target_adapter://libero_adapter", LiberoTargetAdapter)
 register_target_adapter("target_adapter://libero_mock_adapter", LiberoTargetAdapter)
 register_target_adapter("target_adapter://isaacsim_adapter", IsaacSimTargetAdapter)
 register_target_adapter("target_adapter://behavior1k_openpi_adapter", Behavior1kTargetAdapter)
+register_target_adapter("target_adapter://go2_builtin_adapter", Go2BuiltinTargetAdapter)
 register_policy_adapter("policy_adapter://dummy_openpi_adapter", DummyOpenPIAdapter)
 register_policy_adapter("policy_adapter://b1k_dummy_policy_adapter", Behavior1kDummyPolicyAdapter)
 register_policy_adapter("policy_adapter://b1k_openpi_policy_adapter", Behavior1kOpenPIPolicyAdapter)

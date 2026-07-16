@@ -116,13 +116,13 @@ python scripts/run_runtime_watchdog.py \
 
 ## 8. 语义验收运维
 
-启用 `agents.verification.enabled` 后，Runtime 成功会进入 `awaiting_verification`。需保持 Agent verifier 运行；终态复核要求原 Verification Bundle 与 RGB 仍存在。
+Session 选择 `audit` 或 `recovery` 后，policy-loop 完成会进入 `awaiting_verification`。Verification Service 由 `paos agent` 自动管理，SessionVerifier 与 target-native episode verification 都通过该服务取得模型 verdict。
 
-`rgbRetention`：
+`evidenceRetention`：
 
 - `all`：全部保留，便于复核但占用空间最大。
-- `failed`：成功删除，失败/replan 保留；默认。
-- `none`：有效 verdict 后全部删除。
+- `failed`：成功删除，失败/replan 保留。
+- `none`：有效 verdict 后全部删除；默认。
 
 ## 9. 故障分层
 

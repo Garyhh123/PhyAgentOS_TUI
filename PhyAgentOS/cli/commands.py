@@ -43,6 +43,45 @@ console = Console()
 EXIT_COMMANDS = {"exit", "quit", "/exit", "/quit", ":q"}
 RUNTIME_PROTOCOL_TEMPLATE_FILES = {"TARGETS.md", "SKILLRUNTIME.md", "SESSIONS.md"}
 
+
+def _runtime_session_ids(registry) -> set[str]:
+    return {session.session_id for session in registry.load().sessions}
+
+
+async def _wait_for_turn_runtime_sessions(
+    registry,
+    session_ids_before_turn: set[str],
+    *,
+    poll_interval_s: float,
+) -> set[str]:
+    """Wait for Sessions created by one CLI turn, including replan descendants."""
+    from PhyAgentOS.runtime.schemas.session import TERMINAL_SESSION_STATUSES
+
+    tracked: set[str] = set()
+    roots_captured = False
+    interval = max(0.05, float(poll_interval_s))
+    while True:
+        document = registry.load()
+        by_id = {session.session_id: session for session in document.sessions}
+        if not roots_captured:
+            tracked.update(set(by_id) - session_ids_before_turn)
+            roots_captured = True
+        changed = True
+        while changed:
+            changed = False
+            for session in document.sessions:
+                if session.parent_session_id in tracked and session.session_id not in tracked:
+                    tracked.add(session.session_id)
+                    changed = True
+        if not tracked:
+            return tracked
+        if all(
+            session_id in by_id and by_id[session_id].status in TERMINAL_SESSION_STATUSES
+            for session_id in tracked
+        ):
+            return tracked
+        await asyncio.sleep(interval)
+
 # ---------------------------------------------------------------------------
 # CLI input: prompt_toolkit for editing, paste, history, and display
 # ---------------------------------------------------------------------------
@@ -223,15 +262,15 @@ def onboard():
     console.print("\n[dim]Want Telegram/WhatsApp? See: https://github.com/HKUDS/PhyAgentOS#-chat-apps[/dim]")
 
 
-def _make_provider(config: Config, model: str | None = None):
+def _make_provider(config: Config, model: str | None = None, provider_name_override: str | None = None):
     """Create the appropriate LLM provider from config."""
     from PhyAgentOS.providers.base import GenerationSettings
     from PhyAgentOS.providers.openai_codex_provider import OpenAICodexProvider
     from PhyAgentOS.providers.azure_openai_provider import AzureOpenAIProvider
 
     model = model or config.agents.defaults.model
-    provider_name = config.get_provider_name(model)
-    p = config.get_provider(model)
+    provider_name = provider_name_override or config.get_provider_name(model)
+    p = getattr(config.providers, provider_name, None) if provider_name_override else config.get_provider(model)
 
     # OpenAI Codex (OAuth)
     if provider_name == "openai_codex" or model.startswith("openai-codex/"):
@@ -241,7 +280,7 @@ def _make_provider(config: Config, model: str | None = None):
         from PhyAgentOS.providers.custom_provider import CustomProvider
         provider = CustomProvider(
             api_key=p.api_key if p else "no-key",
-            api_base=config.get_api_base(model) or "http://localhost:8000/v1",
+            api_base=(p.api_base if p else None) or config.get_api_base(model) or "http://localhost:8000/v1",
             default_model=model,
         )
     # Azure OpenAI: direct Azure OpenAI endpoint with deployment name
@@ -266,7 +305,7 @@ def _make_provider(config: Config, model: str | None = None):
             raise typer.Exit(1)
         provider = LiteLLMProvider(
             api_key=p.api_key if p else None,
-            api_base=config.get_api_base(model),
+            api_base=(p.api_base if p else None) or config.get_api_base(model),
             default_model=model,
             extra_headers=p.extra_headers if p else None,
             provider_name=provider_name,
@@ -335,24 +374,43 @@ def _start_runtime_workspace_manager(config: Config):
     return manager
 
 
-def _make_session_verifier(config: Config, provider):
+def _make_session_verifier(config: Config, provider, *, episode_token: str | None = None):
     """Create the Agent-owned runtime session verifier when configured."""
-    if not config.runtime.enabled or not config.agents.verification.enabled:
+    if not config.runtime.enabled or not config.agents.verification.service_enabled:
         return None
     from PhyAgentOS.agent.session_verifier import SessionVerifier
 
     verification = config.agents.verification
     model = verification.model or config.agents.defaults.model
-    verification_provider = (
-        provider if model == config.agents.defaults.model else _make_provider(config, model=model)
-    )
+    verification_provider = _make_provider(
+        config,
+        model=model,
+        provider_name_override=verification.provider,
+    ) if (verification.provider or model != config.agents.defaults.model) else provider
+    provider_name = verification.provider or config.get_provider_name(model)
+    provider_config = getattr(config.providers, provider_name, None)
+    service_provider_spec = {
+        "provider_name": provider_name,
+        "model": model,
+        "api_key": provider_config.api_key if provider_config else None,
+        "api_base": provider_config.api_base if provider_config else None,
+        "extra_headers": provider_config.extra_headers if provider_config else None,
+        "temperature": 0.0,
+        "max_tokens": config.agents.defaults.max_tokens,
+        "reasoning_effort": config.agents.defaults.reasoning_effort,
+    }
     return SessionVerifier(
         workspace=config.runtime_workspace_path,
         provider=verification_provider,
         model=model,
-        max_replans=verification.max_replans,
-        rgb_retention=verification.rgb_retention,
+        max_replans=verification.max_replans_per_episode,
+        rgb_retention=verification.evidence_retention,
         poll_interval_s=config.runtime.watchdog_poll_interval_s,
+        timeout_s=verification.timeout_s,
+        service_host=verification.service_host,
+        service_port=verification.service_port,
+        episode_token=episode_token,
+        service_provider_spec=service_provider_spec,
     )
 
 
@@ -397,7 +455,7 @@ def gateway(
     runtime_manager = _start_runtime_workspace_manager(config)
     bus = MessageBus()
     provider = _make_provider(config)
-    session_verifier = _make_session_verifier(config, provider)
+    session_verifier = _make_session_verifier(config, provider, episode_token=runtime_manager.verification_token)
     session_manager = SessionManager(config.workspace_path)
 
     # Create cron service first (callback set after agent creation)
@@ -593,7 +651,7 @@ def agent(
 
     bus = MessageBus()
     provider = _make_provider(config)
-    session_verifier = _make_session_verifier(config, provider)
+    session_verifier = _make_session_verifier(config, provider, episode_token=runtime_manager.verification_token)
 
     # Create cron service for tool usage (no callback needed for CLI unless running)
     cron_store_path = get_cron_dir() / "jobs.json"
@@ -644,13 +702,28 @@ def agent(
     if message:
         # Single message mode — direct call, no bus needed
         async def run_once():
-            verifier_task = (
-                asyncio.create_task(session_verifier.run()) if session_verifier is not None else None
+            from PhyAgentOS.runtime.watchdog.registry import SessionRegistry
+
+            verifier_task = None
+            runtime_registry = (
+                SessionRegistry(config.runtime_workspace_path / "SESSIONS.md")
+                if config.runtime.enabled
+                else None
             )
             try:
+                if session_verifier is not None:
+                    await session_verifier.start()
+                    verifier_task = asyncio.create_task(session_verifier.run())
+                sessions_before = _runtime_session_ids(runtime_registry) if runtime_registry else set()
                 with _thinking_ctx():
                     response = await agent_loop.process_direct(message, session_id, on_progress=_cli_progress)
                 _print_agent_response(response, render_markdown=markdown)
+                if runtime_registry is not None:
+                    await _wait_for_turn_runtime_sessions(
+                        runtime_registry,
+                        sessions_before,
+                        poll_interval_s=config.runtime.watchdog_poll_interval_s,
+                    )
             finally:
                 if session_verifier is not None:
                     session_verifier.stop()

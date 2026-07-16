@@ -46,6 +46,16 @@ class TargetToolPolicy(BaseModel):
     allow_close_by_agent: bool = False
 
 
+class SkillBenchmarkCapability(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    benchmark_id: str
+    execution_mode: Literal["policy_loop", "target_native"]
+    target_interface: Literal["rollout_episode_v1", "target_benchmark_job_v1"]
+    result_schema: Literal["benchmark_execution_result_v1"] = "benchmark_execution_result_v1"
+    reset_owner: Literal["session_runner", "skillruntime"]
+
+
 class SkillRuntimeSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -64,6 +74,7 @@ class SkillRuntimeSpec(BaseModel):
     output_contract: dict[str, Any] = Field(default_factory=dict)
     adapter_requirements: dict[str, Any] = Field(default_factory=dict)
     requires: SkillRequirements = Field(default_factory=SkillRequirements)
+    benchmark: SkillBenchmarkCapability | None = None
 
 
 class SkillRuntimeDocument(BaseModel):

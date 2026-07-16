@@ -117,7 +117,10 @@ Validate failure paths first: unknown Runtime, invalid endpoint, missing Adapter
 - `ResultWriter` writes `LOG.md`, episodes, and LESSONS.
 - `EnvironmentWriter` owns Environment v2 reconciliation/merge.
 - Large arrays, images, and point clouds belong in artifacts, not Markdown.
-- Agent `SessionVerifier` owns semantic verification; Target/Skill Runtime does not.
+- The Agent-owned Verification Service performs model-backed semantic
+  verification and strict response normalization. `SessionVerifier` applies
+  policy-loop verdicts, while target-native benchmarks request episode verdicts
+  from the same service at attempt boundaries.
 
 ## 8. Real-Robot Requirements
 

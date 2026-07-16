@@ -8,6 +8,7 @@ sessions:
     target_ref: target://dummy_sim
     skillruntime_ref: skillruntime://openpi_sim_vla
     task_description: runtime smoke test
+    verification_profile: strict
     status: pending
     priority: normal
     timeouts:
@@ -28,6 +29,7 @@ sessions:
       replan_every_steps: 5
       action_chunk_mode: chunk_buffer
       chunk_switch_mode: hard_switch
+      reset_policy: session_runner
     runtime_hints:
       perception_queries: []
       force_environment_refresh: false
@@ -42,6 +44,7 @@ sessions:
     target_ref: target://libero_real_remote
     skillruntime_ref: skillruntime://pi05_libero_remote
     task_description: pick up the black bowl between the plate and the ramekin and place it on the plate
+    verification_profile: strict
     status: pending
     priority: low
     timeouts:
@@ -62,6 +65,7 @@ sessions:
       replan_every_steps: 5
       action_chunk_mode: chunk_buffer
       chunk_switch_mode: hard_switch
+      reset_policy: session_runner
     runtime_hints:
       perception_queries: []
       force_environment_refresh: false

@@ -100,6 +100,8 @@ class SessionRouting(BaseModel):
 
 
 class SessionBenchmarkMeta(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     benchmark_id: str | None = None
     suite_id: str | None = None
     task_name: str | None = None
@@ -107,6 +109,7 @@ class SessionBenchmarkMeta(BaseModel):
     instance_id: int | None = None
     policy_id: str | None = None
     run_id: str | None = None
+    execution_mode: Literal["policy_loop", "target_native"]
 
 
 class SessionExecution(BaseModel):
@@ -118,6 +121,7 @@ class SessionExecution(BaseModel):
     chunk_switch_mode: Literal["soft_blend", "hard_switch"] = "hard_switch"
     steps: list[dict[str, Any]] | None = None
     timeline: list[dict[str, Any]] | None = None
+    reset_policy: Literal["session_runner", "skillruntime_managed"] = "session_runner"
 
 
 class SessionRuntimeHints(BaseModel):
@@ -133,6 +137,8 @@ class SessionSafetyProfile(BaseModel):
 
 
 class SessionSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     session_id: str
     parent_session_id: str | None = None
     replan_attempt: int = Field(default=0, ge=0)
@@ -142,6 +148,7 @@ class SessionSpec(BaseModel):
     target_ref: str
     skillruntime_ref: str
     task_description: str
+    verification_profile: Literal["strict", "audit", "recovery"] = "strict"
     status: SessionStatus = SessionStatus.PENDING
     priority: Literal["low", "normal", "high"] = "normal"
     created_at: datetime | None = None

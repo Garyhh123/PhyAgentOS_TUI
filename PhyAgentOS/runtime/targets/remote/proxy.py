@@ -99,6 +99,24 @@ class RemoteTargetProxy(BaseRolloutTarget):
             skillruntime_id=self._skillruntime_id,
         )
 
+    def benchmark_start(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self.client.call(
+            "target.benchmark.start",
+            payload,
+            session_id=self._session_id,
+            skillruntime_id=self._skillruntime_id,
+            expected_response_type="target.benchmark.start",
+        )
+
+    def benchmark_status(self, job_id: str) -> dict[str, Any]:
+        return self.client.call("target.benchmark.status", {"job_id": job_id}, session_id=self._session_id, skillruntime_id=self._skillruntime_id)
+
+    def benchmark_result(self, job_id: str) -> dict[str, Any]:
+        return self.client.call("target.benchmark.result", {"job_id": job_id}, session_id=self._session_id, skillruntime_id=self._skillruntime_id)
+
+    def benchmark_cancel(self, job_id: str, reason: str) -> dict[str, Any]:
+        return self.client.call("target.benchmark.cancel", {"job_id": job_id, "reason": reason}, session_id=self._session_id, skillruntime_id=self._skillruntime_id)
+
     def cancel(self, reason: str) -> None:
         self.client.call(
             "target.cancel",

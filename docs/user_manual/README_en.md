@@ -105,13 +105,13 @@ The former `hal/hal_watchdog.py --driver ...` path is not a v0.1.6 runtime entry
 
 ## 8. Semantic Verification Operations
 
-With `agents.verification.enabled`, Runtime success enters `awaiting_verification`. Keep the Agent verifier running. Terminal review requires the original verification bundle and RGB evidence.
+With a Session verification profile of `audit` or `recovery`, policy-loop completion enters `awaiting_verification`. `paos agent` owns the Verification Service lifecycle, and both SessionVerifier and target-native episode verification use that service for model-backed verdicts.
 
-`rgbRetention`:
+`evidenceRetention`:
 
 - `all`: retain everything; best reviewability, highest storage use.
-- `failed`: delete success evidence and retain failure/replan evidence; default.
-- `none`: delete RGB after every valid verdict.
+- `failed`: delete success evidence and retain failure/replan evidence.
+- `none`: delete RGB after every valid verdict; default.
 
 ## 9. Failure Layers
 

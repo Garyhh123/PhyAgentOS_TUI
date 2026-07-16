@@ -32,6 +32,7 @@
 
 | Version | Date | Update |
 |:------|:-----|:-------|
+| ![v0.1.7](https://img.shields.io/badge/v0.1.7-47A882) | 2026-07-5 | Supports benchmarking for both the policy loop and target native builtin paths; Incorporates agent verification and failure recovery server|
 | ![v0.1.6](https://img.shields.io/badge/v0.1.6-47A882) | 2026-06-27 | Support for  Behavior 1K; SessionVerfier for Agent verification; VerifySessionTool|
 | ![v0.1.5](https://img.shields.io/badge/v0.1.5-47A882) | 2026-06-11 | Cleaned protocol files and docs; game scenario separated to `general-game-agent` branch; main branch now focused on sim & real |
 | ![v0.1.4](https://img.shields.io/badge/v0.1.4-11648A) | 2026-06-5 | Optimize the user-friendly onboarding process; Communication Protocol Specification; More reasonable coding standards; Game Agent & Benchmarking ready |
@@ -83,7 +84,7 @@ Traditional "LLM-direct-to-hardware" approaches tightly couple reasoning to exec
 <tr>
   <td>⚡</td>
   <td><b>Dual Skill Runtimes</b></td>
-  <td><code>PolicySkillRuntime</code> maintains policy closed-loop + <code>BuiltinSkillRuntime</code> manages agent interactive loop</td>
+  <td><code>PolicySkillRuntime</code> maintains the policy closed loop + <code>BuiltinSkillRuntime</code> manages built-in loops such as target-native benchmarks and constrained agent interaction</td>
 </tr>
 <tr>
   <td>🛡️</td>
@@ -153,54 +154,45 @@ paos agent
 
 **Optional: Connect Runtime Services**
 
-```bash
-# LIBERO benchmark TargetWS machine
-MUJOCO_GL=egl PYTHONWARNINGS=ignore \
-conda run -n liberopi python PhyAgentOS/runtime/targets/remote/libero/server.py \
-  --host 0.0.0.0 --port 9002
+The following example evaluates the official PI0.5 policy on the
+`libero_spatial` suite through `LiberoBenchmarkSkillRuntime`, with episode
+replanning enabled. Run the three terminals on the same host from the
+repository root.
 
-# pi0.5 policy machine
-conda run -n lerobot-pi python -m PhyAgentOS.runtime.policy.openpi.lerobot_pi0_server \
-  --model-dir /path/to/pi05/checkpoint --host 0.0.0.0 --port 8000
+```bash
+# Terminal 1: LIBERO TargetWS
+MUJOCO_GL=egl PYTHONWARNINGS=ignore \
+conda run --no-capture-output -n libero \
+  python PhyAgentOS/runtime/targets/remote/libero/server.py \
+  --host 0.0.0.0 --port 9002 \
+  --camera-height 256 --camera-width 256 \
+  --max-steps 300 --num-steps-wait 10 \
+  --control-mode relative --seed 7
+
+# Terminal 2: official OpenPI PI0.5 policy server
+conda run --no-capture-output -n openpi \
+  python -m PhyAgentOS.runtime.policy.openpi.native_openpi_server \
+  --policy-config pi05_libero \
+  --checkpoint-dir gs://openpi-assets/checkpoints/pi05_libero \
+  --host 0.0.0.0 --port 8000
+
+# Terminal 3: Agent, Watchdog, and Verification Service
+paos agent --workspace ~/.PhyAgentOS/workspace -m \
+  "Evaluate PI0.5 on LIBERO suite libero_spatial. Use target libero_real_remote, the libero_target_benchmark builtin runtime, target_native execution, recovery verification, task ids 0-9, init-state ids 0-49, max_steps 300, replan_every_steps 5, and policy endpoint openpi://127.0.0.1:8000."
 ```
 </td>
 </tr>
 </table>
 
-`paos agent` and `paos gateway` create the runtime workspace and start the
-session watchdog automatically when runtime is enabled in config. Runtime
-targets are declared in `TARGETS.md`, executable runtimes in `SKILLRUNTIME.md`,
-and the Agent queues work by appending sessions to `SESSIONS.md`.
-
-Agent-side semantic verification is disabled by default. Enable it in
-`~/.PhyAgentOS/config.json` when runtime completion must be checked against the
-final RGB observations and workspace history:
-
-```json
-{
-  "agents": {
-    "verification": {
-      "enabled": true,
-      "model": null,
-      "maxReplans": 1,
-      "rgbRetention": "failed"
-    }
-  }
-}
-```
-
-With verification enabled, a runtime-successful session moves through
-`awaiting_verification` and `verifying`. The Agent then marks it `succeeded` or
-`failed`, or marks it `replanned` and appends a replacement `pending` session.
-Evidence is stored under `artifacts/runtime/<session_id>/`, and every verdict
-is recorded in `LESSONS.md`. `rgbRetention` accepts `all`, `failed`, or `none`;
-the default `failed` policy removes RGB after successful verification while
-retaining failed and replanned evidence. The Agent can call `verify_session`
-to process a waiting session or review a terminal session whose RGB remains.
-
-```bash
-paos agent -m "run the configured LIBERO benchmark task"
-```
+Before starting Terminal 3, enable `libero_real_remote`, configure Runtime
+verification, and set the Target configuration to 
+`retry_instruction_mode: original`. The latter keeps the original task
+instruction on recovery attempts; use `verifier_rewrite` when the policy should
+receive the verifier's nonempty rewrite instead. See the
+[Runtime configuration reference](docs/en/04-runtime-configuration-reference.md)
+for the complete global, Target, SkillRuntime, Session, benchmark,
+verification, and remote-host parameter reference. The LIBERO setup is
+included as an example.
 
 ---
 

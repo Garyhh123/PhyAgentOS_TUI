@@ -43,9 +43,13 @@ CLI / Channels / Cron / Heartbeat
 1. `SessionScheduler` 从 `SESSIONS.md` 选择满足依赖的 pending Session。
 2. `SessionRegistry` 原子 claim，并推进到 `preflight_checking`。
 3. `RuntimeCompatibilityPreflight` 校验引用、Endpoint、Runtime 注册、Adapter、Contract、Sensor 和 Action Contract。
-4. `SessionRunner` 依次调用 `build`、`configure_session`、`start_session`、`reset`。
+4. `SessionRunner` 依次调用 `build`、`configure_session` 和 `start_session`；
+   普通 policy-loop Session 由它负责 reset，target-native benchmark 则把 reset
+   交给声明过的 SkillRuntime/Target interface。
 5. Skill Runtime 只能经 `TargetSessionHandle` 观察、执行 Action Chunk、刷新环境或调用受约束的 Target Tool。
-6. Watchdog 写入 Episode、历史和最终状态；启用语义验收时进入 `awaiting_verification`。
+6. Watchdog 写入 Episode、历史和最终状态；使用 `audit` 或 `recovery` 的
+   policy-loop Session 进入 `awaiting_verification`，target-native verification
+   则发生在 episode attempt 边界，root Session 不再重复校验。
 
 ## 3. 文件协议
 
@@ -67,7 +71,9 @@ Sensor、Perception 和 Runtime Contract 使用外部 YAML，避免把设备标�
 - `paos onboard`、`paos agent`、`paos gateway`、`paos status` 和 OAuth provider login。
 - CLI、11 个 Channel 实现、Cron、Heartbeat、MCP、内置工具和后台 Subagent。
 - 文件化上下文、会话 JSONL、Token 窗口压缩和长期记忆。
-- 可选 `SessionVerifier`：用最终 RGB 和运行历史执行语义验收，支持 success/failure/replan 与证据保留策略。
+- Agent 管理的 Verification Service 统一模型 prompt 和严格 verdict 规范化；
+  SessionVerifier 应用 policy-loop 结论，target-native benchmark 在 attempt
+  边界请求 episode verdict。
 
 ### 4.2 Runtime 执行面
 

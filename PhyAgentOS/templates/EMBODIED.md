@@ -59,3 +59,54 @@ Each section uses `## Target: <target_id>` so the agent can load only enabled ta
 - Runtime sessions must be appended to `SESSIONS.md`; direct action queues are not supported.
 - Preflight must verify target enablement, adapter compatibility, observation schema, policy adapter, and action contract before execution.
 - Do not invent endpoints or adapter URIs. Use values from `TARGETS.md` unless the user explicitly overrides them.
+
+## Target: go2_real_builtin
+
+### Identity
+
+- **Name**: go2_real_builtin
+- **Type**: Unitree Go2 real robot target
+- **Target Class**: remote
+- **Target Kind**: real_robot
+- **Runtime**: Go2RemoteTargetProxy
+- **Workspace**: workspaces/go2_real
+
+### Supported Skills
+
+| Skill | Runtime Kind | Description |
+|---|---|---|
+| `go2_builtin_command` | builtin | Constrained TargetWS command loop for basic Go2 posture and short movement actions. |
+
+### Runtime Connection
+
+- **Target Endpoint**: `targetws://127.0.0.1:9010`
+- **Target Adapter**: `target_adapter://go2_builtin_adapter`
+- **Runtime Contract**: `configs/runtime/contracts/go2_builtin.runtime.yaml`
+- **Robot IP**: `192.168.123.161`
+- **Host Wired IP**: `192.168.123.222`
+- **SDK Network Interface**: `enp4s0`
+
+### Allowed Commands
+
+- `stand_up`
+- `balance_stand`
+- `recovery_stand`
+- `stand_down` / `squat`
+- `damp`
+- `stop`
+- `move` with short low-speed velocity control
+
+### Session Requirements
+
+- Use `skillruntime://go2_builtin_command`.
+- Every executable Go2 session must include structured `execution.steps`; do not rely on `task_description` as the command payload.
+- Example: `execution.steps: [{command: stand_up}]`.
+- For movement, prefer an explicit posture sequence: `stand_up`, `balance_stand`, then `move`.
+- For `move`, velocity fields must be nested under `params`, for example `steps: [{command: move, params: {vx: 0.5, vy: 0.0, vyaw: 0.0, duration_s: 1.0}}]`.
+
+### Safety and Constraints
+
+- Move limits are `vx [-0.5, 0.5]`, `vy [-0.2, 0.2]`, `vyaw [-0.5, 0.5]`, and `duration_s [0.1, 1.0]`.
+- The target server stops movement after every `move` command.
+- Do not request raw SDK commands, long-range autonomous navigation, or arbitrary action chunks through this target.
+- Run first tests in an open area, and prefer `stop` before changing tasks.

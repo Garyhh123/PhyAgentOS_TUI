@@ -219,7 +219,8 @@ class SkillsLoader:
 
         target_kind = requirement.get("target_kind")
         skillruntime_kind = requirement.get("skillruntime_kind")
-        if not target_kind and not skillruntime_kind:
+        benchmark_required = requirement.get("benchmark") is True
+        if not target_kind and not skillruntime_kind and not benchmark_required:
             return ""
 
         try:
@@ -261,6 +262,31 @@ class SkillsLoader:
             supported = target.get("supported_skillruntimes")
             if not isinstance(supported, list):
                 supported = []
+            if benchmark_required:
+                target_benchmarks = target.get("benchmark_capabilities")
+                if not isinstance(target_benchmarks, list) or not target_benchmarks:
+                    continue
+                matched = False
+                for skillruntime in skillruntimes:
+                    if not isinstance(skillruntime, dict) or skillruntime.get("id") not in supported:
+                        continue
+                    skill_benchmark = skillruntime.get("benchmark")
+                    if not isinstance(skill_benchmark, dict):
+                        continue
+                    for target_benchmark in target_benchmarks:
+                        if not isinstance(target_benchmark, dict) or str(target_benchmark.get("benchmark_id", "")).lower() != str(skill_benchmark.get("benchmark_id", "")).lower():
+                            continue
+                        for mode in target_benchmark.get("execution_modes") or []:
+                            if (
+                                isinstance(mode, dict)
+                                and mode.get("mode") == skill_benchmark.get("execution_mode")
+                                and mode.get("interface") == skill_benchmark.get("target_interface")
+                                and mode.get("reset_owner") == skill_benchmark.get("reset_owner")
+                            ):
+                                matched = True
+                                break
+                if not matched:
+                    continue
             if not skillruntime_kind or any(item in skillruntime_ids for item in supported):
                 return ""
 
@@ -269,6 +295,8 @@ class SkillsLoader:
             parts.append(f"enabled target_kind={target_kind}")
         if skillruntime_kind:
             parts.append(f"supported runtime_kind={skillruntime_kind}")
+        if benchmark_required:
+            parts.append("declared benchmark capability")
         return "no " + " with ".join(parts)
 
     @staticmethod

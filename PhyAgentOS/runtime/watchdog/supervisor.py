@@ -35,6 +35,7 @@ class WatchdogSupervisor:
         worker_id: str | None = None,
         environment_workspace: str | Path | None = None,
         verification_enabled: bool = False,
+        verification_settings: dict | None = None,
     ):
         self.paths = RuntimeWorkspacePaths.from_path(workspace)
         self.workspace = self.paths.workspace
@@ -43,6 +44,7 @@ class WatchdogSupervisor:
         )
         self.worker_id = worker_id or f"runtime-watchdog@{socket.gethostname()}"
         self.verification_enabled = verification_enabled
+        self.verification_settings = dict(verification_settings or {})
         self.registry = SessionRegistry(self.paths.sessions)
         self.result_writer = ResultWriter(self.workspace)
         self.watcher = WorkspaceWatcher(self.paths)
@@ -108,6 +110,9 @@ class WatchdogSupervisor:
                 self.registry.mark_rejected(session_id, result)
                 return True
 
+            if session.verification_profile != "strict":
+                self._wait_for_verification_service(session, scheduled.target_spec)
+
             self._write_preflight_metadata(session_id, preflight_result)
 
             self.registry.mark_running(session_id)
@@ -118,6 +123,7 @@ class WatchdogSupervisor:
             policy_client = None
             runner = None
             cleanup_in_background = False
+            cleanup_error: Exception | None = None
             try:
                 if scheduled.skillruntime_spec.runtime_kind == "policy":
                     policy_client = self._build_policy_client(session, scheduled.target_spec)
@@ -133,6 +139,7 @@ class WatchdogSupervisor:
                     perception_runtime=self.perception_runtime,
                     perception_plan=perception_plan,
                     target_tool_manifest=preflight_result.target_tool_manifest,
+                    verification_settings=self.verification_settings,
                 )
                 thread_handle = RunnerThreadHandle(runner)
                 thread_handle.start()
@@ -177,10 +184,21 @@ class WatchdogSupervisor:
                 if cleanup_in_background:
                     pass
                 elif runner is not None:
-                    runner.close()
+                    cleanup_error = self._close_runner_best_effort(runner)
                 else:
-                    target.close()
+                    cleanup_error = self._close_target_best_effort(target)
 
+            if cleanup_error is not None:
+                cleanup = result.metadata.get("cleanup")
+                if not isinstance(cleanup, dict):
+                    cleanup = {}
+                cleanup.update(
+                    {
+                        "close_error_code": type(cleanup_error).__name__,
+                        "close_error_message": str(cleanup_error),
+                    }
+                )
+                result.metadata["cleanup"] = cleanup
             self.registry.mark_finalizing(session_id)
             result = self.result_writer.write_episode(
                 session,
@@ -189,13 +207,20 @@ class WatchdogSupervisor:
                 result,
             )
             self.result_writer.write_session_history(session, scheduled.target_spec, result)
-            if self.verification_enabled and result.success:
+            verification_profile = session.verification_profile
+            session_verification = (
+                self.verification_enabled
+                and verification_profile in {"audit", "recovery"}
+                and (session.benchmark is None or session.benchmark.execution_mode == "policy_loop")
+            )
+            if session_verification:
                 self.result_writer.write_verification_bundle(
                     session,
                     scheduled.target_spec,
                     scheduled.skillruntime_id,
                     result,
                     environment_workspace=self.environment_workspace,
+                    initial_observation=runner.initial_observation if runner is not None else None,
                     final_observation=runner.final_observation if runner is not None else None,
                 )
                 self.registry.mark_awaiting_verification(session_id, result)
@@ -203,6 +228,7 @@ class WatchdogSupervisor:
                 self.registry.mark_finished(session_id, result)
             return True
         except Exception as exc:
+            self._write_execution_failure_lesson(session_id, exc)
             self.failure_escalator.handle(session_id, exc, self.registry)
             return True
 
@@ -213,7 +239,10 @@ class WatchdogSupervisor:
             skillruntimes_doc = SkillRuntimeDocument.model_validate(read_yaml_block(self.paths.skillruntimes))
             return sessions_doc, targets_doc, skillruntimes_doc
         except ValidationError as exc:
-            raise SchemaValidationError(str(exc)) from exc
+            message = str(exc)
+            if "benchmark" in message or "verification_profile" in message:
+                message = "UNSUPPORTED_BENCHMARK_SCHEMA: " + message
+            raise SchemaValidationError(message) from exc
 
     def _load_registries(self) -> tuple[TargetsDocument, SkillRuntimeDocument]:
         try:
@@ -221,7 +250,10 @@ class WatchdogSupervisor:
             skillruntimes_doc = SkillRuntimeDocument.model_validate(read_yaml_block(self.paths.skillruntimes))
             return targets_doc, skillruntimes_doc
         except ValidationError as exc:
-            raise SchemaValidationError(str(exc)) from exc
+            message = str(exc)
+            if "benchmark" in message:
+                message = "UNSUPPORTED_BENCHMARK_SCHEMA: " + message
+            raise SchemaValidationError(message) from exc
 
     def _build_policy_client(self, session, target_spec):
         action_cfg = target_spec.config.get("action", {})
@@ -242,11 +274,66 @@ class WatchdogSupervisor:
         except Exception:
             pass
 
+    def _close_runner_best_effort(self, runner: SessionRunner) -> Exception | None:
+        try:
+            runner.close()
+        except Exception as exc:  # noqa: BLE001
+            print(
+                "[runtime-watchdog] warning: runner cleanup close failed for "
+                f"{runner.session.session_id}: {type(exc).__name__}: {exc}",
+                flush=True,
+            )
+            return exc
+        return None
+
+    def _close_target_best_effort(self, target) -> Exception | None:
+        try:
+            target.close()
+        except Exception as exc:  # noqa: BLE001
+            print(
+                "[runtime-watchdog] warning: target cleanup close failed: "
+                f"{type(exc).__name__}: {exc}",
+                flush=True,
+            )
+            return exc
+        return None
+
     def _sleep_runner_poll_interval(self, session) -> None:
         import time
 
         timeout_s = float(session.timeouts.execute_timeout_s)
         time.sleep(max(0.01, min(0.05, timeout_s / 10.0)))
+
+    def _wait_for_verification_service(self, session, target_spec) -> None:
+        import time
+        from urllib import error, request
+        from urllib.parse import urlparse
+
+        service_url = str(self.verification_settings.get("local_service_url") or "").rstrip("/")
+        if not self.verification_enabled or not service_url:
+            raise SchemaValidationError("VERIFICATION_SERVICE_UNAVAILABLE: global verification service is disabled")
+        target_endpoint = session.routing.target_endpoint or target_spec.runtime.target_endpoint
+        target_host = urlparse(str(target_endpoint or "").replace("targetws://", "ws://", 1)).hostname
+        if (
+            session.benchmark is not None
+            and session.benchmark.execution_mode == "target_native"
+            and target_spec.target_class == "remote"
+            and target_host not in {None, "localhost", "127.0.0.1", "::1"}
+            and not self.verification_settings.get("remote_target_url")
+        ):
+            raise SchemaValidationError("VERIFICATION_REMOTE_URL_REQUIRED: configure agents.verification.remoteTargetUrl")
+        opener = request.build_opener(request.ProxyHandler({}))
+        deadline = time.monotonic() + float(session.timeouts.preflight_timeout_s)
+        last_error = "not ready"
+        while time.monotonic() < deadline:
+            try:
+                with opener.open(service_url + "/healthz", timeout=0.5) as response:  # noqa: S310
+                    if response.status == 200:
+                        return
+            except (OSError, TimeoutError, error.URLError) as exc:
+                last_error = str(exc)
+            time.sleep(0.05)
+        raise SchemaValidationError("VERIFICATION_SERVICE_UNAVAILABLE: " + last_error)
 
     def _preflight_error_message(self, preflight_result) -> str:
         if not preflight_result.missing_items:
@@ -266,4 +353,29 @@ class WatchdogSupervisor:
             metadata["preflight"] = preflight_result.model_dump(mode="json", exclude_none=True)
             session.result.metadata = metadata
             self.registry.save(document)
+            return
+
+    def _write_execution_failure_lesson(self, session_id: str, exc: Exception) -> None:
+        try:
+            session = self.registry.get_session(session_id)
+            targets_doc, skillruntimes_doc = self._load_registries()
+            scheduled = self.scheduler.resolve_session(session, targets_doc, skillruntimes_doc)
+            from PhyAgentOS.runtime.watchdog.errors import error_code_for
+
+            error_code = error_code_for(exc)
+            summary = f"{type(exc).__name__}: {exc}"
+            self.result_writer.write_lesson(
+                session,
+                scheduled.target_spec.id,
+                scheduled.skillruntime_id,
+                str(session.status),
+                error_code,
+                summary,
+                {
+                    "exception_type": type(exc).__name__,
+                    "message": str(exc),
+                    "session_status": str(session.status),
+                },
+            )
+        except Exception:
             return

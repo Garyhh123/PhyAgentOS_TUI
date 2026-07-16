@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from PhyAgentOS.runtime.artifacts.benchmark_writer import BenchmarkArtifactWriter, compact_benchmark_result
 from PhyAgentOS.runtime.artifacts.episode_writer import EpisodeWriter
 from PhyAgentOS.runtime.schemas import SessionResult, SessionSpec, TargetSpec
 from PhyAgentOS.runtime.schemas.common import utc_now
@@ -16,6 +17,7 @@ from PhyAgentOS.runtime.state_io.markdown_yaml import read_yaml_block, write_yam
 class ResultWriter:
     def __init__(self, workspace: Path):
         self.workspace = workspace
+        self.benchmark_writer = BenchmarkArtifactWriter(workspace)
         self.episode_writer = EpisodeWriter(workspace / "artifacts" / "runtime")
 
     def write_episode(
@@ -25,6 +27,11 @@ class ResultWriter:
         skillruntime_id: str,
         result: SessionResult,
     ) -> SessionResult:
+        benchmark = result.metadata.get("benchmark_result")
+        if isinstance(benchmark, dict) and benchmark.get("total_episodes") is not None:
+            summary = self.benchmark_writer.write_benchmark(session, target, skillruntime_id, result)
+            result.metadata["benchmark_summary"] = summary
+            result.metadata["benchmark_result"] = compact_benchmark_result(benchmark, summary)
         artifact_dir = self.episode_writer.write_episode(session, target, skillruntime_id, result)
         result.artifact_dir = str(artifact_dir.relative_to(self.workspace))
         return result
@@ -79,20 +86,23 @@ class ResultWriter:
         result: SessionResult,
         *,
         environment_workspace: Path,
+        initial_observation: dict[str, Any] | None,
         final_observation: dict[str, Any] | None,
     ) -> Path:
         """Write the immutable evidence consumed by the Agent verifier."""
         if not result.artifact_dir:
             raise ValueError("verification bundle requires an episode artifact directory")
         artifact_dir = self.workspace / result.artifact_dir
-        rgb_paths = self.episode_writer.write_rgb_frames(artifact_dir, final_observation)
+        initial_paths = self.episode_writer.write_rgb_frames(artifact_dir, initial_observation, phase="initial")
+        final_paths = self.episode_writer.write_rgb_frames(artifact_dir, final_observation, phase="final")
         payload = {
-            "version": "agent_session_verification_v1",
+            "version": "agent_session_verification_v2",
             "session": session.model_dump(mode="json", exclude_none=True),
             "target_id": target.id,
             "skillruntime_id": skillruntime_id,
             "runtime_result": result.model_dump(mode="json", exclude_none=True),
-            "rgb_paths": [str(path.relative_to(self.workspace)) for path in rgb_paths],
+            "initial_rgb_paths": [str(path.relative_to(self.workspace)) for path in initial_paths],
+            "final_rgb_paths": [str(path.relative_to(self.workspace)) for path in final_paths],
             "environment_md": self._read_optional(environment_workspace / "ENVIRONMENT.md"),
             "history_md": self._read_optional(self.workspace / "LOG.md"),
             "lessons_md": self._read_optional(self.workspace / "LESSONS.md"),

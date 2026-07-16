@@ -54,6 +54,7 @@ class RuntimeCompatibilityPreflight:
             missing.append(self._missing("TARGET_TOOL_POLICY_INVALID", "SKILLRUNTIME.md skillruntimes[].agent_exposure", "constrained_target_tools for real_robot", skill.agent_exposure, session.session_id, "Use constrained_target_tools for real robots."))
         if scheduled.skillruntime_id not in target.supported_skillruntimes:
             missing.append(self._missing("SKILL_NOT_SUPPORTED_BY_TARGET", "TARGETS.md targets[].supported_skillruntimes", scheduled.skillruntime_id, None, session.session_id, "Choose a supported skill or update the target registry."))
+        self._check_benchmark_capability(scheduled, missing)
         if target.runtime.target_adapter == "":
             missing.append(self._missing("ACTION_BRIDGE_MISSING", "TARGETS.md targets[].runtime.target_adapter", "target adapter URI", "", session.session_id, "Set runtime.target_adapter."))
 
@@ -136,6 +137,51 @@ class RuntimeCompatibilityPreflight:
             missing_items=missing,
             warnings=warnings,
         )
+
+    def _check_benchmark_capability(self, scheduled: ScheduledSession, missing: list[MissingItem]) -> None:
+        session = scheduled.session
+        meta = session.benchmark
+        if meta is None:
+            if scheduled.skillruntime_spec.benchmark is not None and scheduled.skillruntime_spec.benchmark.execution_mode == "target_native":
+                missing.append(self._missing(
+                    "BENCHMARK_SESSION_REQUIRED", "SESSIONS.md sessions[].benchmark",
+                    "target-native benchmark metadata", None, session.session_id,
+                    "Compile a suite benchmark Session for this BuiltinSkillRuntime.",
+                ))
+            if session.execution.reset_policy != "session_runner":
+                missing.append(self._missing(
+                    "RESET_POLICY_NOT_GRANTED", "SESSIONS.md sessions[].execution.reset_policy",
+                    "session_runner", session.execution.reset_policy, session.session_id,
+                    "Only a matched target-native benchmark capability may own reset.",
+                ))
+            return
+        skill_cap = scheduled.skillruntime_spec.benchmark
+        target_cap = next(
+            (item for item in scheduled.target_spec.benchmark_capabilities if item.benchmark_id.lower() == str(meta.benchmark_id).lower()),
+            None,
+        )
+        mode_cap = next(
+            (item for item in target_cap.execution_modes if item.mode == meta.execution_mode),
+            None,
+        ) if target_cap else None
+        expected_reset = "skillruntime_managed" if meta.execution_mode == "target_native" else "session_runner"
+        checks = [
+            (target_cap is not None, "TARGET_BENCHMARK_UNSUPPORTED", "TARGETS.md targets[].benchmark_capabilities", str(meta.benchmark_id)),
+            (target_cap is None or not target_cap.suites or meta.suite_id in target_cap.suites, "TARGET_BENCHMARK_SUITE_UNSUPPORTED", "TARGETS.md targets[].benchmark_capabilities[].suites", str(meta.suite_id)),
+            (mode_cap is not None, "TARGET_BENCHMARK_MODE_UNSUPPORTED", "TARGETS.md targets[].benchmark_capabilities[].execution_modes", meta.execution_mode),
+            (skill_cap is not None, "SKILL_BENCHMARK_CAPABILITY_MISSING", "SKILLRUNTIME.md skillruntimes[].benchmark", str(meta.benchmark_id)),
+            (skill_cap is None or skill_cap.benchmark_id.lower() == str(meta.benchmark_id).lower(), "SKILL_BENCHMARK_MISMATCH", "SKILLRUNTIME.md skillruntimes[].benchmark.benchmark_id", str(meta.benchmark_id)),
+            (skill_cap is None or skill_cap.execution_mode == meta.execution_mode, "SKILL_BENCHMARK_MODE_MISMATCH", "SKILLRUNTIME.md skillruntimes[].benchmark.execution_mode", meta.execution_mode),
+            (mode_cap is None or skill_cap is None or mode_cap.interface == skill_cap.target_interface, "BENCHMARK_INTERFACE_MISMATCH", "benchmark target interface", mode_cap.interface if mode_cap else None),
+            (session.execution.reset_policy == expected_reset, "BENCHMARK_RESET_POLICY_MISMATCH", "SESSIONS.md sessions[].execution.reset_policy", expected_reset),
+            (mode_cap is None or mode_cap.reset_owner == ("skillruntime" if expected_reset == "skillruntime_managed" else "session_runner"), "BENCHMARK_RESET_OWNER_MISMATCH", "TARGETS.md benchmark reset_owner", expected_reset),
+            (skill_cap is None or skill_cap.reset_owner == ("skillruntime" if expected_reset == "skillruntime_managed" else "session_runner"), "BENCHMARK_RESET_OWNER_MISMATCH", "SKILLRUNTIME.md benchmark reset_owner", expected_reset),
+            (meta.execution_mode != "target_native" or scheduled.skillruntime_spec.runtime_kind == "builtin", "TARGET_NATIVE_REQUIRES_BUILTIN", "SKILLRUNTIME.md runtime_kind", "builtin"),
+            (meta.execution_mode != "policy_loop" or scheduled.skillruntime_spec.runtime_kind == "policy", "POLICY_LOOP_REQUIRES_POLICY_RUNTIME", "SKILLRUNTIME.md runtime_kind", "policy"),
+        ]
+        for valid, code, source, expected in checks:
+            if not valid:
+                missing.append(self._missing(code, source, expected, None, session.session_id, "Align Session, Target, and SkillRuntime benchmark declarations."))
 
     def _load_contract(self, ref: Path, missing: list[MissingItem], session_id: str):
         path = ref if ref.is_absolute() else self.workspace / ref

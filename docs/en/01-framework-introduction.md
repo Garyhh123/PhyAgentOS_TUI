@@ -43,9 +43,14 @@ An actual Session follows this path:
 1. `SessionScheduler` selects a dependency-ready pending Session from `SESSIONS.md`.
 2. `SessionRegistry` atomically claims it and advances it to `preflight_checking`.
 3. `RuntimeCompatibilityPreflight` validates references, endpoints, runtime registration, adapters, contracts, sensors, and action contracts.
-4. `SessionRunner` calls `build`, `configure_session`, `start_session`, and `reset` in order.
+4. `SessionRunner` calls `build`, `configure_session`, and `start_session`; it
+   owns reset for normal policy-loop Sessions, while a target-native benchmark
+   delegates reset to its declared SkillRuntime/Target interface.
 5. A Skill Runtime can observe, execute action chunks, refresh the environment, or call constrained Target tools only through `TargetSessionHandle`.
-6. The Watchdog writes the episode, history, and final state. With semantic verification enabled, the Session enters `awaiting_verification`.
+6. The Watchdog writes the episode, history, and final state. A policy-loop
+   Session using `audit` or `recovery` enters `awaiting_verification`;
+   target-native verification occurs at episode attempt boundaries and its root
+   Session is not verified again.
 
 ## 3. File Protocol
 
@@ -67,7 +72,9 @@ Sensor, Perception, and Runtime Contract data lives in external YAML so device c
 - `paos onboard`, `paos agent`, `paos gateway`, `paos status`, and OAuth provider login.
 - CLI, 11 Channel implementations, Cron, Heartbeat, MCP, built-in tools, and background subagents.
 - File-based context, JSONL sessions, token-window consolidation, and long-term memory.
-- Optional `SessionVerifier`: semantic verification from final RGB and runtime history, with success/failure/replan verdicts and evidence-retention policies.
+- Agent-owned Verification Service for model-backed prompts and strict verdict
+  normalization, with SessionVerifier applying policy-loop outcomes and
+  target-native benchmarks requesting episode verdicts at attempt boundaries.
 
 ### 4.2 Runtime Execution Plane
 

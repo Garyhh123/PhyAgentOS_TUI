@@ -130,7 +130,9 @@ pytest tests/runtime
 - `ResultWriter` 写 `LOG.md`、Episode 和 LESSONS。
 - `EnvironmentWriter` 负责 Environment v2 reconcile/merge。
 - 大型数组、图像和点云写 Artifact，不写 Markdown。
-- 语义验收由 Agent `SessionVerifier` 完成，不放进 Target/Skill Runtime。
+- 模型语义验收与严格响应规范化由 Agent 管理的 Verification Service 完成；
+  `SessionVerifier` 应用 policy-loop verdict，target-native benchmark 则在
+  attempt 边界向同一服务请求 episode verdict。
 
 ## 8. 真机接入要求
 

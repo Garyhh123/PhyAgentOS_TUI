@@ -249,7 +249,13 @@ Perception 配置由三层组成：
 
 ## 11. SessionVerifier 扩展边界
 
-Runtime 成功后，`ResultWriter` 生成 Episode 与 Verification Bundle；Agent 侧 `SessionVerifier` 负责多模态语义 verdict。Review 模式只追加 Attempt 和 Lesson，不修改既有终态或创建 Replan。
+Runtime 成功后，`ResultWriter` 生成 Episode 与 Verification Bundle；
+`SessionVerifier` 将 policy-loop 校验交给 Agent 管理的 Verification Service。
+多模态 prompt、严格响应规范化以及 model/provider 错误边界都由该服务统一
+管理。Review 模式只追加 Attempt 和 Lesson，不修改既有终态或创建 Replan。
+
+target-native benchmark 在 attempt 边界向同一服务请求 episode verdict，其
+root Session 不会再经 SessionVerifier 重复校验。
 
 新增证据类型时必须同时更新：Bundle Schema/Writer、Verifier Prompt、Retention 行为和测试，确保状态与 Artifact 生命周期一致。
 

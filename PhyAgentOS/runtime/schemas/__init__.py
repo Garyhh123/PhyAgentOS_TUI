@@ -1,6 +1,12 @@
 """Pydantic schemas for runtime protocol documents."""
 
 from PhyAgentOS.runtime.schemas.adapter_plan import AdapterPlan
+from PhyAgentOS.runtime.schemas.benchmark import (
+    BenchmarkExecutionResultV1,
+    BenchmarkJobRef,
+    BenchmarkJobRequest,
+    BenchmarkJobStatus,
+)
 from PhyAgentOS.runtime.schemas.environment import EnvironmentDocument, PerceptionRunRecord
 from PhyAgentOS.runtime.schemas.perception import (
     EnvironmentDelta,
@@ -30,6 +36,7 @@ from PhyAgentOS.runtime.schemas.session import (
     SessionStatus,
 )
 from PhyAgentOS.runtime.schemas.skillruntime import (
+    SkillBenchmarkCapability,
     SkillObservationContract,
     SkillPolicySpec,
     SkillRequirements,
@@ -38,6 +45,8 @@ from PhyAgentOS.runtime.schemas.skillruntime import (
     TargetToolPolicy,
 )
 from PhyAgentOS.runtime.schemas.target import (
+    TargetBenchmarkCapability,
+    TargetBenchmarkExecutionMode,
     TargetObservationContract,
     TargetPerceptionRefs,
     TargetRuntimeSpec,
@@ -49,6 +58,10 @@ __all__ = [
     "ActionChunkSpec",
     "ActionComponentSpec",
     "AdapterPlan",
+    "BenchmarkExecutionResultV1",
+    "BenchmarkJobRef",
+    "BenchmarkJobRequest",
+    "BenchmarkJobStatus",
     "SessionBenchmarkMeta",
     "SessionExecution",
     "EnvironmentDelta",
@@ -71,9 +84,12 @@ __all__ = [
     "SessionSpec",
     "SessionStatus",
     "SkillRequirements",
+    "SkillBenchmarkCapability",
     "SkillRuntimeSpec",
     "SkillRuntimeDocument",
     "TargetActionContract",
+    "TargetBenchmarkCapability",
+    "TargetBenchmarkExecutionMode",
     "TargetObservationContract",
     "TargetPerceptionRefs",
     "TargetRuntimeContractDocument",

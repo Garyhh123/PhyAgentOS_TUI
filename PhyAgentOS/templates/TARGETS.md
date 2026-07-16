@@ -6,7 +6,7 @@ targets:
   - id: dummy_sim
     target_class: local
     target_kind: simulation
-    enabled: true
+    enabled: false
     workspace: workspaces/dummy_sim
     supported_skillruntimes:
       - openpi_sim_vla
@@ -35,10 +35,21 @@ targets:
   - id: libero_real_remote
     target_class: remote
     target_kind: simulation
-    enabled: true
+    enabled: false
     workspace: workspaces/libero_real
     supported_skillruntimes:
       - pi05_libero_remote
+      - libero_target_benchmark
+    benchmark_capabilities:
+      - benchmark_id: libero
+        suites: [libero_spatial, libero_object, libero_goal, libero_10]
+        execution_modes:
+          - mode: policy_loop
+            interface: rollout_episode_v1
+            reset_owner: session_runner
+          - mode: target_native
+            interface: target_benchmark_job_v1
+            reset_owner: skillruntime
     runtime:
       target_runtime: LiberoRemoteTargetProxy
       target_endpoint: targetws://libero-host:9002
@@ -66,7 +77,7 @@ targets:
   - id: pipergo2_isaac_remote
     target_class: remote
     target_kind: simulation
-    enabled: true
+    enabled: false
     workspace: workspaces/pipergo2_isaac_sim
     supported_skillruntimes:
       - pipergo2_isaac_vla
@@ -104,7 +115,7 @@ targets:
   - id: pipergo2_merom_sim
     target_class: remote
     target_kind: simulation
-    enabled: true
+    enabled: false
     workspace: workspaces/merom_isaac_sim
     supported_skillruntimes:
       - pipergo2_command_sim
@@ -134,7 +145,7 @@ targets:
   - id: g1_merom_sim
     target_class: remote
     target_kind: simulation
-    enabled: true
+    enabled: false
     workspace: workspaces/merom_isaac_sim
     supported_skillruntimes:
       - pipergo2_command_sim
@@ -161,7 +172,7 @@ targets:
   - id: franka_merom_sim
     target_class: remote
     target_kind: simulation
-    enabled: true
+    enabled: false
     workspace: workspaces/merom_isaac_sim
     supported_skillruntimes:
       - pipergo2_command_sim
@@ -188,7 +199,7 @@ targets:
   - id: behavior1k_r1pro_sim
     target_class: remote
     target_kind: simulation
-    enabled: true
+    enabled: false
     workspace: b1k_integration/workspaces/behavior1k_eval
     supported_skillruntimes:
       - behavior1k_vla
@@ -210,4 +221,47 @@ targets:
       max_chunk_size: 50
       max_steps: 200
       chunk_size: 1
+  - id: go2_real_builtin
+    target_class: remote
+    target_kind: real_robot
+    embodiment: unitree_go2
+    enabled: false
+    workspace: workspaces/go2_real
+    supported_skillruntimes:
+      - go2_builtin_command
+    runtime:
+      target_runtime: Go2RemoteTargetProxy
+      target_endpoint: targetws://127.0.0.1:9010
+      target_adapter: target_adapter://go2_builtin_adapter
+      runtime_contract_ref: configs/runtime/contracts/go2_builtin.runtime.yaml
+    observation:
+      observation_type: empty
+      empty_observation_allowed: true
+      empty_observation_semantics: Go2 builtin command sessions do not require observation data.
+    perception:
+      enabled: false
+      strict_preflight: true
+      sensor_config_ref: null
+      perception_config_ref: null
+      artifact_dir: null
+    config:
+      robot_ip: 192.168.123.161
+      host_ip: 192.168.123.222
+      network_interface: enp4s0
+      action_dim: 1
+      max_chunk_size: 1
+      control_hz: 10
+      safety_limits:
+        vx:
+          - -0.5
+          - 0.5
+        vy:
+          - -0.2
+          - 0.2
+        vyaw:
+          - -0.5
+          - 0.5
+        duration_s:
+          - 0.1
+          - 1.0
 ```
