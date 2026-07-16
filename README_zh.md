@@ -281,8 +281,6 @@ PhyAgentOS/
 
 <br>
 
-<!-- <img src="docs/imgs/SYSU.png" alt="SYSU" height="128">
-&nbsp;&nbsp;&nbsp; -->
 <img src="docs/imgs/HCP.jpg" alt="HCP" height="128">
 &nbsp;&nbsp;&nbsp;
 <img src="docs/imgs/Pengcheng.png" alt="Pengcheng" height="128">
