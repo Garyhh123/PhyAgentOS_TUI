@@ -78,7 +78,7 @@ conda run --no-capture-output -n libero python PhyAgentOS/runtime/targets/remote
   --host 0.0.0.0 --port 9022 \
   --camera-height 256 --camera-width 256 \
   --max-steps 300 --num-steps-wait 10 \
-  --control-mode relative
+  --control-mode relative --seed 7
 ```
 
 2. Start the official OpenPI PI0.5 policy server:
@@ -144,6 +144,13 @@ evidence to the verifier and retries the same task/init-state inside the same
 suite session when the verifier returns `replan`. The summary reports both
 first-attempt and final-outcome rates.
 
+`replan_every_steps` is the policy refresh cadence: at most that many actions
+from one policy response are executed before requesting a new response. It is
+independent of verification recovery. The Target's `retry_instruction_mode`
+selects the recovery instruction: `original` (default) keeps the original task,
+while `verifier_rewrite` uses the verifier's required nonempty
+`replan_task_description`.
+
 The Verification Service is started and supervised by `paos agent`; no fourth
 terminal is required.
 
@@ -153,7 +160,7 @@ servers running, use the Agent as the third terminal:
 
 ```bash
 paos agent --workspace ~/.PhyAgentOS/workspace -m \
-  "Evaluate PI0.5 on all four LIBERO suites with libero_real_remote and libero_target_benchmark. Use target_native execution, recovery verification, task ids 0-9, init-state ids 0-49, relative control, max_steps 300, and policy endpoint openpi://127.0.0.1:8020."
+  "Evaluate PI0.5 on all four LIBERO suites with libero_real_remote and libero_target_benchmark. Use target_native execution, recovery verification, task ids 0-9, init-state ids 0-49, relative control, max_steps 300, replan_every_steps 5, and policy endpoint openpi://127.0.0.1:8020."
 ```
 
 ## PI0 Eval
@@ -194,6 +201,9 @@ unchanged.
 
 
 ### PAOS PI0/PI0.5 Agent-assisted Results
+
+These recovery runs used `retry_instruction_mode: verifier_rewrite` and allowed
+one retry after a failed episode.
 
 #### PI0
 

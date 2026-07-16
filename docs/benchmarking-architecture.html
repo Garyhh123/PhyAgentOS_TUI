@@ -170,7 +170,7 @@
 <body>
   <header>
     <h1>PhyAgentOS Benchmarking Architecture</h1>
-    <p>Benchmarking 是 Agent Control Plane 中的流程型技能：它检查 Runtime 是否存在可执行的 simulation + policy 组合，发现任务、生成 Sessions，并在 Watchdog 完成执行后聚合证据、计算指标、生成实验报告。</p>
+    <p>Benchmarking 是 Agent Control Plane 中的流程型技能：它选择声明完整的 simulation Target、execution mode 与 SkillRuntime 组合，生成 Sessions，并在 Watchdog 完成执行后聚合证据、计算指标、生成实验报告。</p>
     <div class="meta">
       <span>代码基线：SkillsLoader · ContextBuilder · Benchmarking SKILL.md</span>
       <span>执行基线：SESSIONS.md · WatchdogSupervisor · ResultWriter</span>
@@ -189,31 +189,31 @@
 
     <section class="diagram">
       <div class="band">
-        <div class="band-head"><h2>1 · Architectural Boundary</h2><small>Agent skill 负责“如何评测”；SkillRuntime 负责“如何执行策略”</small></div>
+        <div class="band-head"><h2>1 · Architectural Boundary</h2><small>Agent skill 负责“如何评测”；SkillRuntime 负责选定模式的执行闭环</small></div>
         <div class="boundary-grid">
           <article class="domain">
             <h3>benchmarking · Agent Skill</h3>
             <p><code>PhyAgentOS/skills/benchmarking/SKILL.md</code></p>
             <ul>
               <li>进入 Agent skills summary，按需加载 Markdown 指令。</li>
-              <li>选择 target / policy skillruntime，发现 task list。</li>
+              <li>选择 target / execution mode / skillruntime 精确组合。</li>
               <li>创建 pending sessions，等待标准 Runtime 回写。</li>
               <li>聚合日志与 artifacts，计算指标并撰写报告。</li>
             </ul>
           </article>
           <div class="not-equal">≠</div>
           <article class="domain runtime">
-            <h3>Policy SkillRuntime · Runtime Executor</h3>
-            <p><code>SKILLRUNTIME.md → runtime_kind: policy</code></p>
+            <h3>Selected SkillRuntime · Runtime Executor</h3>
+            <p><code>SKILLRUNTIME.md → runtime_kind: policy | builtin</code></p>
             <ul>
-              <li>实现 policy closed loop、observation/action contract。</li>
+              <li>Policy runtime 实现 observation-policy-action 闭环；benchmark builtin 可实现声明过的 target-native suite 闭环。</li>
               <li>由 SessionRunner 与 WatchdogSupervisor 调度。</li>
-              <li>连接 target、policy client、adapter 与 safety bridge。</li>
+              <li>严格遵守 Target capability、interface、result schema 与 reset owner。</li>
               <li>产出 SessionResult，不负责评测实验编排。</li>
             </ul>
           </article>
         </div>
-        <div class="callout"><b>关键边界：</b>Benchmarking 不新增 <code>SKILLRUNTIME.md</code> 条目，也不直接实例化 <code>SessionRunner</code>。它通过现有 session 协议复用 Runtime 的执行与回写能力。</div>
+        <div class="callout"><b>关键边界：</b>Benchmarking 不新增 <code>SKILLRUNTIME.md</code> 条目，不直接实例化 <code>SessionRunner</code>，也不绕过 Session 调用原始 Target benchmark RPC。它通过现有 session 协议复用 Runtime 的执行与回写能力。</div>
       </div>
 
       <div class="band">
@@ -230,7 +230,7 @@
               <div class="check"><b>① Runtime 模式</b><code>enabled == true</code><small>配置关闭时立即不可用。</small></div>
               <div class="check"><b>② Simulation Target</b><code>target_kind: simulation</code><small>读取 runtime workspace 的 TARGETS.md。</small></div>
               <div class="check"><b>③ Target 已启用</b><code>enabled: true</code><small>应用 runtime_target_enabled 覆盖。</small></div>
-              <div class="check"><b>④ Policy 可连接</b><code>supported ∩ policy IDs</code><small>必须支持真实存在的 policy skillruntime。</small></div>
+              <div class="check"><b>④ 执行组合完整</b><code>Target ∩ mode ∩ SkillRuntime</code><small>Benchmark、interface、schema 与 reset owner 必须精确匹配。</small></div>
             </div>
           </div>
           <div class="arrow"><label>visibility</label></div>
@@ -239,19 +239,19 @@
             <div class="result no"><b>available=false</b><br>summary 显示具体 Runtime 缺失原因。</div>
           </div>
         </div>
-        <div class="callout"><b>声明入口：</b><code>requires.runtime = { enabled: true, target_kind: "simulation", skillruntime_kind: "policy" }</code>。若 <code>TARGETS.md</code> 或 <code>SKILLRUNTIME.md</code> 缺失/无效，技能保持不可用。</div>
+        <div class="callout"><b>声明入口：</b><code>requires.runtime = { enabled: true, target_kind: "simulation", benchmark: true }</code>。若 <code>TARGETS.md</code> 或 <code>SKILLRUNTIME.md</code> 缺失/无效，技能保持不可用。</div>
       </div>
 
       <div class="band">
         <div class="band-head"><h2>3 · Benchmark Lifecycle</h2><small>Agent 编排 → Runtime 执行 → Agent 汇总</small></div>
         <div class="sequence">
           <div class="seq"><i>1</i><b>Load Protocol</b><p>读取 RUNTIME、TARGETS、SKILLRUNTIME、SESSIONS、LOG。</p></div>
-          <div class="seq"><i>2</i><b>Select Pair</b><p>选择 enabled simulation target 与其支持的 policy skillruntime。</p></div>
-          <div class="seq"><i>3</i><b>Discover Tasks</b><p>优先调用 <code>target.describe</code> 获取 task_list；失败时回退静态 config。</p></div>
-          <div class="seq"><i>4</i><b>Compile Sessions</b><p>按 task × init-state 生成唯一 pending session，保留既有记录。</p></div>
-          <div class="seq"><i>5</i><b>Execute</b><p>Watchdog claim、preflight、SessionRunner、policy loop。</p></div>
-          <div class="seq"><i>6</i><b>Write Back</b><p>回写 SessionResult、LOG.md 和每个 episode artifact。</p></div>
-          <div class="seq"><i>7</i><b>Report</b><p>聚合成功率、steps、reward、错误分布，生成论文风格报告。</p></div>
+          <div class="seq"><i>2</i><b>Select Tuple</b><p>选择 enabled Target、execution mode 与匹配的 SkillRuntime。</p></div>
+          <div class="seq"><i>3</i><b>Preserve Controls</b><p>明确 task 范围、seed、control mode、policy 刷新频率与 recovery 指令模式。</p></div>
+          <div class="seq"><i>4</i><b>Compile Sessions</b><p>policy-loop 按 episode 建 root Session；target-native 按 suite/run 建 root Session，并保留既有记录。</p></div>
+          <div class="seq"><i>5</i><b>Execute</b><p>Watchdog claim、preflight，并进入所选 policy-loop 或 target-native builtin。</p></div>
+          <div class="seq"><i>6</i><b>Write Back</b><p>回写 SessionResult、LOG.md 和该模式的 canonical artifacts。</p></div>
+          <div class="seq"><i>7</i><b>Report</b><p>分别汇总 first-attempt 与 assisted-final score、verifier budget、错误和 artifact。</p></div>
         </div>
 
         <div class="plane"><span>Agent Control Plane ↑　　文件协议 / TargetWS RPC　　Runtime Execution Plane ↓</span></div>
@@ -260,7 +260,7 @@
           <div class="mini-arrow">→</div>
           <div class="node runtime"><h3>WatchdogSupervisor</h3><p>claim → health/preflight → running → finalizing；拒绝不兼容组合。</p></div>
           <div class="mini-arrow">→</div>
-          <div class="node runtime"><h3>SessionRunner</h3><p>target lifecycle + policy inference + adapter/bridge + execution status。</p></div>
+          <div class="node runtime"><h3>Selected SkillRuntime</h3><p>标准 policy loop，或 benchmark 声明的 target-native builtin 闭环。</p></div>
           <div class="mini-arrow">→</div>
           <div class="node artifact"><h3>ResultWriter</h3><p>SessionResult → episode.json → LOG.md → SESSIONS.md final state。</p></div>
         </div>
@@ -309,7 +309,7 @@
               <div class="report-part"><b>Results</b><small>总体表、per-task 表、steps/reward</small></div>
               <div class="report-part"><b>Failures</b><small>状态分布、error_code、代表案例</small></div>
               <div class="report-part"><b>Artifacts</b><small>session IDs、episode paths、logs</small></div>
-              <div class="report-part"><b>Reproduce</b><small>max_steps、replan、timeouts、版本</small></div>
+              <div class="report-part"><b>Reproduce</b><small>seed、control mode、policy refresh、retry instruction、timeouts、版本</small></div>
               <div class="report-part"><b>Discussion</b><small>与对应 simulation 论文口径对齐</small></div>
             </div>
           </article>

@@ -249,7 +249,15 @@ Perception configuration has three layers:
 
 ## 11. SessionVerifier Extension Boundary
 
-After Runtime success, `ResultWriter` creates an episode and verification bundle. The Agent-side `SessionVerifier` owns the multimodal semantic verdict. Review mode appends an attempt and lesson without changing a terminal state or creating a replan.
+After Runtime success, `ResultWriter` creates an episode and verification
+bundle. `SessionVerifier` sends policy-loop verification through the Agent-owned
+Verification Service, which owns the multimodal prompt, strict response
+normalization, and model/provider error boundary. Review mode appends an attempt
+and lesson without changing a terminal state or creating a replan.
+
+Target-native benchmarks request episode verdicts from the same service at
+attempt boundaries. Their root Session is not passed through SessionVerifier a
+second time.
 
 Adding an evidence type requires coordinated changes to the bundle schema/writer, verifier prompt, retention behavior, and tests so state and artifact lifecycles stay consistent.
 

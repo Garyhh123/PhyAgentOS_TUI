@@ -105,7 +105,7 @@ The former `hal/hal_watchdog.py --driver ...` path is not a v0.1.6 runtime entry
 
 ## 8. Semantic Verification Operations
 
-With a Session verification profile of `audit` or `recovery`, policy-loop completion enters `awaiting_verification`. `paos agent` owns the Verification Service lifecycle.
+With a Session verification profile of `audit` or `recovery`, policy-loop completion enters `awaiting_verification`. `paos agent` owns the Verification Service lifecycle, and both SessionVerifier and target-native episode verification use that service for model-backed verdicts.
 
 `evidenceRetention`:
 

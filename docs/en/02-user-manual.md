@@ -135,7 +135,8 @@ pending → claimed → preflight_checking → running → finalizing
 preflight_checking → rejected
 ```
 
-When semantic verification is enabled and Runtime execution succeeds:
+When a policy-loop Session selects `audit` or `recovery` and Runtime execution
+succeeds:
 
 ```text
 finalizing → awaiting_verification → verifying
@@ -143,6 +144,9 @@ finalizing → awaiting_verification → verifying
 ```
 
 `replanned` preserves the original Session and appends a new pending child Session.
+For target-native benchmarks, episode verification and optional recovery happen
+inside the suite job at attempt boundaries; the root Session does not enter this
+verification state sequence again.
 
 ## 7. Current Scenarios
 
@@ -234,7 +238,7 @@ The v0.1.6 source does not ship an installable `hal` Driver Runtime. Historical 
     "verification": {
       "serviceEnabled": true,
       "model": null,
-      "timeoutS": 60,
+      "timeoutS": 180,
       "evidenceRetention": "none",
       "maxReplansPerEpisode": 2,
       "maxVerifierCallsPerRun": 50

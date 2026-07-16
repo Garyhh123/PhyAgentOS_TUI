@@ -127,13 +127,13 @@
 <body>
   <header>
     <h1>SessionVerifier Architecture</h1>
-    <p>执行完成不等于任务完成。SessionVerifier 位于 Agent 控制面，以最终 RGB、任务定义、环境快照和历史记录为证据，执行语义验收，并将结果应用为 succeeded、failed 或 replanned。</p>
-    <div class="meta"><span>自动路径：后台 poll + apply</span><span>主动路径：verify_session Tool + apply/review</span><span>默认 RGB 策略：failed</span></div>
+    <p>执行完成不等于任务完成。SessionVerifier 在 Agent 控制面构建 policy-loop 证据，并将 Verification Service 返回的结论应用为 succeeded、failed 或 replanned。</p>
+    <div class="meta"><span>自动路径：后台 poll + apply</span><span>主动路径：verify_session Tool + apply/review</span><span>默认 evidence 策略：none</span></div>
   </header>
   <main>
     <section class="diagram">
       <div class="band">
-        <div class="band-head"><h2>1 · Evidence Production</h2><small>Track B 只负责生成事实，不做语义裁决</small></div>
+        <div class="band-head"><h2>1 · Policy-loop Evidence Production</h2><small>Runtime 生成执行事实，模型 verdict 由 Agent 管理的服务产生</small></div>
         <div class="pipeline">
           <div class="node"><h3>Target Runtime</h3><p><code>action_chunk()</code> 返回 status，其中最终原始观测位于 <code>status["obs"]</code>。</p></div>
           <div class="arrow"><label>last status</label></div>
@@ -163,9 +163,9 @@
               <ol>
                 <li>SessionRegistry 原子 claim：awaiting_verification → verifying。</li>
                 <li>读取 bundle 和所有 RGB；构造 text + image_url 多模态消息。</li>
-                <li>LLM 返回严格 JSON verdict：success / failure / replan。</li>
+                <li>调用 Verification Service；服务使用统一 prompt 并严格规范化 success / failure / replan JSON。</li>
                 <li>追加 mode=apply attempt，写 lesson，并提交最终状态或子 session。</li>
-                <li>按 rgbRetention 清理证据并同步 bundle 与 result metadata。</li>
+                <li>按 evidenceRetention 清理证据并同步 bundle 与 result metadata。</li>
               </ol>
             </div>
             <div class="route review">
@@ -190,7 +190,7 @@
           <div class="state active"><strong>running</strong><small>target / policy 执行</small></div>
           <div class="state"><strong>finalizing</strong><small>写 episode 与 history</small></div>
           <div class="state wait"><strong>awaiting_verification</strong><small>证据已准备</small></div>
-          <div class="state active"><strong>verifying</strong><small>Agent claim + LLM</small></div>
+          <div class="state active"><strong>verifying</strong><small>Agent claim + Verification Service</small></div>
           <div class="state ok"><strong>terminal</strong><small>succeeded / failed / replanned</small></div>
         </div>
         <div class="fork">
@@ -201,14 +201,14 @@
       </div>
 
       <div class="band">
-        <div class="band-head"><h2>4 · RGB Retention Matrix</h2><small>只在有效 apply verdict 提交后执行；模型或状态错误时不删除</small></div>
+        <div class="band-head"><h2>4 · Evidence Retention Matrix</h2><small>只在有效 apply verdict 提交后执行；模型或状态错误时不删除</small></div>
         <div class="table-wrap">
           <table class="matrix">
-            <thead><tr><th>rgbRetention</th><th>succeeded</th><th>failed</th><th>replanned</th><th>verification error</th><th>终态 review 能力</th></tr></thead>
+            <thead><tr><th>evidenceRetention</th><th>succeeded</th><th>failed</th><th>replanned</th><th>verification error</th><th>终态 review 能力</th></tr></thead>
             <tbody>
               <tr><td>all</td><td class="keep">保留</td><td class="keep">保留</td><td class="keep">保留</td><td class="keep">保留</td><td>所有有 bundle 的终态均可复核</td></tr>
-              <tr><td>failed · default</td><td class="delete">删除</td><td class="keep">保留</td><td class="keep">保留</td><td class="keep">保留</td><td>成功不可复核；失败与 replan 可复核</td></tr>
-              <tr><td>none</td><td class="delete">删除</td><td class="delete">删除</td><td class="delete">删除</td><td class="keep">保留</td><td>有效 verdict 后不可复核</td></tr>
+              <tr><td>failed</td><td class="delete">删除</td><td class="keep">保留</td><td class="keep">保留</td><td class="keep">保留</td><td>成功不可复核；失败与 replan 可复核</td></tr>
+              <tr><td>none · default</td><td class="delete">删除</td><td class="delete">删除</td><td class="delete">删除</td><td class="keep">保留</td><td>有效 verdict 后不可复核</td></tr>
             </tbody>
           </table>
         </div>
@@ -246,23 +246,29 @@
       </div>
 
       <div class="band">
-        <div class="band-head"><h2>6 · Agent Configuration</h2><small>仅在 runtime.enabled 与 verification.enabled 同时为 true 时启动服务并注册 Tool</small></div>
+        <div class="band-head"><h2>6 · Agent Configuration</h2><small>Runtime 启用且 serviceEnabled 为 true 时，由 Agent 启动并管理服务</small></div>
         <div class="config">
           <pre>{
   "agents": {
     "verification": {
-      "enabled": true,
+      "serviceEnabled": true,
+      "provider": null,
       "model": null,
-      "maxReplans": 1,
-      "rgbRetention": "failed"
+      "timeoutS": 180,
+      "evidenceRetention": "none",
+      "maxReplansPerEpisode": 2,
+      "maxVerifierCallsPerRun": 50,
+      "serviceHost": "127.0.0.1",
+      "servicePort": 8100,
+      "remoteTargetUrl": null
     }
   }
 }</pre>
           <div class="config-notes">
-            <div class="config-note"><b>enabled</b><span>控制 runtime 是否进入 awaiting_verification，以及 Agent 是否启动后台 verifier。</span></div>
-            <div class="config-note"><b>model</b><span>null 时复用主 Agent 模型；指定其他模型时按该模型重新选择 provider。</span></div>
-            <div class="config-note"><b>maxReplans</b><span>语义 replan 的最大链路深度；达到上限后将原 session 标记为 failed。</span></div>
-            <div class="config-note"><b>rgbRetention</b><span>控制有效 apply 后的视觉证据生命周期，不影响 episode、bundle、attempts 和 lessons。</span></div>
+            <div class="config-note"><b>serviceEnabled</b><span>控制 Agent 是否启动 Verification Service；Session 仅选择 verification_profile。</span></div>
+            <div class="config-note"><b>provider / model / timeoutS</b><span>null 时复用主 Agent provider/model；单次请求默认超时 180 秒。</span></div>
+            <div class="config-note"><b>maxReplansPerEpisode / maxVerifierCallsPerRun</b><span>限制 recovery attempt 与 target-native run 的 verifier 调用预算。</span></div>
+            <div class="config-note"><b>evidenceRetention</b><span>控制有效 apply 后的视觉证据生命周期，不影响 episode、bundle、attempts 和 lessons。</span></div>
           </div>
         </div>
       </div>

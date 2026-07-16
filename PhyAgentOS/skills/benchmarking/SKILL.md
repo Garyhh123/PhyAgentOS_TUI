@@ -30,6 +30,15 @@ Stop when no exact tuple exists. Do not call a raw Target RPC, substitute anothe
 
 Every benchmark Session records `target_ref`, `skillruntime_ref`, top-level `verification_profile`, and benchmark metadata containing `benchmark_id`, `suite_id`, `execution_mode`, `policy_id`, and `run_id`.
 
+Preserve evaluation parameters declared by the benchmark or user. Put policy
+refresh cadence in `execution.replan_every_steps` (and the matching preferred
+runtime hint when required by the runtime); this is the number of action steps
+consumed before requesting a new policy response, not a verification retry.
+Keep environment seed, control mode, and `retry_instruction_mode` in Target
+configuration. `retry_instruction_mode` is `original` by default; select
+`verifier_rewrite` only when recovery attempts should use the verifier's
+nonempty `replan_task_description` as their policy instruction.
+
 For `policy_loop`:
 
 - append one root Session per task/init-state;
@@ -43,7 +52,7 @@ For `target_native`:
 - use the benchmark-specific BuiltinSkillRuntime;
 - put the selected task/init-state ranges in the runtime hints expected by that concrete runtime.
 
-Verification profiles are `strict`, `audit`, and `recovery`. Do not copy provider, endpoint, timeout, retention, or budget settings into the Session; those are Agent-global configuration.
+Verification profiles are `strict`, `audit`, and `recovery`. Do not copy provider, endpoint, timeout, retention, or budget settings into the Session; those are Agent-global configuration. Policy-loop SessionVerifier and target-native episode verification both use the Agent-owned Verification Service, but a target-native root Session is not verified again by SessionVerifier.
 
 Append pending Sessions without modifying existing Session history. Execution must be claimed by the Watchdog; never instantiate SessionRunner or call `target.benchmark.*` directly from the Agent.
 

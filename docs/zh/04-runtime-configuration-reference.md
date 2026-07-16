@@ -46,7 +46,7 @@ Verification 参数位于 `agents.verification`。它们是全局配置，Sessio
 | `serviceEnabled` | `true` | 将 Verification Service 作为 Agent 子进程启动。 |
 | `provider` | `null` | verification provider；`null` 表示复用 Agent 默认 provider。 |
 | `model` | `null` | verification model；`null` 表示复用 Agent 默认 model。 |
-| `timeoutS` | `60` | 单次 verification 请求超时，单位为秒，必须大于零。 |
+| `timeoutS` | `180` | 单次 verification 请求超时，单位为秒，必须大于零。 |
 | `evidenceRetention` | `none` | SessionVerifier RGB evidence 保留方式：`all`、`failed` 或 `none`。target-native episode evidence 是临时文件，校验后始终删除。 |
 | `maxReplansPerEpisode` | `2` | 单个 episode 允许的额外 recovery attempt 数；`0` 禁止 recovery retry。 |
 | `maxVerifierCallsPerRun` | `50` | 单个 target-native benchmark run 共享的 verifier 调用预算；`0` 禁止 verifier 调用。 |
@@ -61,7 +61,7 @@ Verification 参数位于 `agents.verification`。它们是全局配置，Sessio
       "serviceEnabled": true,
       "provider": null,
       "model": null,
-      "timeoutS": 60,
+      "timeoutS": 180,
       "evidenceRetention": "none",
       "maxReplansPerEpisode": 2,
       "maxVerifierCallsPerRun": 50,
@@ -79,9 +79,17 @@ Verification 参数位于 `agents.verification`。它们是全局配置，Sessio
 |:--|:--|:--|
 | `strict` | 不调用 verifier。 | 不调用 verifier。 |
 | `audit` | Session 完成后由 SessionVerifier 校验，不触发 recovery。 | benchmark job 校验失败 episode，不触发 recovery。 |
-| `recovery` | SessionVerifier 可以创建使用 rewrite 的子 Session。 | benchmark job 可以使用 rewrite 从失败状态继续 episode。 |
+| `recovery` | SessionVerifier 可以根据 verifier 必须返回的 rewrite 创建子 Session。 | benchmark job 可以从失败状态继续 episode；下一次 attempt 使用原任务还是 verifier rewrite，由 Target 配置决定。 |
 
-target-native root Session 不会再次进入 SessionVerifier。
+policy-loop Session 与 target-native episode 的模型校验和严格响应规范化都由
+Agent 管理的 Verification Service 完成。target-native root Session 不会再次进入
+SessionVerifier。
+
+有效响应必须包含受支持的 verdict、由非空字符串组成的非空 evidence 数组，
+以及非空 lesson；`failure` 还必须包含非空 `failure_reason`，`replan` 还必须
+包含非空 `replan_task_description`。违反该规范的响应记录为
+`failure/verifier_status: invalid_response`。模型超时、provider 错误、service
+HTTP 错误和连接故障仍属于 verification 基础设施错误，不会转换为 `replan`。
 
 ## `TARGETS.md`
 
@@ -109,6 +117,14 @@ target-native root Session 不会再次进入 SessionVerifier。
 | `perception.perception_config_ref` | 否 | Perception 配置文件。 |
 | `perception.artifact_dir` | 否 | Perception artifact 目录。 |
 | `config` | 否 | Target 专属参数，例如维度、限制、场景、控制模式和 reset 行为；默认为空 map。 |
+
+LIBERO target-native benchmark 从 Target 的 `config` map 读取以下评测参数：
+
+| 字段 | 默认值 | 含义 |
+|:--|:--|:--|
+| `control_mode` | `relative` | LIBERO action 约定，应与所选 policy 的控制方式一致。 |
+| `seed` | `0` | 应用于每个 benchmark episode 的环境 seed。 |
+| `retry_instruction_mode` | `original` | Recovery 指令行为：`original` 保持原任务；`verifier_rewrite` 使用 verifier 返回的非空 `replan_task_description` 替换原任务。 |
 
 ### Benchmark capability
 
@@ -211,7 +227,7 @@ verification 并进入终态。
 | `execution.max_steps` | `600` | 最大执行 step 数。 |
 | `execution.control_hz` | `null` | 可选控制频率。 |
 | `execution.replan_every` | `8` | 没有 step 专属值时使用的默认 policy 刷新计数。 |
-| `execution.replan_every_steps` | `null` | 以 step 表示的明确 policy 刷新频率。 |
+| `execution.replan_every_steps` | `null` | 一次 policy 响应最多执行多少个 action step 后重新请求 policy；该刷新频率与 verification `replan` 相互独立。 |
 | `execution.action_chunk_mode` | `chunk_buffer` | `chunk_buffer`、`open_loop` 或 `single_step`。 |
 | `execution.chunk_switch_mode` | `hard_switch` | `hard_switch` 或 `soft_blend`。 |
 | `execution.reset_policy` | `session_runner` | 普通任务/policy-loop 使用 `session_runner`；target-native benchmark 使用 `skillruntime_managed`。 |
@@ -223,7 +239,7 @@ verification 并进入终态。
 |:--|:--|:--|
 | `runtime_hints.perception_queries` | `[]` | 结构化 perception 或 benchmark 选择提示。 |
 | `runtime_hints.force_environment_refresh` | `false` | 请求执行前刷新 environment。 |
-| `runtime_hints.preferred_replan_every_steps` | `null` | 提供给 planning 的 policy 刷新偏好。 |
+| `runtime_hints.preferred_replan_every_steps` | `null` | 提供给 planning 的同一 policy 刷新频率偏好。 |
 | `safety_profile.profile` | `default` | Safety profile 名称。 |
 | `safety_profile.workspace_bounds` | `null` | Workspace bounds 引用。 |
 | `safety_profile.stop_on_policy_timeout` | `true` | Policy 超时时停止执行。 |
@@ -273,7 +289,7 @@ Benchmark Session 必须包含 `benchmark` block。
       "serviceEnabled": true,
       "provider": null,
       "model": null,
-      "timeoutS": 60,
+      "timeoutS": 180,
       "evidenceRetention": "none",
       "maxReplansPerEpisode": 2,
       "maxVerifierCallsPerRun": 50,
@@ -308,6 +324,8 @@ benchmark_capabilities:
 config:
   control_mode: relative
   max_steps: 300
+  seed: 7
+  retry_instruction_mode: original
 ```
 
 README 的服务命令使用以下示例参数：
@@ -319,6 +337,7 @@ README 的服务命令使用以下示例参数：
 | Target `--max-steps` | `300` | 限制单个 attempt 的 policy step 数。 |
 | `--num-steps-wait` | `10` | 每次 episode reset 后执行场景稳定 step。 |
 | Target `--control-mode` | `relative` | 匹配 PI0.5 LIBERO action 约定。 |
+| Target `--seed` | `7` | 与 OpenPI 官方 LIBERO 评测 seed 保持一致。 |
 | Policy `--policy-config` | `pi05_libero` | 选择官方 PI0.5 LIBERO policy 配置。 |
 | Policy `--checkpoint-dir` | `gs://openpi-assets/checkpoints/pi05_libero` | 加载官方 PI0.5 checkpoint。 |
 | Policy `--host` / `--port` | `0.0.0.0` / `8000` | 提供同机 endpoint `openpi://127.0.0.1:8000`。 |
@@ -336,10 +355,13 @@ Agent 请求选择以下值：
 | Verification profile | `recovery` |
 | Policy endpoint | `openpi://127.0.0.1:8000` |
 | Task / init-state ID | `runtime_hints.perception_queries` 中的 `0-9` / `0-49` |
+| Policy 刷新频率 | `execution.replan_every_steps: 5` |
 
-Target 对每个逻辑 episode 只 reset 一次。非空 verifier rewrite 成为下一次
-policy task description，该 attempt 从失败环境状态继续且不再次 reset。
-Artifact 分别保留 first-attempt score 和 recovery-final score。
+Target 对每个逻辑 episode 只 reset 一次。每个 `replan` verdict 都会保留非空
+`replan_task_description`。默认的 `retry_instruction_mode: original` 使下一次
+attempt 继续使用原任务；设为 `verifier_rewrite` 时才将该描述作为 policy 指令。
+两种模式都从失败环境状态继续且不再次 reset。Artifact 分别保留
+first-attempt score 和 recovery-final score。
 
 ## 相关文档
 

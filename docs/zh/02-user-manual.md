@@ -135,7 +135,7 @@ pending → claimed → preflight_checking → running → finalizing
 preflight_checking → rejected
 ```
 
-开启语义验收且 Runtime 执行成功：
+policy-loop Session 选择 `audit` 或 `recovery` 且 Runtime 执行成功时：
 
 ```text
 finalizing → awaiting_verification → verifying
@@ -143,6 +143,8 @@ finalizing → awaiting_verification → verifying
 ```
 
 `replanned` 会保留原 Session，并追加一个新的 pending 子 Session。
+target-native benchmark 的 episode verification 和可选 recovery 在 suite job
+内部的 attempt 边界发生，root Session 不再进入这一 verification 状态链。
 
 ## 7. 当前场景
 
@@ -234,7 +236,7 @@ v0.1.6 当前源码没有可安装的 `hal` Driver Runtime。对应 JSON 示例�
     "verification": {
       "serviceEnabled": true,
       "model": null,
-      "timeoutS": 60,
+      "timeoutS": 180,
       "evidenceRetention": "none",
       "maxReplansPerEpisode": 2,
       "maxVerifierCallsPerRun": 50
