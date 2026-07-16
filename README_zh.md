@@ -184,7 +184,7 @@ paos agent --workspace ~/.PhyAgentOS/workspace -m \
 </table>
 
 启动终端 3 前，需要启用 `libero_real_remote`、配置 Runtime verification，
-并在 Target 配置中设置 `seed: 7` 和 `retry_instruction_mode: original`。
+并在 Target 配置中设置 `retry_instruction_mode: original`。
 后者使 recovery attempt 保持原任务指令；需要把 verifier 返回的非空 rewrite
 作为 policy 指令时，改用 `verifier_rewrite`。
 完整的全局配置、Target、SkillRuntime、Session、benchmark、verification 和
