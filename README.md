@@ -185,8 +185,8 @@ paos agent --workspace ~/.PhyAgentOS/workspace -m \
 </table>
 
 Before starting Terminal 3, enable `libero_real_remote`, configure Runtime
-verification, and set the Target configuration to `seed: 7` and
-`retry_instruction_mode: original`. The latter keeps the original task
+verification, and set the Target configuration to 
+`retry_instruction_mode: original`, which keeps the original task
 instruction on recovery attempts; use `verifier_rewrite` when the policy should
 receive the verifier's nonempty rewrite instead. See the
 [Runtime configuration reference](docs/en/04-runtime-configuration-reference.md)
