@@ -106,6 +106,7 @@ def _benchmark_request(skill_ctx: SkillContext) -> BenchmarkJobRequest:
         verification_timeout_s=float(verification.get("timeout_s", 180.0)),
         max_replans_per_episode=int(verification.get("max_replans_per_episode", 2)),
         max_verifier_calls_per_run=int(verification.get("max_verifier_calls_per_run", 50)),
+        retry_instruction_mode=str(skill_ctx.target.config.get("retry_instruction_mode", "original")),
         options={
             "task_ids": task_ids,
             "init_state_ids": init_state_ids,

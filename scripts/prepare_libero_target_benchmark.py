@@ -37,6 +37,11 @@ def main() -> int:
     parser.add_argument("--verification-profile", default="strict", choices=["strict", "audit", "recovery"])
     parser.add_argument("--replan-every-steps", type=int, default=5)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--retry-instruction-mode",
+        choices=["original", "verifier_rewrite"],
+        default="original",
+    )
     parser.add_argument("--force-init", action="store_true")
     args = parser.parse_args()
 
@@ -105,6 +110,7 @@ def _write_target(workspace: Path, args: argparse.Namespace, skillruntime_id: st
                 "num_steps_wait": 10,
                 "control_mode": args.control_mode,
                 "seed": args.seed,
+                "retry_instruction_mode": args.retry_instruction_mode,
                 "target_ws_timeout_s": args.execute_timeout_s + 300,
                 "action": {"action_dim": 7, "max_chunk_size": 50},
             },

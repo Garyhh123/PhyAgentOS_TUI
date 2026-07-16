@@ -144,6 +144,7 @@ for SUITE in libero_spatial libero_object libero_goal libero_10; do
     --task-ids 0-9 \
     --init-state-ids 0-49 \
     --control-mode relative \
+    --retry-instruction-mode original \
     --force-init
 done
 ```

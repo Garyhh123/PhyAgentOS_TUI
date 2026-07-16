@@ -28,11 +28,17 @@ Compare the initial and final observations. Use success only when the original t
 When the task is not complete, prefer replan whenever the scene still contains the required target objects,
 the robot/environment can plausibly continue from the final observation, and another attempt with the original
 task instruction could still complete the task. This includes wrong object picks, missed grasps, incomplete
-placements, unopened drawers, or reaching max steps while the goal remains physically possible. Do not rewrite
-the task instruction; always set replan_task_description to null for replan. Use failure only when continuing
-from the final observation is physically impossible or clearly unrecoverable, such as the required object being
-absent, inaccessible, irreversibly displaced out of the workspace, or the scene state preventing the original
-task from being completed."""
+placements, unopened drawers, or reaching max steps while the goal remains physically possible. For every
+replan verdict, replan_task_description must be a non-empty executable instruction that describes how the next
+attempt should recover while preserving the original task goal. Use failure only when continuing from the final
+observation is physically impossible or clearly unrecoverable, such as the required object being absent,
+inaccessible, irreversibly displaced out of the workspace, or the scene state preventing the original task from
+being completed."""
+
+SESSION_PROMPT = """Verify the Agent session and return one JSON object with keys verdict
+(success|replan|failure), evidence, failure_reason, replan_task_description, and lesson. evidence must be a
+non-empty array of non-empty strings. Every replan verdict must include a non-empty executable
+replan_task_description. Every failure verdict must include a non-empty failure_reason."""
 
 
 class VerificationServiceProcess:
@@ -140,8 +146,10 @@ def _handler(engine: VerificationEngine, episode_token: str, session_token: str)
             try:
                 data = asyncio.run(engine.complete(system_prompt=EPISODE_PROMPT, content=_episode_content(bundle)))
                 self._send(_normalize(data), 200)
+            except TimeoutError as exc:
+                self._send(_error_payload(exc), 504)
             except Exception as exc:  # noqa: BLE001
-                self._send(_error_payload(exc), 200)
+                self._send(_error_payload(exc), 500)
 
         def _verify_session(self) -> None:
             try:
@@ -152,10 +160,12 @@ def _handler(engine: VerificationEngine, episode_token: str, session_token: str)
                 self._send({"error": str(exc) or type(exc).__name__}, 400)
                 return
             try:
-                data = asyncio.run(engine.complete(system_prompt="Verify the Agent session and return a semantic verdict JSON object.", content=bundle["content"]))
+                data = asyncio.run(engine.complete(system_prompt=SESSION_PROMPT, content=bundle["content"]))
                 self._send(_normalize(data), 200)
+            except TimeoutError as exc:
+                self._send(_error_payload(exc), 504)
             except Exception as exc:  # noqa: BLE001
-                self._send(_error_payload(exc), 200)
+                self._send(_error_payload(exc), 500)
 
         def _send(self, payload: dict, status: int) -> None:
             body = json.dumps(payload, ensure_ascii=False).encode()
@@ -200,28 +210,59 @@ def _rgb_arrays(value: Any, prefix: str) -> list[tuple[str, np.ndarray]]:
 
 
 def _normalize(data: dict) -> dict:
-    verdict = str(data.get("verdict") or "failure")
+    verdict = str(data.get("verdict") or "")
     if verdict not in {"success", "replan", "failure"}:
-        verdict = "failure"
+        return _invalid_response("unsupported verifier verdict")
+
+    evidence = data.get("evidence")
+    if (
+        not isinstance(evidence, list)
+        or not evidence
+        or any(not isinstance(item, str) or not item.strip() for item in evidence)
+    ):
+        return _invalid_response("evidence must be a non-empty array of non-empty strings")
+
     rewrite = str(data.get("replan_task_description") or "").strip()
-    evidence = data.get("evidence") or ["no evidence"]
-    if isinstance(evidence, str):
-        evidence = [evidence]
-    elif not isinstance(evidence, list):
-        evidence = [str(evidence)]
-    status = "completed"
-    reason = data.get("failure_reason")
-    return {"verdict": verdict, "evidence": [str(item) for item in evidence], "failure_reason": reason, "replan_task_description": rewrite or None, "lesson": str(data.get("lesson") or "No lesson provided."), "verifier_status": status}
+    if verdict == "replan" and not rewrite:
+        return _invalid_response("replan requires non-empty replan_task_description")
+
+    reason = str(data.get("failure_reason") or "").strip()
+    if verdict == "failure" and not reason:
+        return _invalid_response("failure requires non-empty failure_reason")
+
+    lesson = data.get("lesson")
+    if not isinstance(lesson, str) or not lesson.strip():
+        return _invalid_response("lesson must be a non-empty string")
+
+    return {
+        "verdict": verdict,
+        "evidence": [item.strip() for item in evidence],
+        "failure_reason": reason or None,
+        "replan_task_description": rewrite or None,
+        "lesson": lesson.strip(),
+        "verifier_status": "completed",
+    }
+
+
+def _invalid_response(reason: str) -> dict:
+    return {
+        "verdict": "failure",
+        "evidence": ["invalid verifier response: %s" % reason],
+        "failure_reason": reason,
+        "replan_task_description": None,
+        "lesson": "Verifier returned an invalid response.",
+        "verifier_status": "invalid_response",
+    }
 
 
 def _error_payload(exc: Exception) -> dict:
     reason = str(exc) or type(exc).__name__
     return {
-        "verdict": "replan",
-        "evidence": [reason],
+        "verdict": "failure",
+        "evidence": ["verifier infrastructure error: %s" % reason],
         "failure_reason": reason,
         "replan_task_description": None,
-        "lesson": "Verification failed; retry from the current state with the original instruction.",
+        "lesson": "Verification could not be completed.",
         "verifier_status": "error",
     }
 

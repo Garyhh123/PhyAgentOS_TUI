@@ -643,6 +643,7 @@ class LiberoRealRuntime:
         verifier_calls_remaining: int,
     ) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]:
         profile = str(verification["profile"])
+        retry_instruction_mode = str(verification["retry_instruction_mode"])
         max_replans = max(0, int(verification["max_replans_per_episode"])) if profile == "recovery" else 0
         attempts = []
         verifier_attempts = []
@@ -737,7 +738,15 @@ class LiberoRealRuntime:
                     % (suite, task_id, init_state_id, attempt_index, str(verdict.get("verdict")))
                 )
                 break
-            current_task_description = task_description
+            if retry_instruction_mode == "verifier_rewrite":
+                current_task_description = str(verdict["replan_task_description"])
+            else:
+                current_task_description = task_description
+            verdict["applied_task_description"] = (
+                current_task_description
+                if current_task_description is not None
+                else episode.get("task_description")
+            )
             status(
                 "verification recovery start suite=%s t%d_i%d next_attempt=%d"
                 % (suite, task_id, init_state_id, attempt_index + 1)
@@ -1223,9 +1232,10 @@ def _verification_config(config: Dict[str, Any]) -> Dict[str, Any]:
         "profile": profile,
         "endpoint": config.get("verification_endpoint"),
         "token": config.get("verification_token"),
-        "timeout_s": float(config.get("verification_timeout_s") or 60.0),
+        "timeout_s": float(config.get("verification_timeout_s") or 180.0),
         "max_replans_per_episode": _int_config(config, "max_replans_per_episode", 2),
         "max_verifier_calls_per_run": _int_config(config, "max_verifier_calls_per_run", 50),
+        "retry_instruction_mode": str(config.get("retry_instruction_mode") or "original"),
     }
 
 
@@ -1241,7 +1251,7 @@ async def _verify_episode_attempt(
         _post_verifier,
         str(endpoint or ""),
         bundle,
-        float(verification.get("timeout_s") or 60.0),
+        float(verification.get("timeout_s") or 180.0),
         str(verification.get("token") or ""),
     )
     record = {
@@ -1257,32 +1267,13 @@ async def _verify_episode_attempt(
         "replan_task_description": verdict.get("replan_task_description"),
         "lesson": verdict.get("lesson"),
         "verifier_status": verdict.get("verifier_status"),
+        "retry_instruction_mode": verification["retry_instruction_mode"],
         "latency_ms": (time.time() - started) * 1000.0,
         "evidence_digest": hashlib.sha256(
             json.dumps(_jsonable(bundle), ensure_ascii=False, sort_keys=True).encode("utf-8")
         ).hexdigest(),
         "evidence_retention": "deleted_after_verification",
     }
-    return _validate_replan_record(record, "original")
-
-
-def _validate_replan_record(record: Dict[str, Any], retry_instruction_mode: str) -> Dict[str, Any]:
-    if record.get("verdict") != "replan":
-        return record
-    if retry_instruction_mode not in {"original", "verifier_rewrite"}:
-        raise TargetProtocolError("unsupported retry_instruction_mode: %s" % retry_instruction_mode)
-    if retry_instruction_mode == "original":
-        record["replan_task_description"] = None
-        return record
-    rewrite = record.get("replan_task_description")
-    rewrite = str(rewrite).strip() if rewrite is not None else ""
-    if rewrite:
-        record["replan_task_description"] = rewrite
-        return record
-    record["verdict"] = "failure"
-    record["failure_reason"] = "replan verdict requires a non-empty replan_task_description"
-    record["verifier_status"] = "invalid_response"
-    record["replan_task_description"] = None
     return record
 
 
@@ -1298,7 +1289,7 @@ def _post_verifier(
     token: str,
 ) -> Dict[str, Any]:
     if not endpoint:
-        return _verifier_error("verifier endpoint is not configured", retry=False)
+        return _verifier_error("verifier endpoint is not configured")
     if endpoint.startswith("mock://"):
         mode = endpoint[len("mock://") :]
         if mode in {"replan", "replan_failed"}:
@@ -1310,7 +1301,7 @@ def _post_verifier(
                 "lesson": "Mock verifier retries failed benchmark episodes.",
                 "verifier_status": "mock",
             }
-        return _verifier_error("mock verifier did not request retry", retry=False)
+        return _verifier_error("mock verifier did not request retry")
     try:
         if endpoint.startswith(("http://", "https://")) and not endpoint.rstrip("/").endswith("/v1/verify-episode"):
             endpoint = endpoint.rstrip("/") + "/v1/verify-episode"
@@ -1347,19 +1338,13 @@ def _post_verifier(
     }
 
 
-def _verifier_error(reason: str, *, retry: bool = True) -> Dict[str, Any]:
-    verdict = "replan" if retry else "failure"
-    lesson = (
-        "Verification failed; retry from the current state with the original instruction."
-        if retry
-        else "Verification failed and no recovery was attempted."
-    )
+def _verifier_error(reason: str) -> Dict[str, Any]:
     return {
-        "verdict": verdict,
+        "verdict": "failure",
         "evidence": ["verifier service error: %s" % reason],
         "failure_reason": reason,
         "replan_task_description": None,
-        "lesson": lesson,
+        "lesson": "Verification failed and no recovery was attempted.",
         "verifier_status": "error",
     }
 

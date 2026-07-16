@@ -112,6 +112,7 @@ for SUITE in libero_spatial libero_object libero_goal libero_10; do
     --control-mode relative \
     --replan-every-steps 5 \
     --seed 7 \
+    --retry-instruction-mode original \
     --force-init
 done
 ```
