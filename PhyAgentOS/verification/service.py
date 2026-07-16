@@ -4,22 +4,26 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import json
 import hashlib
 import hmac
+import json
 import os
 import socket
 import subprocess
 import sys
 import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
+from urllib import error as url_error
+from urllib import request as url_request
 
 import numpy as np
 
-from PhyAgentOS.verification.engine import VerificationEngine
 from PhyAgentOS.runtime.artifacts.episode_writer import _encode_rgb_png
+from PhyAgentOS.verification.engine import VerificationEngine
+
+VERIFICATION_CLIENT_TIMEOUT_GRACE_S = 15.0
 
 
 EPISODE_PROMPT = """You are a benchmark episode verifier. Return one JSON object with keys verdict
@@ -38,7 +42,12 @@ being completed."""
 SESSION_PROMPT = """Verify the Agent session and return one JSON object with keys verdict
 (success|replan|failure), evidence, failure_reason, replan_task_description, and lesson. evidence must be a
 non-empty array of non-empty strings. Every replan verdict must include a non-empty executable
-replan_task_description. Every failure verdict must include a non-empty failure_reason."""
+replan_task_description. Every failure verdict must include a non-empty failure_reason. Choose replan only when
+another executable session can correct the task; choose failure when the task cannot be corrected by replanning."""
+
+
+class VerificationServiceError(RuntimeError):
+    """Raised when the Agent-owned verification service cannot return a verdict."""
 
 
 class VerificationServiceProcess:
@@ -107,6 +116,52 @@ class VerificationServiceProcess:
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=2.0)
+
+    def verify_session(self, content: list[dict[str, Any]]) -> dict[str, Any]:
+        """Submit Agent session evidence through the child verification service."""
+        service_host = "127.0.0.1" if self.host == "0.0.0.0" else self.host
+        endpoint = f"http://{service_host}:{self.port}/v1/verify-session"
+        payload = json.dumps(
+            {"version": "agent_session_verification_v2", "content": content},
+            ensure_ascii=False,
+        ).encode("utf-8")
+        req = url_request.Request(
+            endpoint,
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-PAOS-Admin-Token": self.session_token,
+            },
+            method="POST",
+        )
+        opener = url_request.build_opener(url_request.ProxyHandler({}))
+        client_timeout_s = max(
+            1.0,
+            float(self.engine.timeout_s) + VERIFICATION_CLIENT_TIMEOUT_GRACE_S,
+        )
+        try:
+            with opener.open(req, timeout=client_timeout_s) as response:  # noqa: S310 - local Agent service
+                body = response.read().decode("utf-8")
+        except url_error.HTTPError as exc:
+            try:
+                detail = exc.read().decode("utf-8", errors="replace").strip()
+            except Exception:  # noqa: BLE001
+                detail = ""
+            message = detail or str(exc.reason) or type(exc).__name__
+            raise VerificationServiceError(
+                f"session verification service returned HTTP {exc.code}: {message[:500]}"
+            ) from exc
+        except (OSError, TimeoutError, url_error.URLError) as exc:
+            raise VerificationServiceError(
+                f"session verification service request failed: {str(exc) or type(exc).__name__}"
+            ) from exc
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError as exc:
+            raise VerificationServiceError("session verification service returned invalid JSON") from exc
+        if not isinstance(data, dict):
+            raise VerificationServiceError("session verification service response must be a JSON object")
+        return data
 
 
 def serve_verification_service(engine: VerificationEngine, host: str, port: int, episode_token: str, session_token: str) -> None:

@@ -14,13 +14,13 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from PhyAgentOS.providers.base import LLMProvider
-from PhyAgentOS.verification.engine import VerificationEngine
-from PhyAgentOS.verification.service import VerificationServiceProcess
 from PhyAgentOS.runtime.schemas import SessionResult, SessionSpec, SessionStatus
 from PhyAgentOS.runtime.schemas.common import utc_now
 from PhyAgentOS.runtime.state_io.atomic_file import atomic_write_text
 from PhyAgentOS.runtime.watchdog.registry import SessionRegistry
 from PhyAgentOS.runtime.watchdog.result_writer import ResultWriter
+from PhyAgentOS.verification.engine import VerificationEngine
+from PhyAgentOS.verification.service import VerificationServiceProcess
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,7 @@ class VerificationVerdict(BaseModel):
     failure_reason: str | None = None
     replan_task_description: str | None = None
     lesson: str = Field(min_length=1)
+    verifier_status: Literal["completed", "invalid_response"] = "completed"
 
     @model_validator(mode="after")
     def validate_verdict_fields(self) -> "VerificationVerdict":
@@ -306,16 +307,8 @@ class SessionVerifier:
                 {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}"}}
             )
 
-        data = await self.engine.complete(
-            system_prompt=(
-                "You are the Agent session verifier. Return one JSON object only with keys: "
-                "verdict (success|replan|failure), evidence (non-empty string array), "
-                "failure_reason (string|null), replan_task_description (string|null), and "
-                "lesson (non-empty string). Choose replan only when another executable session "
-                "can correct the task; choose failure when the task cannot be corrected by replanning."
-            ),
-            content=content,
-        )
+        await self.start()
+        data = await asyncio.to_thread(self.service.verify_session, content)
         return VerificationVerdict.model_validate(data)
 
     def _load_bundle(self, session: SessionSpec) -> dict[str, Any]:
