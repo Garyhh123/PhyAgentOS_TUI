@@ -1,7 +1,7 @@
 [project]
 name = "PhyAgentOS-ai"
 version = "0.1.7.20260724"
-description = "A lightweight personal AI assistant framework"
+description = "A lightweight personal AI assistant framework with a built-in TUI"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [

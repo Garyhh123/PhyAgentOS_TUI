@@ -106,6 +106,11 @@
   <td><b>Fleet 模式</b></td>
   <td>多机器人协同，shared + per-robot 工作区，优先级串行调度</td>
 </tr>
+<tr>
+  <td>🖥️</td>
+  <td><b>内置 TUI</b></td>
+  <td><code>paos tui</code> — 全屏界面：平铺对话 + 实时状态/日志窗格、Provider 与设置管理、莫兰迪主题</td>
+</tr>
 </table>
 
 ---
@@ -145,7 +150,8 @@ paos onboard
 **启动 Agent**
 
 ```bash
-paos agent
+paos agent    # CLI 对话
+paos tui      # 全屏 TUI
 ```
 </td>
 </tr>

@@ -106,6 +106,11 @@ Traditional "LLM-direct-to-hardware" approaches tightly couple reasoning to exec
   <td><b>Fleet Mode</b></td>
   <td>Multi-robot coordination with shared + per-robot workspaces, priority-based serial scheduling</td>
 </tr>
+<tr>
+  <td>🖥️</td>
+  <td><b>Built-in TUI</b></td>
+  <td><code>paos tui</code> — full-screen interface with tiling chat, live status/logs panes, provider &amp; settings management, and Morandi themes</td>
+</tr>
 </table>
 
 ---
@@ -145,7 +150,8 @@ paos onboard
 **Start Agent**
 
 ```bash
-paos agent
+paos agent    # CLI chat
+paos tui      # full-screen TUI
 ```
 </td>
 </tr>
