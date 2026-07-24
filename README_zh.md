@@ -14,7 +14,10 @@
   <p>
     <img src="https://img.shields.io/badge/Python-≥3.11-3776AB?logo=python&logoColor=white" alt="Python">
     <img src="https://img.shields.io/badge/License-MIT-3DA639" alt="License">
-    <a href="https://sysu-hcp-eai.github.io/PhyAgentOS-website/">
+    <a href="https://arxiv.org/pdf/2607.16636">
+      <img src="https://img.shields.io/badge/📄_技术报告-arXiv-b31b1b?logo=arxiv&logoColor=white" alt="技术报告">
+    </a>
+    <a href="https://phy-agent-os.net/">
       <img src="https://img.shields.io/badge/🌐_Website-online-FF6B35" alt="Website">
     </a>
     <a href="https://github.com/PhyAgentOS/PhyAgentOS">
