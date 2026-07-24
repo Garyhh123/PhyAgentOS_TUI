@@ -273,15 +273,15 @@ PhyAgentOS/
 
 | Document | Audience | Description |
 |:-----|:-----|:-----|
-| [🌐 Website](https://phy-agent-os.net/docs/en/architecture.html) | Everyone | Full docs, architecture details, demos |
-| [📘 User Manual](https://phy-agent-os.net/docs/en/api-reference.html) | Users | Installation, deployment, and operation guide |
-| [📙 Dev Guide](https://phy-agent-os.net/docs/en/developer-guide.html) | Developers | Secondary development, hardware integration, plugin authoring |
+| [🌐 Website](https://phy-agent-os.net/) | Everyone | Full docs, architecture details, demos |
+| [📘 User Manual](https://phy-agent-os.net/docs/api-reference/) | Users | Installation, deployment, and operation guide |
+| [📙 Dev Guide](https://phy-agent-os.net/docs/developer-guide/) | Developers | Secondary development, hardware integration, plugin authoring |
 
 ---
 
 ## 🤝 Contributing
 
-PRs and Issues are welcome! Check our development roadmap here → [Dev Plan](https://phy-agent-os.net/docs/en/developer-guide.html).
+PRs and Issues are welcome! Check our development roadmap here → [Dev Plan](https://phy-agent-os.net/docs/developer-guide/).
 
 ---
 

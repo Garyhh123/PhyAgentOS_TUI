@@ -270,15 +270,15 @@ PhyAgentOS/
 
 | 文档 | 面向 | 说明 |
 |:-----|:-----|:-----|
-| [🌐 项目网站](https://phy-agent-os.net/docs/en/architecture.html) | 所有人 | 完整文档、架构详解、Demo 演示 |
-| [📘 用户手册](https://phy-agent-os.net/docs/en/api-reference.html) | 使用者 | 安装部署、运行操作指南 |
-| [📙 开发指南](https://phy-agent-os.net/docs/en/developer-guide.html) | 开发者 | 二次开发、硬件接入、插件编写 |
+| [🌐 项目网站](https://phy-agent-os.net/) | 所有人 | 完整文档、架构详解、Demo 演示 |
+| [📘 用户手册](https://phy-agent-os.net/docs/api-reference/) | 使用者 | 安装部署、运行操作指南 |
+| [📙 开发指南](https://phy-agent-os.net/docs/developer-guide/) | 开发者 | 二次开发、硬件接入、插件编写 |
 
 ---
 
 ## 🤝 参与贡献
 
-欢迎提交 PR 和 Issue，我们的开发计划可以在此处查看👉 [开发计划](https://phy-agent-os.net/docs/en/developer-guide.html)。
+欢迎提交 PR 和 Issue，我们的开发计划可以在此处查看👉 [开发计划](https://phy-agent-os.net/docs/developer-guide/)。
 
 ---
 
