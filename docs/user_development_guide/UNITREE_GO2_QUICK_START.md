@@ -50,7 +50,7 @@ Unitree Go2（默认 192.168.123.161）
 （即 `/24`）。点对点连接通常不需要网关和 DNS。
 
 <p align="center">
-  <img src="../imgs/unitree_go2/host-static-ip.png" alt="设置主机有线静态 IP" width="443">
+  <img src="../imgs/unitree_go2/host-static-ip.png" alt="设置主机有线静态 IP" width="520">
 </p>
 
 查询有线网卡名称和地址：
@@ -70,7 +70,7 @@ ifconfig
 网卡名。
 
 <p align="center">
-  <img src="../imgs/unitree_go2/verify-network-interface.png" alt="查询有线网卡名称和地址" width="564">
+  <img src="../imgs/unitree_go2/verify-network-interface.png" alt="查询有线网卡名称和地址" width="520">
 </p>
 
 验证主机可以访问机器人：
@@ -163,7 +163,7 @@ paos onboard
 `~/.PhyAgentOS/workspace`。
 
 <p align="center">
-  <img src="../imgs/unitree_go2/agent-config.png" alt="PhyAgentOS 配置文件示例" width="680">
+  <img src="../imgs/unitree_go2/agent-config.png" alt="PhyAgentOS 配置文件示例" width="520">
 </p>
 
 编辑 `~/.PhyAgentOS/config.json`，配置所选模型和对应 Provider 的 API Key，
@@ -194,7 +194,7 @@ paos onboard
 不要把真实 API Key 提交到 Git 仓库或粘贴到公开日志中。
 
 <p align="center">
-  <img src="../imgs/unitree_go2/provider-api-key.png" alt="配置模型 Provider 和 API Key" width="680">
+  <img src="../imgs/unitree_go2/provider-api-key.png" alt="配置模型 Provider 和 API Key" width="520">
 </p>
 
 `runtime.targetEnabled` 的值优先于 `TARGETS.md` 中的 `enabled`，这是推荐的启用
@@ -202,7 +202,7 @@ paos onboard
 `go2_real_builtin.enabled` 改为 `true`：
 
 <p align="center">
-  <img src="../imgs/unitree_go2/enable-go2-target.png" alt="在 TARGETS.md 中启用 Go2 Target" width="680">
+  <img src="../imgs/unitree_go2/enable-go2-target.png" alt="在 TARGETS.md 中启用 Go2 Target" width="520">
 </p>
 
 如果机器人 IP、主机 IP 或网卡名不是默认值，请同步更新工作区文件：
@@ -259,7 +259,7 @@ dry-run 中不会向 Go2 发送 SDK 命令。确认 Agent 能识别
 `go2_real_builtin`、创建 Session 并返回成功后，再进入真机测试。
 
 <p align="center">
-  <img src="../imgs/unitree_go2/go2-connected.png" alt="PhyAgentOS 识别到 Go2 Target" width="301">
+  <img src="../imgs/unitree_go2/go2-connected.png" alt="PhyAgentOS 识别到 Go2 Target" width="520">
 </p>
 
 ## 7. 启动真机

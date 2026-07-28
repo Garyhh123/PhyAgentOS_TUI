@@ -54,7 +54,7 @@ wired IPv4 method to manual, use `192.168.123.222` as the address, and use
 not need a gateway or DNS server.
 
 <p align="center">
-  <img src="../imgs/unitree_go2/host-static-ip.png" alt="Configure the host wired static IP" width="443">
+  <img src="../imgs/unitree_go2/host-static-ip.png" alt="Configure the host wired static IP" width="520">
 </p>
 
 Identify the wired interface and confirm its address:
@@ -74,7 +74,7 @@ Record the interface that owns `192.168.123.222`, such as `enp4s0`. Do not copy
 the example interface name without checking your host.
 
 <p align="center">
-  <img src="../imgs/unitree_go2/verify-network-interface.png" alt="Find the wired interface name and address" width="564">
+  <img src="../imgs/unitree_go2/verify-network-interface.png" alt="Find the wired interface name and address" width="520">
 </p>
 
 Verify that the host can reach the robot:
@@ -168,7 +168,7 @@ This creates `~/.PhyAgentOS/config.json` and the default workspace at
 `~/.PhyAgentOS/workspace`.
 
 <p align="center">
-  <img src="../imgs/unitree_go2/agent-config.png" alt="Example PhyAgentOS configuration file" width="680">
+  <img src="../imgs/unitree_go2/agent-config.png" alt="Example PhyAgentOS configuration file" width="520">
 </p>
 
 Edit `~/.PhyAgentOS/config.json`. Configure the model, the API key under its
@@ -200,7 +200,7 @@ replace the entire file with this fragment.
 Never commit a real API key or paste it into public logs.
 
 <p align="center">
-  <img src="../imgs/unitree_go2/provider-api-key.png" alt="Configure the model provider and API key" width="680">
+  <img src="../imgs/unitree_go2/provider-api-key.png" alt="Configure the model provider and API key" width="520">
 </p>
 
 `runtime.targetEnabled` overrides the `enabled` value in `TARGETS.md` and is the
@@ -208,7 +208,7 @@ recommended way to enable the Target. Alternatively, set
 `go2_real_builtin.enabled` to `true` in the runtime workspace's `TARGETS.md`:
 
 <p align="center">
-  <img src="../imgs/unitree_go2/enable-go2-target.png" alt="Enable the Go2 Target in TARGETS.md" width="680">
+  <img src="../imgs/unitree_go2/enable-go2-target.png" alt="Enable the Go2 Target in TARGETS.md" width="520">
 </p>
 
 If the robot IP, host IP, or interface differs from the default, keep the
@@ -269,7 +269,7 @@ only after the Agent detects `go2_real_builtin`, creates a Session, and reports
 success.
 
 <p align="center">
-  <img src="../imgs/unitree_go2/go2-connected.png" alt="PhyAgentOS detects the Go2 Target" width="301">
+  <img src="../imgs/unitree_go2/go2-connected.png" alt="PhyAgentOS detects the Go2 Target" width="520">
 </p>
 
 ## 7. Start the Physical Robot
