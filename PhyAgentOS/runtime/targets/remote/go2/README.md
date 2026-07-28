@@ -44,7 +44,7 @@ If `pip install -e .` reports that CycloneDDS cannot be located, build
 CycloneDDS and export `CYCLONEDDS_HOME` before reinstalling the SDK:
 
 ```bash
-cd /home/ly/songxinshuai
+cd ..
 git clone https://github.com/eclipse-cyclonedds/cyclonedds -b releases/0.10.x
 cd cyclonedds
 mkdir build install
