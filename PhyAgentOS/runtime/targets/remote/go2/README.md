@@ -34,7 +34,7 @@ pip install "cyclonedds==0.10.2" numpy opencv-python websockets msgpack
 Install Unitree SDK2 Python from source:
 
 ```bash
-cd /home/ly/songxinshuai
+cd ~
 git clone https://github.com/unitreerobotics/unitree_sdk2_python.git
 cd unitree_sdk2_python
 pip install -e .
@@ -52,8 +52,8 @@ cd build
 cmake .. -DCMAKE_INSTALL_PREFIX=../install
 cmake --build . --target install
 
-cd /home/ly/songxinshuai/unitree_sdk2_python
-export CYCLONEDDS_HOME=/home/ly/songxinshuai/cyclonedds/install
+cd ~/unitree_sdk2_python
+export CYCLONEDDS_HOME=~/cyclonedds/install
 pip install -e .
 ```
 
