@@ -26,6 +26,7 @@ class MenuOverlay(Center):
         ("providers", "Providers"),
         ("channels", "Channels"),
         ("settings", "Settings"),
+        ("runtime", "Runtime"),
     ]
 
     class Selected(Message):

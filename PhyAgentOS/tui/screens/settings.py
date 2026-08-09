@@ -36,6 +36,9 @@ class SettingsScreen(Screen):
                 with Vertical(classes="settings-group"):
                     yield Label("Agent Defaults", classes="settings-group-title")
                     with Horizontal(classes="form-row"):
+                        yield Label("Provider:", classes="form-label")
+                        yield Input(id="setting-provider", classes="form-input")
+                    with Horizontal(classes="form-row"):
                         yield Label("Model:", classes="form-label")
                         yield Input(id="setting-model", classes="form-input")
                     with Horizontal(classes="form-row"):
@@ -74,6 +77,7 @@ class SettingsScreen(Screen):
         config = self.app.config
 
         # Agent defaults
+        self.query_one("#setting-provider", Input).value = config.agents.defaults.provider
         self.query_one("#setting-model", Input).value = config.agents.defaults.model
         self.query_one("#setting-temperature", Input).value = str(config.agents.defaults.temperature)
         self.query_one("#setting-max-tokens", Input).value = str(config.agents.defaults.max_tokens)
@@ -113,6 +117,7 @@ class SettingsScreen(Screen):
         config = self.app.config
 
         # Agent defaults
+        config.agents.defaults.provider = self.query_one("#setting-provider", Input).value or "auto"
         config.agents.defaults.model = self.query_one("#setting-model", Input).value
         try:
             config.agents.defaults.temperature = float(self.query_one("#setting-temperature", Input).value)

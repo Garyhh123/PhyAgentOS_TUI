@@ -29,6 +29,7 @@ class PhyAgentOSApp(App):
         Binding("ctrl+2", "switch_screen('providers')", "Providers", show=False),
         Binding("ctrl+3", "switch_screen('channels')", "Channels", show=False),
         Binding("ctrl+4", "switch_screen('settings')", "Settings", show=False),
+        Binding("ctrl+5", "switch_screen('runtime')", "Runtime", show=False),
     ]
 
     def __init__(self, config_path: str | None = None):
@@ -133,6 +134,7 @@ class PhyAgentOSApp(App):
             "providers": self._get_providers_screen,
             "channels": self._get_channels_screen,
             "settings": self._get_settings_screen,
+            "runtime": self._get_runtime_screen,
         }
         factory = screen_map.get(screen_name)
         if factory:
@@ -153,6 +155,10 @@ class PhyAgentOSApp(App):
     def _get_settings_screen(self) -> Screen:
         from PhyAgentOS.tui.screens.settings import SettingsScreen
         return SettingsScreen()
+
+    def _get_runtime_screen(self) -> Screen:
+        from PhyAgentOS.tui.screens.runtime import RuntimeDashboardScreen
+        return RuntimeDashboardScreen()
 
     async def on_unmount(self) -> None:
         if self._gateway_service is not None:

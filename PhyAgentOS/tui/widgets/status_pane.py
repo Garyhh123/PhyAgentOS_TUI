@@ -16,7 +16,10 @@ class StatusPane(Static):
         if gateway is None:
             gw_status = "not initialized"
         elif gateway.error:
-            gw_status = "error"
+            detail = str(gateway.error).strip().replace("\n", " ")
+            if len(detail) > 96:
+                detail = detail[:93] + "..."
+            gw_status = f"error: {detail}"
         elif gateway.is_running:
             gw_status = "running"
         else:
