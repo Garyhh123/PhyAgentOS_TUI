@@ -244,13 +244,13 @@ MenuOverlay {
 
 /* Providers Screen */
 #provider-list-container {
-    width: 32;
+    width: 58;
     border-right: solid $boost;
 }
 
 #provider-form-container {
     width: 1fr;
-    padding: 0 2;
+    padding: 0 1;
 }
 
 #provider-form {
