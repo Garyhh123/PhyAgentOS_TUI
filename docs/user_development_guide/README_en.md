@@ -1,6 +1,6 @@
 # PhyAgentOS Integration Development Guide
 
-> Version: 0.1.4.post4 · [中文](README.md)
+> Version: 0.2.0 · [中文](README.md)
 
 This guide is for integrators of Forge Gateway, robot capabilities, evidence sources, LLM providers, and PAOS Agent tools. Robot execution now enters only through Forge Gateway 1.0.0. PAOS no longer exposes Target, Policy, SkillRuntime, or SessionRunner extension points.
 

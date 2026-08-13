@@ -1,6 +1,6 @@
 # PhyAgentOS Framework Introduction
 
-> Documentation version: 0.1.4.post4 · implementation baseline: Forge-only source on 2026-08-03. This document calls a behavior current only when source, configuration schemas, and tests support it.
+> Documentation version: 0.2.0 · implementation baseline: Forge-only source on 2026-08-03. This document calls a behavior current only when source, configuration schemas, and tests support it.
 
 ## 1. Positioning
 

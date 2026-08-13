@@ -1,6 +1,6 @@
 # PhyAgentOS User Manual
 
-> Documentation version: 0.1.4.post4. This manual covers the current Forge-only execution path. PhyAgentOS no longer provides the legacy Runtime, Watchdog, or Markdown Session queue.
+> Documentation version: 0.2.0. This manual covers the current Forge-only execution path. PhyAgentOS no longer provides the legacy Runtime, Watchdog, or Markdown Session queue.
 
 ## 1. Requirements and installation
 

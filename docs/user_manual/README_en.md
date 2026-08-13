@@ -1,6 +1,6 @@
 # PhyAgentOS Operations Manual
 
-> Version: 0.1.4.post4 · [中文](README.md)
+> Version: 0.2.0 · [中文](README.md)
 
 This manual is for deployment, demonstrations, and operations. It focuses on running the Forge execution–evidence–verification–recovery loop reliably. See the [User Manual](../en/02-user-manual.md) for installation and task authoring, and the [Configuration Reference](../en/04-forge-configuration-reference.md) for exact parameters.
 

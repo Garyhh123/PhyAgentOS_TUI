@@ -1,6 +1,6 @@
 # PhyAgentOS Developer Manual
 
-> Documentation version: 0.1.4.post4. This manual is for PAOS, Forge Gateway, evidence, verifier, and Agent-tool developers.
+> Documentation version: 0.2.0. This manual is for PAOS, Forge Gateway, evidence, verifier, and Agent-tool developers.
 
 ## 1. Development principles
 

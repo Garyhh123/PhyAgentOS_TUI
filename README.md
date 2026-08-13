@@ -13,7 +13,7 @@
   </p>
   <p>
     <img src="https://img.shields.io/badge/Python-≥3.11-3776AB?logo=python&logoColor=white" alt="Python">
-    <img src="https://img.shields.io/badge/Version-v2.0.0-47A882" alt="Version">
+    <img src="https://img.shields.io/badge/Version-v0.2.0-47A882" alt="Version">
     <img src="https://img.shields.io/badge/License-MIT-3DA639" alt="License">
     <a href="https://arxiv.org/pdf/2607.16636">
       <img src="https://img.shields.io/badge/Tech_Report-arXiv-b31b1b?logo=arxiv&logoColor=white" alt="Tech Report">
@@ -34,13 +34,11 @@
 
 PhyAgentOS is an agent framework for embodied tasks. The Agent plans a high-level action, the Forge adapter records what the Gateway executed, the observation collector captures before/after evidence, and the task-level verifier decides whether the user-visible goal was actually achieved.
 
-> **The central rule:** Gateway `succeeded` is an execution fact, not proof of task success. Semantic success is determined by the task verification policy.
-
 ## 📢 Changelog
 
 | Version | Date | Update |
 |:--------|:-----|:-------|
-| ![v2.0.0](https://img.shields.io/badge/v2.0.0-47A882) | 2026-08-03 | Introduced the Forge execution architecture with Forge Gateway 1.0.0, immutable execution and evidence contracts, system-level semantic verification, Planner-owned recovery, crash-safe SQLite orchestration, and complete removal of the legacy Runtime execution chain. |
+| ![v0.2.0](https://img.shields.io/badge/v0.2.0-47A882) | 2026-08-03 | Introduced the Forge execution architecture with Forge Gateway 1.0.0, immutable execution and evidence contracts, system-level semantic verification, Planner-owned recovery, crash-safe SQLite orchestration, and complete removal of the legacy Runtime execution chain. |
 | ![v0.1.7](https://img.shields.io/badge/v0.1.7-47A882) | 2026-07-05 | Added benchmarking for policy-loop and target-native builtin paths, plus the Agent verification and failure-recovery service. |
 | ![v0.1.6](https://img.shields.io/badge/v0.1.6-47A882) | 2026-06-27 | Added BEHAVIOR-1K support, `SessionVerifier`, and the explicit session-verification tool. |
 | ![v0.1.5](https://img.shields.io/badge/v0.1.5-47A882) | 2026-06-11 | Cleaned protocol files and documentation, moved game scenarios to the `general-game-agent` branch, and focused the main line on simulation and real-robot work. |
@@ -249,15 +247,6 @@ These tools are registered only when `forge.enabled` is true.
 
 `EMBODIED.md`, `ENVIRONMENT.md`, and SceneGraph remain knowledge surfaces. They are not execution queues. PAOS no longer reads or generates the former Runtime Markdown queue files.
 
-## Supported scope
-
-- One PAOS process configures one Forge Gateway endpoint.
-- One root task lineage owns the serialized execution slot until verification or recovery terminates.
-- One Forge session represents one high-level Gateway action; the Planner decomposes longer tasks.
-- Gateway, Forge Runtime, Dora dataflows, policy internals, and hardware drivers remain outside this repository.
-- Gateway 1.0.0 evidence correlation is `best_effort`; PAOS does not fabricate authoritative timestamps or causality.
-- Legacy PAOS Runtime, Target, SkillRuntime, Watchdog, SessionRunner, and Markdown execution queue compatibility is intentionally removed.
-
 ## Project structure
 
 ```text
@@ -268,9 +257,7 @@ PhyAgentOS/
 ├── PhyAgentOS/channels/       # Messaging channels
 ├── PhyAgentOS/config/         # Configuration schema and loading
 ├── PhyAgentOS/templates/      # Agent knowledge/workspace templates
-├── docs/                      # English, Chinese, operations, integration, Forge docs
-├── plan/                      # Historical design and review reports
-└── tests/                     # Contract, store, Gateway, evidence, verifier, E2E tests
+└── docs/                      # English, Chinese, operations, integration, Forge docs
 ```
 
 ## Documentation

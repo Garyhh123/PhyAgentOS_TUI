@@ -1,6 +1,6 @@
 # PhyAgentOS 集成开发指南
 
-> 版本：0.1.4.post4 · [English](README_en.md)
+> 版本：0.2.0 · [English](README_en.md)
 
 本指南面向 Forge Gateway、机器人能力、证据源、LLM Provider 和 PAOS Agent 工具的集成开发者。当前机器人执行只通过 Forge Gateway 1.0.0；PAOS 不再内置 Target/Policy/SkillRuntime/SessionRunner 扩展点。
 

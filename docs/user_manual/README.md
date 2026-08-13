@@ -1,6 +1,6 @@
 # PhyAgentOS 运行手册
 
-> 版本：0.1.4.post4 · [English](README_en.md)
+> 版本：0.2.0 · [English](README_en.md)
 
 本手册面向部署、演示和运行维护人员，聚焦“如何稳定运行 Forge 执行—证据—验证—恢复闭环”。安装与任务写法见[用户手册](../zh/02-user-manual.md)，精确参数见[配置参考](../zh/04-forge-configuration-reference.md)。
 

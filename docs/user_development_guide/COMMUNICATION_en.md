@@ -1,6 +1,6 @@
 # PhyAgentOS Communication Architecture
 
-> Version: 0.1.4.post4 · [中文](COMMUNICATION.md)
+> Version: 0.2.0 · [中文](COMMUNICATION.md)
 
 ## 1. Five communication boundaries
 

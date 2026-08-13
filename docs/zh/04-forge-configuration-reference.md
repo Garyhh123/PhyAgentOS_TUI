@@ -1,6 +1,6 @@
 # Forge 配置参考
 
-> 适用于 PhyAgentOS 0.1.4.post4 与 Forge Gateway API `paos-forge-gateway-mvp-plus.v1`。
+> 适用于 PhyAgentOS 0.2.0 与 Forge Gateway API `paos-forge-gateway-mvp-plus.v1`。
 
 ## 1. 配置位置与命名
 

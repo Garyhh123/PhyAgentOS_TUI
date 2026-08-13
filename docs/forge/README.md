@@ -1,6 +1,6 @@
 # Forge Integration Contract
 
-> PhyAgentOS 0.1.4.post4 · Forge Gateway 1.0.0 · API `paos-forge-gateway-mvp-plus.v1` · [中文](README_zh.md)
+> PhyAgentOS 0.2.0 · Forge Gateway 1.0.0 · API `paos-forge-gateway-mvp-plus.v1` · [中文](README_zh.md)
 
 This document is the technical contract for the only robot-execution path supported by PhyAgentOS. Gateway, Forge Runtime, Dora dataflows, policies, and hardware integrations remain external and are not modified by PAOS.
 

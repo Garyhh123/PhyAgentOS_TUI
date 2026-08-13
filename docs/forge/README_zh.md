@@ -1,6 +1,6 @@
 # Forge 接入契约
 
-> PhyAgentOS 0.1.4.post4 · Forge Gateway 1.0.0 · API `paos-forge-gateway-mvp-plus.v1` · [English](README.md)
+> PhyAgentOS 0.2.0 · Forge Gateway 1.0.0 · API `paos-forge-gateway-mvp-plus.v1` · [English](README.md)
 
 本文是 PhyAgentOS 唯一机器人执行链的技术契约。Gateway、Forge Runtime、Dora dataflow、策略与硬件集成位于 PAOS 外部，不由 PAOS 修改。
 

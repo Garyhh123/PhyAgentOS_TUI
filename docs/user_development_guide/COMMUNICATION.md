@@ -1,6 +1,6 @@
 # PhyAgentOS 通信架构
 
-> 版本：0.1.4.post4 · [English](COMMUNICATION_en.md)
+> 版本：0.2.0 · [English](COMMUNICATION_en.md)
 
 ## 1. 五个通信边界
 

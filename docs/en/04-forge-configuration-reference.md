@@ -1,6 +1,6 @@
 # Forge Configuration Reference
 
-> Applies to PhyAgentOS 0.1.4.post4 and Forge Gateway API `paos-forge-gateway-mvp-plus.v1`.
+> Applies to PhyAgentOS 0.2.0 and Forge Gateway API `paos-forge-gateway-mvp-plus.v1`.
 
 ## 1. Location and naming
 

@@ -13,7 +13,7 @@
   </p>
   <p>
     <img src="https://img.shields.io/badge/Python-≥3.11-3776AB?logo=python&logoColor=white" alt="Python">
-    <img src="https://img.shields.io/badge/Version-v2.0.0-47A882" alt="Version">
+    <img src="https://img.shields.io/badge/Version-v0.2.0-47A882" alt="Version">
     <img src="https://img.shields.io/badge/License-MIT-3DA639" alt="License">
     <a href="https://arxiv.org/pdf/2607.16636">
       <img src="https://img.shields.io/badge/技术报告-arXiv-b31b1b?logo=arxiv&logoColor=white" alt="技术报告">
@@ -34,13 +34,11 @@
 
 PhyAgentOS 是一个面向具身任务的 Agent 框架。Agent 规划高层动作，Forge Adapter 记录 Gateway 的执行事实，观测采集器保存动作前后证据，任务级 Verifier 再判断用户目标是否真正达成。
 
-> **核心规则：** Gateway 的 `succeeded` 是动作执行事实，不是任务成功证明。任务语义是否成功由 verification policy 决定。
-
 ## 📢 更新日志
 
 | 版本 | 日期 | 更新内容 |
 |:-----|:-----|:---------|
-| ![v2.0.0](https://img.shields.io/badge/v2.0.0-47A882) | 2026-08-03 | 引入 Forge 执行架构，全面对接 Forge Gateway 1.0.0；新增不可变 Execution/Evidence 公共契约、系统级语义验证、Planner 主导的恢复、崩溃安全 SQLite 编排，并彻底移除旧 Runtime 执行链。 |
+| ![v0.2.0](https://img.shields.io/badge/v0.2.0-47A882) | 2026-08-03 | 引入 Forge 执行架构，全面对接 Forge Gateway 1.0.0；新增不可变 Execution/Evidence 公共契约、系统级语义验证、Planner 主导的恢复、崩溃安全 SQLite 编排，并彻底移除旧 Runtime 执行链。 |
 | ![v0.1.7](https://img.shields.io/badge/v0.1.7-47A882) | 2026-07-05 | 支持 Policy loop 与 Target-native builtin 两条 Benchmark 路径，并加入 Agent 验证与失败恢复服务。 |
 | ![v0.1.6](https://img.shields.io/badge/v0.1.6-47A882) | 2026-06-27 | 增加 BEHAVIOR-1K 支持、`SessionVerifier` 与显式 Session 验证工具。 |
 | ![v0.1.5](https://img.shields.io/badge/v0.1.5-47A882) | 2026-06-11 | 清理协议文件与文档，将游戏场景迁移到 `general-game-agent` 分支，主线聚焦仿真与真机工作。 |
@@ -249,15 +247,6 @@ paos gateway
 
 `EMBODIED.md`、`ENVIRONMENT.md` 和 SceneGraph 继续作为知识面存在，但不承担执行队列职责。PAOS 不再读取或生成旧 Runtime Markdown queue 文件。
 
-## 支持范围
-
-- 一个 PAOS 进程只配置一个 Forge Gateway endpoint。
-- 一个 root task lineage 在验证或恢复终结前独占串行执行槽。
-- 一个 Forge session 对应一个高层 Gateway action；长任务由 Planner 拆分。
-- Gateway、Forge Runtime、Dora dataflow、策略内部和硬件驱动不属于本仓库修改范围。
-- Gateway 1.0.0 的证据关联为 `best_effort`；PAOS 不伪造 authoritative 时间或因果关系。
-- 旧 PAOS Runtime、Target、SkillRuntime、Watchdog、SessionRunner 和 Markdown 执行队列兼容性已明确移除。
-
 ## 项目结构
 
 ```text
@@ -268,9 +257,7 @@ PhyAgentOS/
 ├── PhyAgentOS/channels/       # 消息渠道
 ├── PhyAgentOS/config/         # 配置 Schema 与加载
 ├── PhyAgentOS/templates/      # Agent 知识/工作区模板
-├── docs/                      # 中英文、运维、接入与 Forge 文档
-├── plan/                      # 历史设计与评审报告
-└── tests/                     # 契约、Store、Gateway、证据、Verifier、E2E 测试
+└── docs/                      # 中英文、运维、接入与 Forge 文档
 ```
 
 ## 文档

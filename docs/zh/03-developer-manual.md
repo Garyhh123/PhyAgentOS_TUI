@@ -1,6 +1,6 @@
 # PhyAgentOS 开发者手册
 
-> 文档版本：0.1.4.post4。本文面向 PAOS、Forge Gateway、Evidence、Verifier 与 Agent 工具开发者。
+> 文档版本：0.2.0。本文面向 PAOS、Forge Gateway、Evidence、Verifier 与 Agent 工具开发者。
 
 ## 1. 开发原则
 

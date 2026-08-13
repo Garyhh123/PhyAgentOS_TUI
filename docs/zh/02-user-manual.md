@@ -1,6 +1,6 @@
 # PhyAgentOS 用户手册
 
-> 文档版本：0.1.4.post4。本文描述当前 Forge-only 执行链。PhyAgentOS 不再提供旧 Runtime、Watchdog 或 Markdown Session queue。
+> 文档版本：0.2.0。本文描述当前 Forge-only 执行链。PhyAgentOS 不再提供旧 Runtime、Watchdog 或 Markdown Session queue。
 
 ## 1. 环境与安装
 
