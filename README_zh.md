@@ -38,7 +38,7 @@ PhyAgentOS 是一个面向具身任务的 Agent 框架。Agent 规划高层动�
 
 | 版本 | 日期 | 更新内容 |
 |:-----|:-----|:---------|
-| ![v0.2.1](https://img.shields.io/badge/v0.2.1-47A882) | 2026-08-14 | 增加经验证的任务经验、显式工作流 Skill 激活、受控 Skill 自进化，以及具有独立支持计数与抽象校验的聚类式作用域 Lesson。 |
+| ![v0.2.1](https://img.shields.io/badge/v0.2.1-47A882) | 2026-08-14 | 增加经验证的任务经验、显式工作流 Skill 激活、受控 Skill 自进化、聚类式作用域 Lesson，以及用于语义验证的 Skill 作用域建议上下文。 |
 | ![v0.2.0](https://img.shields.io/badge/v0.2.0-47A882) | 2026-08-03 | 引入 Forge 执行架构，全面对接 Forge Gateway 1.0.0；新增不可变 Execution/Evidence 公共契约、系统级语义验证、Planner 主导的恢复、崩溃安全 SQLite 编排，并彻底移除旧 Runtime 执行链。 |
 | ![v0.1.7](https://img.shields.io/badge/v0.1.7-47A882) | 2026-07-05 | 支持 Policy loop 与 Target-native builtin 两条 Benchmark 路径，并加入 Agent 验证与失败恢复服务。 |
 | ![v0.1.6](https://img.shields.io/badge/v0.1.6-47A882) | 2026-06-27 | 增加 BEHAVIOR-1K 支持、`SessionVerifier` 与显式 Session 验证工具。 |
@@ -54,7 +54,7 @@ PhyAgentOS 是一个面向具身任务的 Agent 框架。Agent 规划高层动�
 <table>
 <tr><td width="32">🧭</td><td width="190"><b>唯一执行边界</b></td><td>机器人动作统一进入版本化 Forge Gateway 契约；Agent 不直接访问策略、仿真器、Dora 节点或硬件 SDK。</td></tr>
 <tr><td>🔎</td><td><b>先证据，后结论</b></td><td>命令前后的图像与可选机器人状态经过校验后落盘，保留 source、sequence、时间、大小、摘要和 retention 信息。</td></tr>
-<tr><td>🧠</td><td><b>动作无关验证</b></td><td>Verifier 只接收 goal、criteria、constraints、执行事实、证据、lineage history 与 lessons，不设计动作专用开关。</td></tr>
+<tr><td>🧠</td><td><b>动作无关验证</b></td><td>Verifier 接收 goal、criteria、constraints、执行事实、证据、lineage history 与可选的 Skill 作用域建议，不设计动作专用开关；建议不能替代 criteria 或证据。</td></tr>
 <tr><td>🧱</td><td><b>崩溃安全编排</b></td><td>SQLite 事务持久化身份、状态与 dispatch intent。已尝试派发的任务在重启后只查询，不盲目重发 POST。</td></tr>
 <tr><td>🔄</td><td><b>Planner 主导恢复</b></td><td>恢复判定只产生不可执行的上下文；正常 Planner 必须用全新 session/command ID 创建 child action。</td></tr>
 <tr><td>📚</td><td><b>作用域经验</b></td><td>经过验证的 root lineage 支持可复用工作流 Skill 和聚类 Lesson；无关失败只保留诊断，学习到的指导仅随匹配 Skill 动态加载。</td></tr>
@@ -258,6 +258,8 @@ paos gateway
 - 语义成功支持 Skill candidate；默认三个独立成功 root lineage 后，才可晋升经过校验的 workspace Skill revision；
 - `inconclusive`、非法 verdict、review-only 和 `verification=off` 不训练 Skill。
 
+已激活 Skill 返回的适用 active Lesson 会随 root task binding 冻结。自动验证、recovery child 验证和后续 review 都使用同一组作用域 Lesson，并且只把它们作为工作流建议。每个 criterion 状态与整体 verdict 都必须依据任务契约、执行事实和合法证据；Lesson 不能证明 criterion，也不能作为 evidence reference。没有激活 Skill 时，不向 Verifier 提供学习型 Lesson。
+
 演化链路 fail-open，不改变 Forge 的提交、执行、证据、验证与恢复流程。Built-in Skill 不会原地修改；晋升结果写为 workspace override，旧版本保存在 `.paos/evolution/`。
 
 ## 持久化与工作区
@@ -279,7 +281,7 @@ paos gateway
     └── evidence/
 ```
 
-`EMBODIED.md`、`ENVIRONMENT.md` 和 SceneGraph 继续作为知识面存在，但不承担执行队列职责。启用 evolution 后，根目录 `LESSONS.md` 作为旧版/人工材料保留，但不再注入每个 Agent turn；学习型 Lesson 以经验数据库为事实源。PAOS 不再读取或生成旧 Runtime Markdown queue 文件。
+`EMBODIED.md`、`ENVIRONMENT.md` 和 SceneGraph 继续作为知识面存在，但不承担执行队列职责。启用 evolution 后，根目录 `LESSONS.md` 作为旧版/人工材料保留，但不再注入 Agent turn，也不进入 Forge 验证；只有当前任务已激活 Skill 冻结的 active scoped Lesson 可以作为非权威建议随验证请求传入。学习型 Lesson 以经验数据库为事实源。PAOS 不再读取或生成旧 Runtime Markdown queue 文件。
 
 ## 项目结构
 

@@ -164,7 +164,7 @@ The Agent workspace retains:
 - `skills/<name>/references/LESSONS.md` for human-readable projections of Skill-bound experience;
 - `TASK.md` for multi-step planning state.
 
-These files never dispatch execution. With evolution enabled, root `LESSONS.md` is not injected into every Agent turn. Only active, task-relevant scoped Lessons are returned by `activate_skill`; the experience database remains the source of truth. `AGENTS.md` and `EMBODIED.md` remain operator-controlled safety surfaces and are never rewritten by evolution. The `embodiments` configuration describes knowledge-workspace topology; it does not create additional Gateways or hardware drivers.
+These files never dispatch execution. With evolution enabled, root `LESSONS.md` is not injected into Agent turns or Forge verification. Only active, task-relevant scoped Lessons are returned by `activate_skill`; the set frozen with a root task may accompany its verification as non-authoritative advice, never as proof or evidence. The experience database remains the source of truth. `AGENTS.md` and `EMBODIED.md` remain operator-controlled safety surfaces and are never rewritten by evolution. The `embodiments` configuration describes knowledge-workspace topology; it does not create additional Gateways or hardware drivers.
 
 ## 10. Implemented scope
 

@@ -74,7 +74,7 @@ Verification Service 启动 readiness 等待为有界操作。服务启动失败
 | `model` | string/null | `null` | null 时继承 verification model，再回退到 Agent 默认模型。 |
 | `provider` | string/null | `null` | null 时继承 verification provider，再按 model 自动匹配。 |
 
-启用后，根目录旧 `LESSONS.md` 保留但不再全局注入；Skill 相关 lesson 按需从经验账本加载，并投影到 `skills/<name>/references/LESSONS.md`。与工作流无关的失败仅记录诊断，相关失败经过归一化和聚类后才能激活。门槛按不同 Forge root lineage 计数，不把 recovery child、review、重复 event 或 replay 作为独立支持。
+启用后，根目录旧 `LESSONS.md` 保留，但不再全局注入，也不进入 Forge 验证。Skill 相关 lesson 按需从经验账本加载，并投影到 `skills/<name>/references/LESSONS.md`。显式 Skill 激活返回的适用 active 集合会随 root task 冻结，只作为非权威建议提供给自动验证、recovery child 与 review；它不能确定 criterion 或替代证据，没有激活 Skill 的任务不提供学习型 Lesson。与工作流无关的失败仅记录诊断，相关失败经过归一化和聚类后才能激活。门槛按不同 Forge root lineage 计数，不把 recovery child、review、重复 event 或 replay 作为独立支持。
 
 Evolution model/provider 独立于 verifier call budget 解析：
 
@@ -88,7 +88,7 @@ agents.evolution.provider
   → 按选定 model 推断 provider
 ```
 
-`enabled=false` 会移除 `activate_skill`，恢复根目录 `LESSONS.md` 的普通 Agent 上下文和 Verifier 旧版 Lesson 追加行为，但不会修改或删除已有经验数据库、Skill sidecar 或 revision archive。
+`enabled=false` 会移除 `activate_skill`，恢复根目录 `LESSONS.md` 的普通 Agent/Verifier 上下文和 Verifier 旧版 Lesson 追加行为，但不会修改或删除已有经验数据库、Skill sidecar 或 revision archive。
 
 ## 6. `ForgeTaskRequest`
 

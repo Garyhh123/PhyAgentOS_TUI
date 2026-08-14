@@ -200,7 +200,7 @@ evidence_bundle.json
 evidence/*
 ```
 
-Verifier 写 `verification_result.json`。关闭 evolution 时还可追加旧版根目录 `LESSONS.md`；启用时，原始 verifier Lesson 文本只作为反思输入，由经验账本生成 Skill 绑定投影。Artifact URI 必须相对 workspace，读取时再次 resolve 并检查不越界。
+Verifier 写 `verification_result.json`。关闭 evolution 时可以读取并追加旧版根目录 `LESSONS.md`。启用时不再读取该文件：自动验证与 review 只接收 root task 显式 Skill activation 冻结的 active scoped Lesson；未绑定任务接收空集合。这些内容只是非权威建议，不能替代 criteria、执行事实或证据。原始 verifier Lesson 文本只作为反思输入，由经验账本生成 Skill 绑定投影。Artifact URI 必须相对 workspace，读取时再次 resolve 并检查不越界。
 
 ### 一致性边界
 

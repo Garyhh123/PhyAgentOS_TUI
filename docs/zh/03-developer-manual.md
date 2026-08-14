@@ -237,10 +237,11 @@ Prompt 只包含：
 - immutable Execution Record；
 - Evidence Bundle 与实体；
 - root lineage history；
-- 存在时的旧版/人工根目录 Lessons；
+- 启用 evolution 时，root task 显式 Skill activation 冻结的 active scoped Lessons；
+- 其他情况下存在的旧版/人工根目录 Lessons；
 - 合法 evidence IDs。
 
-非法服务输出会被规范为 `inconclusive`，随后公共模型和 exact-criteria validator 继续校验。`audit` 记录错误；`enforce`/`recovery` fail closed。Verdict 的 `lesson` 字段只作为反思输入；启用 evolution 时，Verifier 不再把它直接追加到根目录 `LESSONS.md`。
+Scoped Lesson 是不可信、非权威的工作流建议。Service prompt 禁止用它确定 criterion 状态、替代任务契约或证据，以及填充 evidence reference。Evolution 模式的自动验证与 review 都不读取根目录 `LESSONS.md`；未绑定 Skill 的任务收到空 Lesson 集合。非法服务输出会被规范为 `inconclusive`，随后公共模型和 exact-criteria validator 继续校验。`audit` 记录错误；`enforce`/`recovery` fail closed。Verdict 的 `lesson` 字段只作为反思输入；启用 evolution 时，Verifier 不再把它直接追加到根目录 `LESSONS.md`。
 
 ## 9. Recovery
 

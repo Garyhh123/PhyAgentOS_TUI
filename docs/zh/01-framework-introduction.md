@@ -166,7 +166,7 @@ Agent 工作区仍保留：
 - `skills/<name>/references/LESSONS.md`：Skill 绑定经验的人类可读投影视图；
 - `TASK.md`：多步骤任务规划状态。
 
-这些文件都不触发执行。启用 evolution 后，根目录 `LESSONS.md` 不再注入每个 Agent turn；只有 active 且与当前任务相关的 scoped Lesson 才由 `activate_skill` 返回，经验数据库始终是事实源。`AGENTS.md` 与 `EMBODIED.md` 继续由 operator 控制，演化链不会改写其中的安全约束。`embodiments` 配置描述知识工作区拓扑，也不会创建额外 Gateway 或硬件 driver。
+这些文件都不触发执行。启用 evolution 后，根目录 `LESSONS.md` 不再注入 Agent turn，也不进入 Forge 验证；只有 active 且与当前任务相关的 scoped Lesson 才由 `activate_skill` 返回，随 root task 冻结的集合可以作为非权威建议进入验证，但不能充当结论或证据。经验数据库始终是事实源。`AGENTS.md` 与 `EMBODIED.md` 继续由 operator 控制，演化链不会改写其中的安全约束。`embodiments` 配置描述知识工作区拓扑，也不会创建额外 Gateway 或硬件 driver。
 
 ## 10. 当前实现范围
 

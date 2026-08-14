@@ -77,17 +77,20 @@ class ForgeExecuteTaskTool(Tool):
                 else self.orchestrator.config.execution_timeout_s
             ),
         )
+        def bind_task(record) -> None:
+            if self.experience is not None:
+                self.experience.bind_forge_task(
+                    record.root_session_id,
+                    session_key=self.session_key or f"{self.channel}:{self.chat_id}",
+                )
+
         record = await self.orchestrator.submit(
             request,
             channel=self.channel,
             chat_id=self.chat_id,
             session_key=self.session_key,
+            on_created=bind_task if self.experience is not None else None,
         )
-        if self.experience is not None:
-            self.experience.bind_forge_task(
-                record.root_session_id,
-                session_key=self.session_key or f"{self.channel}:{self.chat_id}",
-            )
         return _json(
             {
                 "ok": True,

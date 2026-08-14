@@ -200,7 +200,7 @@ evidence_bundle.json
 evidence/*
 ```
 
-Verifier writes `verification_result.json`. When evolution is disabled it may also append the legacy root `LESSONS.md`; when enabled, raw verifier Lesson text is reflection input only and the experience ledger generates Skill-bound projections. Artifact URIs are relative to the workspace and are resolved and checked again on read.
+Verifier writes `verification_result.json`. When evolution is disabled it may read and append the legacy root `LESSONS.md`. When enabled, it never reads that file: automatic verification and review receive only the active scoped Lessons frozen from the root task's explicit Skill activations, or an empty set for an unbound task. This context is non-authoritative advice and cannot replace criteria, execution facts, or evidence. Raw verifier Lesson text is reflection input only, and the experience ledger generates Skill-bound projections. Artifact URIs are relative to the workspace and are resolved and checked again on read.
 
 ### Consistency boundary
 

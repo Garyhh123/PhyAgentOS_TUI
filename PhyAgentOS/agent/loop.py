@@ -89,6 +89,12 @@ class AgentLoop:
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
         self.forge_orchestrator = forge_orchestrator
+        if (
+            self.forge_orchestrator is not None
+            and evolution_config is not None
+            and evolution_config.enabled
+        ):
+            self.forge_orchestrator.set_legacy_lessons_enabled(False)
 
         self.experience = None
         if evolution_config is not None and evolution_config.enabled:
@@ -123,6 +129,10 @@ class AgentLoop:
             ),
             evolution_enabled=self.experience is not None,
         )
+        if self.forge_orchestrator is not None and self.experience is not None:
+            self.forge_orchestrator.set_verification_lessons_provider(
+                self.experience.verification_lessons_for_root
+            )
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
         self.embodiment_registry = embodiment_registry

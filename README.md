@@ -38,7 +38,7 @@ PhyAgentOS is an agent framework for embodied tasks. The Agent plans a high-leve
 
 | Version | Date | Update |
 |:--------|:-----|:-------|
-| ![v0.2.1](https://img.shields.io/badge/v0.2.1-47A882) | 2026-08-14 | Added verified task experience, explicit workflow Skill activation, guarded Skill evolution, and clustered, scope-aware Lessons with independent-support and abstraction checks. |
+| ![v0.2.1](https://img.shields.io/badge/v0.2.1-47A882) | 2026-08-14 | Added verified task experience, explicit workflow Skill activation, guarded Skill evolution, clustered scope-aware Lessons, and Skill-scoped advisory context for semantic verification. |
 | ![v0.2.0](https://img.shields.io/badge/v0.2.0-47A882) | 2026-08-03 | Introduced the Forge execution architecture with Forge Gateway 1.0.0, immutable execution and evidence contracts, system-level semantic verification, Planner-owned recovery, crash-safe SQLite orchestration, and complete removal of the legacy Runtime execution chain. |
 | ![v0.1.7](https://img.shields.io/badge/v0.1.7-47A882) | 2026-07-05 | Added benchmarking for policy-loop and target-native builtin paths, plus the Agent verification and failure-recovery service. |
 | ![v0.1.6](https://img.shields.io/badge/v0.1.6-47A882) | 2026-06-27 | Added BEHAVIOR-1K support, `SessionVerifier`, and the explicit session-verification tool. |
@@ -54,7 +54,7 @@ PhyAgentOS is an agent framework for embodied tasks. The Agent plans a high-leve
 <table>
 <tr><td width="32">🧭</td><td width="190"><b>One execution boundary</b></td><td>Robot actions enter through one versioned Forge Gateway contract; the Agent never reaches into a policy, simulator, Dora node, or hardware SDK.</td></tr>
 <tr><td>🔎</td><td><b>Evidence before verdict</b></td><td>Validated images and optional robot state are captured around the command and stored with source, sequence, time, size, digest, and retention metadata.</td></tr>
-<tr><td>🧠</td><td><b>Action-agnostic verification</b></td><td>The verifier receives the goal, criteria, constraints, execution facts, evidence, lineage history, and lessons—never an action-specific verification switch.</td></tr>
+<tr><td>🧠</td><td><b>Action-agnostic verification</b></td><td>The verifier receives the goal, criteria, constraints, execution facts, evidence, lineage history, and optional Skill-scoped advisories—never an action-specific verification switch. Advisories cannot replace criteria or evidence.</td></tr>
 <tr><td>🧱</td><td><b>Crash-safe orchestration</b></td><td>SQLite transactions persist identity, state transitions, and dispatch intent before mutation. A restart queries an attempted session and never blindly repeats POST.</td></tr>
 <tr><td>🔄</td><td><b>Planner-owned recovery</b></td><td>A recovery verdict produces non-executable context. The normal Planner must create a fresh child action with new session and command IDs.</td></tr>
 <tr><td>📚</td><td><b>Scoped experience</b></td><td>Verified root lineages support reusable workflow Skills and clustered Lessons; unrelated failures remain diagnostics and learned guidance is loaded only with the matching Skill.</td></tr>
@@ -265,6 +265,12 @@ asynchronously:
 - three independent successful root lineages promote a validated workspace Skill revision;
 - inconclusive, invalid, review-only, and `verification=off` outcomes never train a Skill.
 
+The applicable active Lessons returned by activated Skills are frozen with the root-task binding.
+Automatic verification, recovery-child verification, and later review use that same scoped set as
+advisory workflow context. The verifier must ground every criterion and verdict in the task
+contract, execution facts, and valid evidence; a Lesson cannot satisfy a criterion or serve as an
+evidence reference. If no Skill was activated, no learned Lesson is supplied.
+
 Evolution is fail-open and does not change Forge submission, execution, evidence, verification,
 or recovery. Built-in Skills remain immutable; promoted changes are written as workspace overrides
 with revision history under `.paos/evolution/`.
@@ -288,7 +294,7 @@ with revision history under `.paos/evolution/`.
     └── evidence/
 ```
 
-`EMBODIED.md`, `ENVIRONMENT.md`, and SceneGraph remain knowledge surfaces. They are not execution queues. With evolution enabled, the root `LESSONS.md` is retained as legacy/human-authored material but is not injected into every Agent turn; the experience database is authoritative for learned Lessons. PAOS no longer reads or generates the former Runtime Markdown queue files.
+`EMBODIED.md`, `ENVIRONMENT.md`, and SceneGraph remain knowledge surfaces. They are not execution queues. With evolution enabled, the root `LESSONS.md` is retained as legacy/human-authored material but is not injected into Agent turns or Forge verification; only the activated task's frozen active scoped Lessons may accompany verification as non-authoritative advice. The experience database is authoritative for learned Lessons. PAOS no longer reads or generates the former Runtime Markdown queue files.
 
 ## Project structure
 

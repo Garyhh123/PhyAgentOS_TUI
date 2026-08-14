@@ -50,7 +50,7 @@ Use `paos agent` for interactive or one-message work and `paos gateway` for long
 
 - `agents.evolution` thresholds and model/provider are intentional for this deployment.
 - Workspace access permits `.paos/evolution/` and `skills/` atomic writes.
-- Operators know that root `LESSONS.md` is not global Agent context while evolution is enabled.
+- Operators know that root `LESSONS.md` is neither global Agent context nor Forge Verifier input while evolution is enabled; only the activated task's frozen active scoped Lessons may be advisory verifier context.
 - `AGENTS.md` and `EMBODIED.md` contain stable operator safety constraints; learned Lessons are not used as their replacement.
 
 ## 3. Startup and health

@@ -280,7 +280,7 @@ accepted → capturing_before → dispatching → running → finalizing
 | `enforce` | Complete evidence and valid verifier required | `success` succeeds; everything else fails closed |
 | `recovery` | Same strict verification | Only valid `replan_required` enters recovery |
 
-The verifier prompt contains only goal, criteria, constraints, immutable execution, evidence, lineage history, available legacy/human Lessons, and valid evidence references. It must never branch on action type or emit an executable action. Its raw `lesson` output is not itself an active Agent Lesson.
+The verifier prompt contains only goal, criteria, constraints, immutable execution, evidence, lineage history, Lesson context selected by Agent policy, and valid evidence references. With evolution enabled, that context is the active scoped set frozen from the root task's explicit Skill activations; root `LESSONS.md` is not read, and an unbound task receives an empty set. Lessons are untrusted, non-authoritative workflow advice: they cannot establish criterion status, replace evidence, or be cited as evidence references. The verifier must never branch on action type or emit an executable action. Its raw `lesson` output is not itself an active Agent Lesson.
 
 ## 12. Verification Service
 

@@ -50,7 +50,7 @@ User/Channel → AgentLoop → Forge tools → ForgeSessionOrchestrator
 
 - 当前部署明确设置了 `agents.evolution` 的门槛和 model/provider；
 - workspace 权限允许 `.paos/evolution/` 与 `skills/` 原子写入；
-- operator 知道启用 evolution 后，根目录 `LESSONS.md` 不再是全局 Agent context；
+- operator 知道启用 evolution 后，根目录 `LESSONS.md` 既不是全局 Agent context，也不是 Forge Verifier 输入；只有已激活任务冻结的 active scoped Lesson 可作为 Verifier 建议上下文；
 - 稳定 operator 安全约束保存在 `AGENTS.md` 和 `EMBODIED.md`，learned Lesson 不替代它们。
 
 ## 3. 启动与健康检查

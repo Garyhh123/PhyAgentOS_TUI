@@ -363,6 +363,8 @@ Lesson 生成只对归因保持谨慎，不影响任务执行。任务不可满�
 
 `activate_skill` 只返回 active Lesson。每条 Lesson 包含 `applies_when`、`does_not_apply_when`、failure mode、recommendation、severity 与 observation count。后续成功反证可使 Lesson retired；更窄且经过校验的替代项可将其 superseded。生成的 sidecar 会展示 Active、Collecting、Blocked、Superseded、Retired 和 Inactive 内容供人工审阅，但只有 Active 会进入 Agent 上下文。
 
+Forge root task 接受时，其已激活 Skill 以及返回的适用 active Lesson 会冻结在任务 binding 中。同一组作用域内容会作为建议上下文进入自动验证、recovery child 和后续 review。Verifier 不能用 Lesson 将 criterion 标为 satisfied/unsatisfied、替代执行证据或生成 evidence reference。没有激活 Skill 的任务不向验证发送学习型 Lesson。
+
 可复用的成功工作流会创建或合并 Skill candidate，默认需要三个独立成功 root lineage。存在同工作流 active Lesson、反思冲突、Skill 结构错误或不安全/过度具体内容时停止晋升。新 Skill 强制 `always: false`；更新只替换 PAOS 管理的 learned-workflow 区块。Built-in Skill 不会原地修改，而是复制为 workspace override。
 
 经验数据库是事实源：
@@ -374,7 +376,7 @@ Lesson 生成只对归因保持谨慎，不影响任务执行。任务不可满�
 <workspace>/skills/<skill>/references/LESSONS.md
 ```
 
-根目录旧 `LESSONS.md` 保留，并一次性导入为 inactive、unbound 材料；启用 evolution 时不再全局注入。关闭 `agents.evolution.enabled` 可保留原来的全局上下文/写入行为。任何 evolution 错误都 fail-open，不改变或阻塞 Forge 执行。
+根目录旧 `LESSONS.md` 保留，并一次性导入为 inactive、unbound 材料；启用 evolution 时不再全局注入，也不由 Forge 验证读取。关闭 `agents.evolution.enabled` 可保留原来的全局 Agent/Verifier 上下文与写入行为。任何 evolution 错误都 fail-open，不改变或阻塞 Forge 执行。
 
 完整生命周期与扩展契约见 [Agent 经验与 Skill 自进化](05-agent-experience-and-skill-evolution.md)。
 

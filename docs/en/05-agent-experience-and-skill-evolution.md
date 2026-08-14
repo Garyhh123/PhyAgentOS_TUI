@@ -43,6 +43,8 @@ The result contains the complete Skill document, activation ID, source, content 
 
 AgentLoop records the ordered tool names and argument field names, not argument values. When `forge_execute_task` accepts a root session, the current activation and trace snapshot is bound to that root. A task with no matching Skill may continue and produces unbound experience rather than a guessed binding.
 
+The binding also freezes the applicable active Lessons that were returned by each activated Skill. Automatic verification, every recovery child, and later review resolve Lesson context through the root ID, so they see the same bounded set even if the Lesson ledger changes afterward. These Lessons are non-authoritative workflow advisories: they may suggest a check, but they cannot establish a criterion status, replace execution facts or evidence, or be cited as evidence references. A task without an activated Skill supplies an empty Lesson set.
+
 ## 3. Outcome and episode classification
 
 `ForgeTaskOutcomeSource` reads the persisted root lineage and produces:
@@ -180,7 +182,7 @@ Built-in Skills are never modified in place. Their baseline is archived, copied 
 
 `references/LESSONS.md` is generated atomically for review. It separates active/historical Lessons from collecting/blocked clusters and reports independent support and validation state. Manual edits to this projection are not authoritative.
 
-The root `LESSONS.md` is preserved. On first evolution startup, legacy `- Lesson:` entries are imported once as inactive, unbound records. Pre-cluster active database Lessons are also deactivated and must be reconstructed from known source roots, synthesized, and validated before reactivation. Disabling evolution restores the former global Agent-context and verifier append behavior without deleting evolution data.
+The root `LESSONS.md` is preserved. On first evolution startup, legacy `- Lesson:` entries are imported once as inactive, unbound records. While evolution is enabled, the root file is neither global Agent context nor Forge Verifier input. Pre-cluster active database Lessons are also deactivated and must be reconstructed from known source roots, synthesized, and validated before reactivation. Disabling evolution restores the former global Agent-context, verifier-input, and verifier-append behavior without deleting evolution data.
 
 ## 10. Observability and extension
 

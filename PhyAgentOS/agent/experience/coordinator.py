@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -101,6 +102,23 @@ class ExperienceCoordinator:
                 root_task_id,
                 type(exc).__name__,
             )
+
+    def verification_lessons_for_root(self, root_task_id: str) -> str:
+        """Return the scoped Lessons frozen when the root Forge task was bound."""
+        try:
+            binding = self.store.get_binding(root_task_id) or {}
+            lessons = binding.get("verification_lessons", [])
+            if not isinstance(lessons, list):
+                return "[]"
+            safe_lessons = [item for item in lessons if isinstance(item, dict)]
+            return json.dumps(safe_lessons, ensure_ascii=False)
+        except Exception as exc:
+            logger.warning(
+                "Verification Lesson lookup failed open for {}: error_type={}",
+                root_task_id,
+                type(exc).__name__,
+            )
+            return "[]"
 
     def schedule_forge_completion(self, task_ref: str) -> None:
         """Persist an episode synchronously, then schedule reflection without awaiting it."""

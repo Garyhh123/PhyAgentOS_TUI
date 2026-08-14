@@ -280,7 +280,7 @@ accepted → capturing_before → dispatching → running → finalizing
 | `enforce` | 要求完整证据与合法 verifier | 只有 `success` 成功，其余 fail closed |
 | `recovery` | 同样严格验证 | 只有合法 `replan_required` 进入 recovery |
 
-Verifier prompt 只包含 goal、criteria、constraints、immutable execution、evidence、lineage history、可用的旧版/人工 Lessons 与合法 evidence refs。不得按 action type 分支，也不得输出可执行 action。其原始 `lesson` 输出本身不是 active Agent Lesson。
+Verifier prompt 只包含 goal、criteria、constraints、immutable execution、evidence、lineage history、Agent 策略选择的 Lesson 上下文与合法 evidence refs。启用 evolution 时，该上下文是 root task 显式 Skill activation 冻结的 active scoped 集合；不读取根目录 `LESSONS.md`，未绑定 Skill 的任务收到空集合。Lesson 是不可信、非权威的工作流建议，不能确定 criterion 状态、替代证据或作为 evidence reference。Verifier 不得按 action type 分支，也不得输出可执行 action。其原始 `lesson` 输出本身不是 active Agent Lesson。
 
 ## 12. Verification Service
 

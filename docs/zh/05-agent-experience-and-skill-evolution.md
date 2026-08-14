@@ -43,6 +43,8 @@ activate_skill(name, role="primary" | "supporting")
 
 AgentLoop 记录有序工具名和参数字段名，不记录参数值。`forge_execute_task` 接受 root session 后，将当前 activation 与 trace snapshot 绑定到该 root。没有匹配 Skill 的任务可继续执行，产生 unbound 经验而不是事后猜测绑定。
 
+Binding 同时冻结每个已激活 Skill 当时返回的适用 active Lesson。自动验证、所有 recovery child 和后续 review 都按 root ID 解析 Lesson 上下文，因此即使经验账本后来变化，也使用同一组有界内容。这些 Lesson 只是非权威工作流建议：可以提示检查点，但不能确定 criterion 状态、替代执行事实或证据，也不能作为 evidence reference。没有激活 Skill 的任务传入空 Lesson 集合。
+
 ## 3. Outcome 与 Episode 分类
 
 `ForgeTaskOutcomeSource` 读取已持久化 root lineage，生成：
@@ -180,7 +182,7 @@ Built-in Skill 永不原地修改：基线先归档，再复制为 workspace ove
 
 `references/LESSONS.md` 为人工审阅原子生成，分开展示 active/历史 Lesson 与 collecting/blocked cluster，并显示独立支持与校验状态。人工修改该投影不会改变事实源。
 
-根目录 `LESSONS.md` 保留。Evolution 首次启动时，将旧 `- Lesson:` 条目一次性导入为 inactive、unbound record。数据库中 pre-cluster active Lesson 也会降级，并依据已知 source roots 重建；只有重新合成和校验后才能 active。关闭 evolution 会恢复原来的全局 Agent context 和 Verifier append 行为，但不删除 evolution 数据。
+根目录 `LESSONS.md` 保留。Evolution 首次启动时，将旧 `- Lesson:` 条目一次性导入为 inactive、unbound record。启用 evolution 时，根目录文件既不是全局 Agent context，也不作为 Forge Verifier 输入。数据库中 pre-cluster active Lesson 也会降级，并依据已知 source roots 重建；只有重新合成和校验后才能 active。关闭 evolution 会恢复原来的全局 Agent context、Verifier 输入和 Verifier append 行为，但不删除 evolution 数据。
 
 ## 10. 可观测性与扩展
 

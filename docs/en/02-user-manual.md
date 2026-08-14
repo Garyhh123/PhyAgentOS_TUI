@@ -363,6 +363,8 @@ Lesson generation is intentionally conservative about attribution, not about tas
 
 Only active Lessons are returned by `activate_skill`. Each includes `applies_when`, `does_not_apply_when`, failure mode, recommendation, severity, and observation count. Successful counterexamples may retire a Lesson; a narrower validated replacement may supersede it. The generated sidecar displays Active, Collecting, Blocked, Superseded, Retired, and Inactive material for human review, but only Active entries enter Agent context.
 
+When a Forge root task is accepted, its activated Skills and the applicable active Lessons they returned are frozen in the task binding. The same scoped set accompanies automatic verification, recovery children, and later review as advisory context. The verifier cannot use a Lesson to mark a criterion satisfied or unsatisfied, replace execution evidence, or create an evidence reference. A task without an activated Skill sends no learned Lesson to verification.
+
 Successful reusable workflows create or merge a Skill candidate. Three independent successful root lineages are required by default. Promotion is blocked by active same-workflow Lessons, reflection conflicts, malformed Skill structure, or unsafe/specific content. New Skills use `always: false`; updates replace only the PAOS-managed learned-workflow block. Built-in Skills are copied to a workspace override instead of being modified in place.
 
 The experience database is authoritative:
@@ -374,7 +376,7 @@ The experience database is authoritative:
 <workspace>/skills/<skill>/references/LESSONS.md
 ```
 
-The legacy root `LESSONS.md` is preserved and imported once as inactive, unbound material. It is not globally injected while evolution is enabled. Disable `agents.evolution.enabled` to retain the former global-context/write behavior. Evolution errors fail open and never change or block Forge execution.
+The legacy root `LESSONS.md` is preserved and imported once as inactive, unbound material. It is not globally injected or read by Forge verification while evolution is enabled. Disable `agents.evolution.enabled` to retain the former global Agent/verifier-context and write behavior. Evolution errors fail open and never change or block Forge execution.
 
 For the full lifecycle and extension contract, see [Agent Experience and Skill Evolution](05-agent-experience-and-skill-evolution.md).
 

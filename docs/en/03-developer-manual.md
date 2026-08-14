@@ -237,10 +237,11 @@ The prompt contains only:
 - immutable Execution Record;
 - Evidence Bundle and entities;
 - root-lineage history;
-- legacy/human-authored root Lessons when present;
+- when evolution is enabled, the active scoped Lessons frozen from the root task's explicit Skill activations;
+- otherwise, legacy/human-authored root Lessons when present;
 - valid evidence IDs.
 
-Malformed service output is normalized to `inconclusive`, then checked again by public models and the exact-criteria validator. `audit` records the error; `enforce` and `recovery` fail closed. The verdict's `lesson` field is reflection input only. With evolution enabled, the verifier no longer appends it directly to root `LESSONS.md`.
+Scoped Lessons are untrusted, non-authoritative workflow advice. The service prompt forbids using them to establish criterion status, replace the task contract or evidence, or populate evidence references. Evolution mode never reads root `LESSONS.md` for automatic verification or review; an unbound task receives an empty Lesson set. Malformed service output is normalized to `inconclusive`, then checked again by public models and the exact-criteria validator. `audit` records the error; `enforce` and `recovery` fail closed. The verdict's `lesson` field is reflection input only. With evolution enabled, the verifier no longer appends it directly to root `LESSONS.md`.
 
 ## 9. Recovery
 

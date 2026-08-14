@@ -27,6 +27,9 @@ class TurnExperienceContext:
     task_summary: str
     activations: list[SkillActivation] = field(default_factory=list)
     workflow_trace: list[WorkflowTraceItem] = field(default_factory=list)
+    verification_lessons: dict[str, list[dict[str, Any]]] = field(
+        default_factory=dict
+    )
 
 
 class SkillActivationManager:
@@ -97,6 +100,18 @@ class SkillActivationManager:
                 activation = existing
             task_summary = context.task_summary
         lessons = self.relevant_lessons(name, task_summary)
+        with self._lock:
+            context = self._contexts.get(session_key)
+            if context is not None:
+                context.verification_lessons[name] = [
+                    {
+                        "skill_name": name,
+                        "skill_role": activation.role,
+                        "workflow_key": lesson.workflow_key,
+                        **self.lesson_payload(lesson),
+                    }
+                    for lesson in lessons
+                ]
         return activation, content, lessons
 
     def record_tool(self, session_key: str, name: str, arguments: Any) -> None:
@@ -117,6 +132,13 @@ class SkillActivationManager:
                 "task_summary": context.task_summary,
                 "skill_activations": [
                     item.model_dump(mode="json") for item in context.activations
+                ],
+                "verification_lessons": [
+                    lesson
+                    for activation in context.activations
+                    for lesson in context.verification_lessons.get(
+                        activation.skill_name, []
+                    )
                 ],
                 "workflow_trace": [
                     item.model_dump(mode="json") for item in context.workflow_trace

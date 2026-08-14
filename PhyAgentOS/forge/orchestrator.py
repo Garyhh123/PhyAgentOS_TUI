@@ -6,8 +6,10 @@ import asyncio
 import json
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
+
+from loguru import logger
 
 from PhyAgentOS.agent.session_verifier import ForgeTaskVerifier
 from PhyAgentOS.bus.events import InboundMessage
@@ -43,6 +45,7 @@ class ForgeSessionOrchestrator:
         client: ForgeGatewayClient | None = None,
         adapter: ForgeAdapter | None = None,
         store: ForgeSessionStore | None = None,
+        legacy_lessons_enabled: bool = True,
     ) -> None:
         self.workspace = Path(workspace).expanduser().resolve()
         self.config = config
@@ -57,6 +60,8 @@ class ForgeSessionOrchestrator:
         self.adapter = adapter or ForgeAdapter(
             workspace=self.workspace, config=config, client=self.client
         )
+        self.legacy_lessons_enabled = bool(legacy_lessons_enabled)
+        self._verification_lessons_provider: Callable[[str], str] | None = None
         self.capabilities: dict[str, Any] | None = None
         self.verifier_error: str | None = None
         self._tasks: dict[str, asyncio.Task] = {}
@@ -125,6 +130,7 @@ class ForgeSessionOrchestrator:
         channel: str = "cli",
         chat_id: str = "direct",
         session_key: str | None = None,
+        on_created: Callable[[ForgeSessionRecord], None] | None = None,
     ) -> ForgeSessionRecord:
         self._require_enabled()
         await self.start()
@@ -146,8 +152,27 @@ class ForgeSessionOrchestrator:
             origin_session_key=session_key,
         )
         self.store.create(record)
+        if on_created is not None:
+            try:
+                on_created(record)
+            except Exception as exc:
+                logger.warning(
+                    "Forge root binding failed open for {}: error_type={}",
+                    record.root_session_id,
+                    type(exc).__name__,
+                )
         self._schedule(record.session_id)
         return record
+
+    def set_verification_lessons_provider(
+        self, provider: Callable[[str], str] | None
+    ) -> None:
+        """Set the root-lineage scoped Lesson source used by semantic verification."""
+        self._verification_lessons_provider = provider
+
+    def set_legacy_lessons_enabled(self, enabled: bool) -> None:
+        """Control whether verification may fall back to the root LESSONS.md."""
+        self.legacy_lessons_enabled = bool(enabled)
 
     async def create_replanned(
         self,
@@ -267,7 +292,7 @@ class ForgeSessionOrchestrator:
             verdict, _, attempt = await self.verifier.verify(
                 record,
                 history=self.store.events(record.root_session_id),
-                lessons=self._lessons(),
+                lessons=self._lessons(record),
                 source="tool",
                 mode="review",
             )
@@ -475,7 +500,7 @@ class ForgeSessionOrchestrator:
             verdict, request, attempt = await self.verifier.verify(
                 record,
                 history=self.store.events(record.root_session_id),
-                lessons=self._lessons(),
+                lessons=self._lessons(record),
             )
         except Exception as exc:
             await self._verification_error(
@@ -814,7 +839,20 @@ class ForgeSessionOrchestrator:
             return "VERIFICATION_CALL_BUDGET_EXHAUSTED"
         return "VERIFICATION_SERVICE_UNAVAILABLE"
 
-    def _lessons(self) -> str:
+    def _lessons(self, record: ForgeSessionRecord) -> str:
+        if self._verification_lessons_provider is not None:
+            try:
+                lessons = self._verification_lessons_provider(record.root_session_id)
+                return lessons if isinstance(lessons, str) else "[]"
+            except Exception as exc:
+                logger.warning(
+                    "Scoped verification Lesson lookup failed open for {}: error_type={}",
+                    record.root_session_id,
+                    type(exc).__name__,
+                )
+                return "[]"
+        if not self.legacy_lessons_enabled:
+            return "[]"
         path = self.workspace / "LESSONS.md"
         return path.read_text(encoding="utf-8") if path.exists() else ""
 

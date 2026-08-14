@@ -388,6 +388,7 @@ def _make_forge_orchestrator(config: Config, provider, bus):
         bus=bus,
         max_replans=config.agents.verification.max_replans_per_episode,
         replan_timeout_s=config.agents.verification.replan_timeout_s,
+        legacy_lessons_enabled=not config.agents.evolution.enabled,
     )
 
 

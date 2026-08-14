@@ -74,7 +74,7 @@ Verification Service readiness is bounded. Startup failure does not wait forever
 | `model` | string/null | `null` | Inherits the verification model, then the Agent default model. |
 | `provider` | string/null | `null` | Inherits the verification provider, then auto-matches the selected model. |
 
-When enabled, the legacy root `LESSONS.md` is preserved but no longer injected globally. Skill-bound lessons are loaded on demand from the ledger and projected to `skills/<name>/references/LESSONS.md`. Failures unrelated to the workflow remain diagnostic-only; related failures are normalized and clustered before activation. Thresholds count distinct Forge root lineages, not recovery children, reviews, duplicate events, or replays.
+When enabled, the legacy root `LESSONS.md` is preserved but is not injected globally or read by Forge verification. Skill-bound lessons are loaded on demand from the ledger and projected to `skills/<name>/references/LESSONS.md`. The applicable active set returned by explicit Skill activation is frozen with the root task and supplied to automatic verification, recovery children, and review only as non-authoritative advice. It cannot establish a criterion or replace evidence; tasks without activated Skills supply no learned Lessons. Failures unrelated to the workflow remain diagnostic-only; related failures are normalized and clustered before activation. Thresholds count distinct Forge root lineages, not recovery children, reviews, duplicate events, or replays.
 
 The evolution model/provider is resolved independently of the verifier call budget:
 
@@ -88,7 +88,7 @@ agents.evolution.provider
   → provider inferred from the selected model
 ```
 
-`enabled=false` removes `activate_skill`, restores root `LESSONS.md` to normal Agent context, and allows the verifier's legacy Lesson append behavior. It does not modify or delete the experience database, Skill sidecars, or revision archive.
+`enabled=false` removes `activate_skill`, restores root `LESSONS.md` to normal Agent and verifier context, and allows the verifier's legacy Lesson append behavior. It does not modify or delete the experience database, Skill sidecars, or revision archive.
 
 ## 6. `ForgeTaskRequest`
 
