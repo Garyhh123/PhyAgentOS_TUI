@@ -1,6 +1,6 @@
 # PhyAgentOS 框架介绍
 
-> 文档版本：0.2.0 · 实现基线：2026-08-03 Forge-only 源码。本文只把源码、配置 Schema 和测试覆盖的行为称为“当前能力”。
+> 文档版本：0.2.1 · 实现基线：2026-08-14 Forge 执行与 Agent 经验演化源码。本文只把源码、配置 Schema 和测试覆盖的行为称为“当前能力”。
 
 ## 1. 项目定位
 
@@ -12,6 +12,7 @@ PhyAgentOS 是面向具身任务的 Agent 与任务级编排框架。当前版�
 2. 怎样把 Gateway 的执行终态保留为不可改写的事实。
 3. 怎样把动作前后观测组织为可引用、可校验的证据。
 4. 怎样依据系统级 goal 和 criteria 判断任务是否成功，并在必要时交回 Planner。
+5. 怎样让重复出现且经过验证的任务结果改进工作流指导，同时不改变执行边界。
 
 ## 2. 三类事实
 
@@ -48,11 +49,18 @@ CLI / Channels / Cron / Heartbeat
         │
         ▼
  Forge Runtime / Dora / robot or simulator
+
+终结 root lineage ─────► ExperienceCoordinator ──► SQLite experience ledger
+                                  │                           │
+                           Skill candidates            scoped Lessons
+                                  └────────────► workspace Skills
 ```
 
 ### 3.1 Agent 控制面
 
 AgentLoop 负责消息、上下文、模型、工具调用与 Planner 决策。启用 Forge 后，Agent 获得 capabilities 摘要和七个 Forge 工具。任务提交是异步的：工具先返回 PAOS 生成的 session/command ID，后台编排完成后再通过 system event 唤醒原对话。
+
+启用任务经验演化后，Skill 仍按摘要渐进加载。存在匹配工作流时，Agent 在首次执行工具前显式调用 `activate_skill`，加载完整注册 Skill 与相关 scoped Lesson，并记录哪些 primary/supporting Skill 参与了任务。root lineage 终结后才进入异步经验链，不增加 Forge 关键路径等待。
 
 ### 3.2 Forge 编排面
 
@@ -84,6 +92,8 @@ Forge Gateway、Forge Runtime、Dora dataflow、策略与硬件控制器位于 P
 | `RecoveryRequest` | `recovery_request_v1` | 未满足标准、需保留约束、证据引用、指导与 deadline |
 
 这些模型不包含 `grasp_verify_enabled` 一类动作专用字段。不同 action 的成功语义由任务 criteria 表达，动作的执行语义由 Gateway capability 中的通用 `result_semantics` 和 `completion` 描述。
+
+Agent 经验边界位于 `PhyAgentOS/agent/experience/`，使用独立版本化模型：`TaskOutcomeEnvelope`、`TaskEpisode`、`ExperienceAssessment`、`FailureObservation`、`LessonCluster`、`ScopedLesson` 和 `SkillCandidate`。它们只携带去敏后的任务语义、工作流结构、字段名及不透明记录/证据引用，不保存可执行 command ID、凭据、endpoint、原始工具输出或 Runtime 私有参数。
 
 ## 5. 生命周期
 
@@ -151,10 +161,12 @@ Agent 工作区仍保留：
 
 - `EMBODIED.md`：机器人的人类可读知识描述；
 - `ENVIRONMENT.md`：环境或 SceneGraph 状态；
-- `LESSONS.md`：执行、验证与恢复经验；
+- 根目录 `LESSONS.md`：旧版或人工维护的记录；
+- `skills/<name>/SKILL.md`：工作流指令；
+- `skills/<name>/references/LESSONS.md`：Skill 绑定经验的人类可读投影视图；
 - `TASK.md`：多步骤任务规划状态。
 
-这些文件可以进入 Agent 上下文，但不触发执行。`embodiments` 配置描述知识工作区拓扑，也不会创建额外 Gateway 或硬件 driver。
+这些文件都不触发执行。启用 evolution 后，根目录 `LESSONS.md` 不再注入每个 Agent turn；只有 active 且与当前任务相关的 scoped Lesson 才由 `activate_skill` 返回，经验数据库始终是事实源。`AGENTS.md` 与 `EMBODIED.md` 继续由 operator 控制，演化链不会改写其中的安全约束。`embodiments` 配置描述知识工作区拓扑，也不会创建额外 Gateway 或硬件 driver。
 
 ## 10. 当前实现范围
 
@@ -163,6 +175,8 @@ Agent 工作区仍保留：
 - 一个 root lineage 内动作串行；verification/recovery 未终结前拒绝无关新任务。
 - 一个 Forge session 对应一个高层 action。
 - 证据关联质量只支持 `best_effort`。
+- 经验学习只消费具有 `success`、`failure` 或 `replan_required` 语义结果的 Forge root lineage；`off`、`inconclusive`、非法/错误 verdict 与 review-only 结果不生成可晋升经验。
+- 演化异步且 fail-open，可更新 workspace Skill 和 Skill Lesson 投影，但不改变 Forge tools、task payload、状态转换、Gateway 协议或下层执行顺序。
 - 旧 Runtime、Target、Policy/SkillRuntime、Watchdog、SessionRunner、Perception Pipeline 和 Markdown execution queue 已从活动代码移除，不提供兼容层或迁移器。
 
 ## 11. 代码结构
@@ -170,6 +184,7 @@ Agent 工作区仍保留：
 ```text
 PhyAgentOS/
 ├── agent/                 # AgentLoop、工具、Verifier client
+│   └── experience/        # 激活、Outcome、Episode、反思、Lesson 与 Skill 演化
 ├── forge/
 │   ├── client.py          # 异步 Gateway HTTP client
 │   ├── observation.py     # WebSocket 观测采集
@@ -188,5 +203,6 @@ PhyAgentOS/
 - [用户手册](02-user-manual.md)
 - [开发者手册](03-developer-manual.md)
 - [Forge 配置参考](04-forge-configuration-reference.md)
+- [Agent 经验与 Skill 自进化](05-agent-experience-and-skill-evolution.md)
 - [Forge 接入契约](../forge/README_zh.md)
 - [文档索引](../README.md)

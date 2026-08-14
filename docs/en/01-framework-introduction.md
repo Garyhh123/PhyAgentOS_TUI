@@ -1,6 +1,6 @@
 # PhyAgentOS Framework Introduction
 
-> Documentation version: 0.2.0 · implementation baseline: Forge-only source on 2026-08-03. This document calls a behavior current only when source, configuration schemas, and tests support it.
+> Documentation version: 0.2.1 · implementation baseline: Forge execution with Agent experience evolution on 2026-08-14. This document calls a behavior current only when source, configuration schemas, and tests support it.
 
 ## 1. Positioning
 
@@ -12,6 +12,7 @@ The boundary is not designed to implement every robot action inside PAOS. It ans
 2. How is the Gateway terminal result preserved as an immutable fact?
 3. How are observations around the action turned into validated evidence?
 4. How do system-level goals and criteria determine success and return control to the Planner when needed?
+5. How can repeated verified outcomes improve workflow guidance without changing the execution boundary?
 
 ## 2. Three kinds of fact
 
@@ -48,11 +49,18 @@ CLI / Channels / Cron / Heartbeat
         │
         ▼
  Forge Runtime / Dora / robot or simulator
+
+terminal root lineage ──► ExperienceCoordinator ──► SQLite experience ledger
+                                  │                           │
+                           Skill candidates            scoped Lessons
+                                  └────────────► workspace Skills
 ```
 
 ### 3.1 Agent control plane
 
 AgentLoop owns messages, context, models, tools, and Planner decisions. When Forge is enabled, the Agent receives a capability summary and seven Forge tools. Submission is asynchronous: the tool first returns PAOS-generated session and command IDs; a system event wakes the originating conversation after orchestration completes or requests recovery.
+
+When task experience evolution is enabled, Skill summaries remain progressively loaded. The Agent explicitly calls `activate_skill` for a matching workflow before its first execution tool. Activation loads the full registered Skill and relevant scoped Lessons and records which primary/supporting Skills informed the task. The root-lineage result later enters an asynchronous experience path; it does not add work to the Forge critical path.
 
 ### 3.2 Forge orchestration plane
 
@@ -84,6 +92,8 @@ The public boundary lives in `PhyAgentOS/verification/contracts.py`:
 | `RecoveryRequest` | `recovery_request_v1` | Unmet criteria, preserved constraints, evidence references, guidance, and deadline |
 
 These models contain no action-specific field such as `grasp_verify_enabled`. Task criteria express success semantics. Generic Gateway capability fields such as `result_semantics` and `completion` describe execution semantics.
+
+The Agent experience boundary lives under `PhyAgentOS/agent/experience/` and uses separate versioned models: `TaskOutcomeEnvelope`, `TaskEpisode`, `ExperienceAssessment`, `FailureObservation`, `LessonCluster`, `ScopedLesson`, and `SkillCandidate`. They contain redacted task semantics, workflow structure, field names, and opaque record/evidence references—not executable command IDs, credentials, endpoints, raw tool output, or Runtime-private parameters.
 
 ## 5. Lifecycle
 
@@ -149,10 +159,12 @@ The Agent workspace retains:
 
 - `EMBODIED.md` for human-readable robot knowledge;
 - `ENVIRONMENT.md` for environment or SceneGraph state;
-- `LESSONS.md` for execution, verification, and recovery experience;
+- root `LESSONS.md` for legacy or human-authored notes;
+- `skills/<name>/SKILL.md` for workflow instructions;
+- `skills/<name>/references/LESSONS.md` for human-readable projections of Skill-bound experience;
 - `TASK.md` for multi-step planning state.
 
-These files may enter Agent context but never dispatch execution. The `embodiments` configuration describes knowledge-workspace topology; it does not create additional Gateways or hardware drivers.
+These files never dispatch execution. With evolution enabled, root `LESSONS.md` is not injected into every Agent turn. Only active, task-relevant scoped Lessons are returned by `activate_skill`; the experience database remains the source of truth. `AGENTS.md` and `EMBODIED.md` remain operator-controlled safety surfaces and are never rewritten by evolution. The `embodiments` configuration describes knowledge-workspace topology; it does not create additional Gateways or hardware drivers.
 
 ## 10. Implemented scope
 
@@ -161,6 +173,8 @@ These files may enter Agent context but never dispatch execution. The `embodimen
 - Actions are serialized within a root lineage; unrelated work is refused until verification or recovery terminates.
 - One Forge session represents one high-level action.
 - Evidence association supports `best_effort` only.
+- Experience learning consumes only Forge root lineages with a semantic `success`, `failure`, or `replan_required` outcome. `off`, `inconclusive`, invalid/error, and review-only results do not create promotable experience.
+- Evolution is asynchronous and fail-open. It may update workspace Skills and Skill Lesson projections, but it does not change Forge tools, task payloads, state transitions, Gateway protocol, or lower-level execution order.
 - The legacy Runtime, Target, Policy/SkillRuntime, Watchdog, SessionRunner, perception pipeline, and Markdown execution queue are removed from active code with no compatibility layer or migrator.
 
 ## 11. Code map
@@ -168,6 +182,7 @@ These files may enter Agent context but never dispatch execution. The `embodimen
 ```text
 PhyAgentOS/
 ├── agent/                 # AgentLoop, tools, verifier client
+│   └── experience/        # Activation, outcomes, episodes, reflection, Lessons, Skill evolution
 ├── forge/
 │   ├── client.py          # Async Gateway HTTP client
 │   ├── observation.py     # WebSocket observation collector
@@ -186,5 +201,6 @@ PhyAgentOS/
 - [User Manual](02-user-manual.md)
 - [Developer Manual](03-developer-manual.md)
 - [Forge Configuration Reference](04-forge-configuration-reference.md)
+- [Agent Experience and Skill Evolution](05-agent-experience-and-skill-evolution.md)
 - [Forge Integration Contract](../forge/README.md)
 - [Documentation Index](../README.md)

@@ -1,6 +1,6 @@
 # PhyAgentOS 集成开发指南
 
-> 版本：0.2.0 · [English](README_en.md)
+> 版本：0.2.1 · [English](README_en.md)
 
 本指南面向 Forge Gateway、机器人能力、证据源、LLM Provider 和 PAOS Agent 工具的集成开发者。当前机器人执行只通过 Forge Gateway 1.0.0；PAOS 不再内置 Target/Policy/SkillRuntime/SessionRunner 扩展点。
 
@@ -16,6 +16,8 @@
 | 新 verifier 模型 | PAOS Provider 配置/实现 | 保证多模态输入与严格 JSON 输出 |
 | 新 Agent 入口 | PAOS Channel | 经 MessageBus/AgentLoop，不能直接调用 Gateway |
 | 新执行工具 | 优先复用通用 Forge tools | 不能绕过 Orchestrator/Store，也不能暴露调用方 ID |
+| 新工作流 Skill | Workspace `skills/<name>/SKILL.md` 或受控 evolution | 机器人 action 仍只能通过实时能力发现和 Forge tools 执行 |
+| 新可信任务 outcome source | 实现 `TaskOutcomeSource` | 产生版本化去敏 envelope，复用 Agent Lesson/Skill 演化 |
 
 ## 2. 接入一个 Gateway action
 
@@ -179,6 +181,8 @@ Verifier Provider 通过现有 Provider registry 选择。集成新 Provider 时
 - Store/event observability；
 - Provider；
 - Channel 或其他非执行入口。
+- 保持 semantic-verdict 与 root-idempotency 要求的 provider-neutral `TaskOutcomeSource` adapter；
+- 使用实时 capability 发现与现有 Forge tools 的工作流 Skill。
 
 ### 不应引入
 
@@ -189,6 +193,8 @@ Verifier Provider 通过现有 Provider registry 选择。集成新 Provider 时
 - 调用者指定 session/command ID；
 - 绕过 Store 直接 POST/重发；
 - 把 verdict 写回 Execution Record。
+- 把原始 tool inputs/outputs、具体任务答案、凭据、endpoint 或可执行 Gateway ID 写入 learned Lesson/Skill；
+- 创建第二套 Lesson store，或直接修改生成的 Skill Lesson 投影。
 
 ## 8. Fake Gateway 测试闭环
 
@@ -225,3 +231,4 @@ Verifier Provider 通过现有 Provider registry 选择。集成新 Provider 时
 - [通信架构](COMMUNICATION.md)
 - [Forge 接入契约](../forge/README_zh.md)
 - [配置参考](../zh/04-forge-configuration-reference.md)
+- [Agent 经验与 Skill 自进化](../zh/05-agent-experience-and-skill-evolution.md)

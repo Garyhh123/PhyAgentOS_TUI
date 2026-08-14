@@ -1,8 +1,8 @@
 # PhyAgentOS Communication Architecture
 
-> Version: 0.2.0 · [中文](COMMUNICATION.md)
+> Version: 0.2.1 · [中文](COMMUNICATION.md)
 
-## 1. Five communication boundaries
+## 1. Six communication boundaries
 
 PhyAgentOS does not mix user messaging, physical execution, and verification on one internal bus:
 
@@ -11,6 +11,7 @@ PhyAgentOS does not mix user messaging, physical execution, and verification on 
 3. **PAOS/Gateway boundary:** async HTTP plus WebSocket.
 4. **Verifier boundary:** Orchestrator ↔ independent Verification Service process.
 5. **Persistence boundary:** Orchestrator ↔ SQLite; Adapter/Verifier ↔ workspace artifacts.
+6. **Experience boundary:** AgentLoop ↔ experience coordinator ↔ evolution ledger and workspace Skills.
 
 ```text
 External Channel
@@ -26,6 +27,8 @@ External Channel
                 │
                 ▼
         Forge Runtime / Dora
+
+terminal root reference ─ Experience Coordinator ─ Evolution SQLite / Skill files
 ```
 
 ## 2. User-message boundary
@@ -53,6 +56,8 @@ verify_forge_session
 create_replanned_forge_session
 ```
 
+When evolution is enabled, `activate_skill` is an Agent-context tool rather than a robot execution interface. It resolves a registered Skill, returns its full workflow plus applicable active Lessons, and records primary/supporting attribution. It never calls Forge or Gateway.
+
 `forge_execute_task` immediately returns generated IDs and `accepted`; it does not block a model call on physical execution. Orchestrator progresses in the background and routes terminal state back to the originating `session_key` through a system event.
 
 A completion event contains:
@@ -70,6 +75,8 @@ A completion event contains:
 ```
 
 A recovery event carries parent, goal, criteria, preserved constraints, unmet criteria, guidance, evidence references, and deadline. It instructs Planner to call `create_replanned_forge_session` but contains no executable action.
+
+The terminal completion event also carries `metadata.forge_session_id`. AgentLoop uses that immutable reference to schedule background experience capture. This scheduling does not delay or alter the user-facing completion path.
 
 ## 4. PAOS/Gateway HTTP
 
@@ -159,7 +166,24 @@ The child process exposes local HTTP:
 
 Requests require a randomly derived `X-PAOS-Admin-Token`. The service receives resolved public contracts, multimodal evidence, history, and lessons only. It never accesses Gateway or creates a recovery child.
 
-## 9. Persistence boundary
+## 9. Experience boundary
+
+`forge_execute_task` binds the current per-turn activation/trace snapshot to the accepted root task. The terminal reference is later adapted into one redacted `TaskOutcomeEnvelope` and root-unique `TaskEpisode`. The adapter stores tool/action names, input field names, semantic verdicts, opaque evidence references, and immutable lineage record IDs; it does not copy raw inputs, outputs, credentials, endpoints, or command IDs into learned content.
+
+Background reflection talks only to the configured model provider. It cannot call Gateway or Agent tools. Structured output is validated before it can support a Skill candidate or normalized failure observation. Lesson synthesis receives normalized cluster observations only.
+
+Evolution writes only:
+
+```text
+<workspace>/.paos/evolution/experience.sqlite3
+<workspace>/.paos/evolution/revisions/
+<workspace>/skills/<skill>/SKILL.md
+<workspace>/skills/<skill>/references/LESSONS.md
+```
+
+It never writes `AGENTS.md` or `EMBODIED.md` and does not participate in Forge transactions.
+
+## 10. Persistence boundary
 
 ### SQLite
 
@@ -176,13 +200,13 @@ evidence_bundle.json
 evidence/*
 ```
 
-Verifier writes `verification_result.json` and `LESSONS.md`. Artifact URIs are relative to the workspace and are resolved and checked again on read.
+Verifier writes `verification_result.json`. When evolution is disabled it may also append the legacy root `LESSONS.md`; when enabled, raw verifier Lesson text is reflection input only and the experience ledger generates Skill-bound projections. Artifact URIs are relative to the workspace and are resolved and checked again on read.
 
 ### Consistency boundary
 
 SQLite and files are not one cross-resource transaction. Therefore ordering matters: before entities/manifest complete before their reference is stored; dispatch intent is durable before HTTP mutation; a written Execution Record is reused across a database-commit crash window but fails on identity mismatch.
 
-## 10. Trust boundary
+## 11. Trust boundary
 
 | Data | Trust policy |
 |:-----|:-------------|
@@ -192,9 +216,12 @@ SQLite and files are not one cross-resource transaction. Therefore ordering matt
 | Artifact | Revalidate safe URI, existence, byte size, SHA-256, media type |
 | Verifier output | Validate JSON, Pydantic, exact criteria, known evidence refs |
 | Recovery guidance | Planner context only, never a command |
+| Experience input | Untrusted, redacted task data; strict versioned assessment models |
+| Learned Lesson/Skill | Static safety/specificity checks plus structured validation before activation/write |
 
 ## Next reading
 
 - [Integration Development Guide](README_en.md)
 - [Developer Manual](../en/03-developer-manual.md)
 - [Forge Integration Contract](../forge/README.md)
+- [Agent Experience and Skill Evolution](../en/05-agent-experience-and-skill-evolution.md)

@@ -1,6 +1,6 @@
 # PhyAgentOS 运行手册
 
-> 版本：0.2.0 · [English](README_en.md)
+> 版本：0.2.1 · [English](README_en.md)
 
 本手册面向部署、演示和运行维护人员，聚焦“如何稳定运行 Forge 执行—证据—验证—恢复闭环”。安装与任务写法见[用户手册](../zh/02-user-manual.md)，精确参数见[配置参考](../zh/04-forge-configuration-reference.md)。
 
@@ -46,6 +46,13 @@ User/Channel → AgentLoop → Forge tools → ForgeSessionOrchestrator
 - `evidenceRetention` 符合隐私、审计与磁盘策略；
 - replan budget 与 deadline 符合现场响应要求。
 
+### 经验与演化
+
+- 当前部署明确设置了 `agents.evolution` 的门槛和 model/provider；
+- workspace 权限允许 `.paos/evolution/` 与 `skills/` 原子写入；
+- operator 知道启用 evolution 后，根目录 `LESSONS.md` 不再是全局 Agent context；
+- 稳定 operator 安全约束保存在 `AGENTS.md` 和 `EMBODIED.md`，learned Lesson 不替代它们。
+
 ## 3. 启动与健康检查
 
 推荐先 Forge 后 PAOS：
@@ -84,6 +91,8 @@ paos gateway --config /path/to/config.json --workspace /path/to/workspace --verb
 | `error_code/error_message` | 故障分层与具体原因 |
 
 不要只看 Gateway `succeeded`。在 `enforce`/`recovery` 下，只有 PAOS `status=succeeded` 且 verdict 为 `success` 才表示任务成功。
+
+经验处理为异步链路。Forge completion 报告时，episode assessment、Lesson cluster 合成或 Skill 晋升可能尚未完成。应在 `.paos/evolution/experience.sqlite3` event 和 `skills/<name>/references/LESSONS.md` 中查看独立状态；不能为了等待 evolution 而阻塞或重复物理任务。
 
 ## 5. 取消与 Reset
 
@@ -126,6 +135,7 @@ PAOS 启动后自动加载 non-terminal records：
 | finalizing | 尝试补采 after、写 contract | 检查 image source/sequence |
 | verifying | 旧 attempt 标记 abandoned，重新验证 | 检查 Provider 与 service |
 | awaiting replan | 可重发同一 recovery event | 检查 Planner 是否创建 child、deadline 是否到期 |
+| evolution job running | 重启时恢复为 pending | 让后台继续处理；Forge 不受影响 |
 
 如果物理状态未知，应停止自动任务并由 operator 确认，而不是用新任务“试探”状态。
 
@@ -135,6 +145,10 @@ PAOS 启动后自动加载 non-terminal records：
 <workspace>/.paos/forge/orchestrator.sqlite3
 <workspace>/.paos/forge/orchestrator.sqlite3-wal
 <workspace>/.paos/forge/orchestrator.sqlite3-shm
+<workspace>/.paos/evolution/experience.sqlite3
+<workspace>/.paos/evolution/experience.sqlite3-wal
+<workspace>/.paos/evolution/revisions/
+<workspace>/skills/<skill>/references/LESSONS.md
 <workspace>/artifacts/forge/<session_id>/
 ```
 
@@ -147,6 +161,8 @@ PAOS 启动后自动加载 non-terminal records：
 - 配置 retention 后仍应监控 Bundle、Execution 和事件日志的增长。
 
 `maxArtifactBytes` 限制单个实体，不是 session 或 workspace 总配额。
+
+Evolution 数据库是事实源，per-Skill `LESSONS.md` 是生成投影。备份时同时包含 database/WAL 与 Skill/revision tree；不要通过直接编辑 SQLite 或投影来修复 blocked cluster/candidate。
 
 ## 9. 故障分层
 
@@ -170,6 +186,10 @@ identity mismatch 或 `FORGE_EXECUTION_STATE_LOST`：视为潜在重复动作风
 
 `VERIFICATION_REPLAN_LIMIT_REACHED`、`VERIFICATION_REPLAN_TIMEOUT`：root lineage 已无法自动继续。检查 lessons、未满足 criteria 与现场状态，再由用户决定新任务。
 
+### F. 经验演化
+
+Collecting/blocked Lesson cluster 和 blocked Skill candidate 是后台学习状态，不是 task failure。检查独立 root 支持、适用范围、静态策略、抽象置信度、冲突、Skill 结构与 reload/rollback event。Evolution model/store 错误必须 fail-open；若其改变 Forge 状态或延迟 completion notification，应视为实现缺陷。
+
 ## 10. 运行验收清单
 
 - [ ] Gateway API/version/supports 校验通过。
@@ -182,6 +202,10 @@ identity mismatch 或 `FORGE_EXECUTION_STATE_LOST`：视为潜在重复动作风
 - [ ] 非 `off` 任务具有 goal 和 criteria，Verifier 已返回或明确失败。
 - [ ] 最终用户报告区分 execution status 与 verification verdict。
 - [ ] Recovery child 使用全新 ID，parent/child lineage 可追踪。
+- [ ] 匹配工作流在执行前激活注册 primary Skill，直接文件读取不计为 activation。
+- [ ] Evolution 对 root lineage 只计一次，无关/不确定失败只保留诊断。
+- [ ] 只动态加载 active scoped Lesson，operator 安全文件不变。
+- [ ] 晋升 Skill 具有配置要求的三个独立成功、managed block、revision history 和可 reload workspace 文件。
 
 ## 后续阅读
 
@@ -189,3 +213,4 @@ identity mismatch 或 `FORGE_EXECUTION_STATE_LOST`：视为潜在重复动作风
 - [配置参考](../zh/04-forge-configuration-reference.md)
 - [通信架构](../user_development_guide/COMMUNICATION.md)
 - [Forge 接入契约](../forge/README_zh.md)
+- [Agent 经验与 Skill 自进化](../zh/05-agent-experience-and-skill-evolution.md)

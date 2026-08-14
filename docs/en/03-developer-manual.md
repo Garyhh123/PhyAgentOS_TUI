@@ -1,6 +1,6 @@
 # PhyAgentOS Developer Manual
 
-> Documentation version: 0.2.0. This manual is for PAOS, Forge Gateway, evidence, verifier, and Agent-tool developers.
+> Documentation version: 0.2.1. This manual is for PAOS, Forge Gateway, evidence, verifier, Agent-tool, and experience-evolution developers.
 
 ## 1. Development principles
 
@@ -16,6 +16,8 @@ Changes touching embodied execution must preserve these invariants:
 8. Verifier prompts, public verdicts, and Recovery Requests are independent of `action_type`.
 9. Parent `replanned` and child creation occur in one SQLite transaction.
 10. Execution, evidence, verification, recovery, and persistence changes include failure and restart tests.
+11. Experience is counted once per root lineage, stores redacted workflow structure rather than raw tool data, and never runs on the Forge critical path.
+12. Evolution is fail-open, never rewrites operator safety files, and modifies only validated workspace Skill managed blocks or generated Lesson projections.
 
 ## 2. Module map
 
@@ -27,7 +29,12 @@ Changes touching embodied execution must preserve these invariants:
 | Verification request | `PhyAgentOS/verification/request_builder.py` | Resolve bundle, validate digest/window/requirements, build multimodal request |
 | Verification engine | `PhyAgentOS/verification/engine.py` | Stateless model call and timeout |
 | Verification service | `PhyAgentOS/verification/service.py` | Child process, readiness, authentication, strict JSON output |
-| Verifier facade | `PhyAgentOS/agent/session_verifier.py` | Budgets, attempts, retention, lessons, review |
+| Verifier facade | `PhyAgentOS/agent/session_verifier.py` | Budgets, attempts, retention, optional legacy Lesson writes, review |
+| Skill activation | `PhyAgentOS/agent/experience/activation.py` | Per-turn primary/supporting binding, trace field names, scoped Lesson retrieval |
+| Experience contracts | `PhyAgentOS/agent/experience/contracts.py` | Outcome, episode, assessment, observation, cluster, Lesson, and candidate models |
+| Outcome adapters | `PhyAgentOS/agent/experience/source.py` | Generic `TaskOutcomeSource` and Forge root-lineage envelope |
+| Experience coordinator/store | `PhyAgentOS/agent/experience/coordinator.py`, `store.py` | Async jobs, root idempotency, SQLite WAL ledger, restart recovery |
+| Reflection and evolution | `PhyAgentOS/agent/experience/analyzer.py`, `evolution.py` | Structured model calls, Lesson lifecycle, Skill validation/promotion/rollback |
 | Gateway client | `PhyAgentOS/forge/client.py` | `httpx.AsyncClient` wrapper for Agent API |
 | Observation | `PhyAgentOS/forge/observation.py` | Async WebSockets, bounded per-source latest frames, validation |
 | Evidence writer | `PhyAgentOS/forge/evidence.py` | Safe paths, atomic writes, SHA-256, snapshots, bundles |
@@ -77,6 +84,23 @@ Each artifact has phase, kind, source ID, sequence, capture/receive time, media 
 
 The verifier returns exactly one `CriterionVerdict` for each input success criterion and copies the criterion verbatim. `success` requires every criterion to be `satisfied`. `failure` and `replan_required` require at least one unmet or unknown item. `replan_required` also requires action-independent `recovery_context`.
 
+### 3.6 Experience contracts
+
+The experience subsystem has its own versioned boundary:
+
+| Model | Role |
+|:------|:-----|
+| `TaskOutcomeEnvelope` | Provider-neutral semantic result, criterion statuses, lineage attempts, and opaque record/evidence references |
+| `TaskEpisode` | One redacted root task plus Skill activations and workflow trace |
+| `ExperienceAssessment` | Structured reflection with reuse decision, Skill proposal, failure observations, contradictions, and conflicts |
+| `LessonEligibility` | `related | unrelated | uncertain` attribution with a bounded reason enum and confidence |
+| `FailureObservation` | Normalized workflow failure pattern without a concrete answer or raw task values |
+| `LessonCluster` | Same-Skill, same-workflow, canonical-pattern support and synthesis state |
+| `ScopedLesson` | Applicable/non-applicable boundaries, failure mode, recommendation, source support, and lifecycle state |
+| `SkillCandidate` | Create/update proposal, independent support, blockers, revision, and promotion state |
+
+These contracts reject extra fields. Persisted workflow traces contain tool names and input field names only. Endpoints, credentials, absolute paths, command IDs, raw outputs, and evidence locators are removed or replaced with opaque references; lineage session IDs remain only as internal immutable record references and are forbidden in generated Lesson/Skill content.
+
 ## 4. State machine and transactions
 
 `ALLOWED_FORGE_TRANSITIONS` defines every legal transition. Every Store update loads the model, applies a mutation, validates the transition, updates time, writes JSON, appends an event, and commits.
@@ -102,6 +126,8 @@ forge_events
 ```
 
 Task creation and replan use `BEGIN IMMEDIATE`, keeping one non-terminal lineage even when multiple Store instances submit concurrently.
+
+Experience state is independent and stored in `.paos/evolution/experience.sqlite3`. Its tables include task bindings, unique-root episodes/jobs, scoped Lessons, failure observations, Lesson clusters, unique `(cluster_id, root_task_id)` support, cluster jobs, Skill candidates, events, and migration metadata. WAL and `BEGIN IMMEDIATE` protect writes; interrupted running jobs return to `pending` at startup. This database does not participate in Forge state transitions.
 
 ## 5. Gateway startup contract
 
@@ -211,10 +237,10 @@ The prompt contains only:
 - immutable Execution Record;
 - Evidence Bundle and entities;
 - root-lineage history;
-- LESSONS;
+- legacy/human-authored root Lessons when present;
 - valid evidence IDs.
 
-Malformed service output is normalized to `inconclusive`, then checked again by public models and the exact-criteria validator. `audit` records the error; `enforce` and `recovery` fail closed.
+Malformed service output is normalized to `inconclusive`, then checked again by public models and the exact-criteria validator. `audit` records the error; `enforce` and `recovery` fail closed. The verdict's `lesson` field is reflection input only. With evolution enabled, the verifier no longer appends it directly to root `LESSONS.md`.
 
 ## 9. Recovery
 
@@ -231,9 +257,45 @@ When Planner calls `create_replanned_forge_session`:
 - parent terminal transition and child creation commit atomically;
 - duplicate calls return the existing child.
 
-## 10. Extension workflows
+## 10. Agent task experience and Skill evolution
 
-### 10.1 Add a Gateway action
+### 10.1 Activation and attribution
+
+`activate_skill` resolves only exact hyphen-case names registered by `SkillsLoader`, honors workspace-over-built-in precedence, and rejects unavailable Skills and arbitrary paths. One turn may activate one primary and multiple supporting Skills. The activation result returns the full Skill, the activation record/digest, and ranked active Lessons. Only the primary may be updated automatically; supporting Skills may receive failure attribution.
+
+AgentLoop records tool order and argument keys during the turn. After `forge_execute_task` accepts a new root session, that activation snapshot is bound to the root ID. A direct `SKILL.md` read is deliberately not an activation. Tasks without an activation remain unbound rather than receiving a guessed association.
+
+### 10.2 Outcome capture and reflection jobs
+
+`ForgeTaskOutcomeSource` converts the complete root lineage into a redacted `TaskOutcomeEnvelope`. The terminal automatic system event creates at most one episode/job for the root. Recovery children, duplicate events, process replay, and manual review cannot create independent support.
+
+Only semantic `success`, `failure`, and `replan_required` outcomes are learnable. A success must have non-empty criterion statuses and all must be `satisfied`. A recovered success is `mixed`: it can support the successful workflow and still expose normalized failed attempts. `off`, `inconclusive`, invalid/service-error, and review-only outcomes are ignored for promotion.
+
+The coordinator persists first, schedules `asyncio` reflection, and retries failures according to the stored job policy. Its call counter is separate from `maxVerifierCallsPerRun`. Exhausted evolution budget defers jobs without changing the task result.
+
+### 10.3 Lesson clustering and lifecycle
+
+The reflection model emits `LessonEligibility` for each failed/replanned workflow pattern. Only `decision=related` with `reason=workflow_related` proceeds. `task_unsatisfiable`, `verifier_limit`, `evidence_limit`, `external_or_infrastructure`, `user_constraint`, and `unknown` remain diagnostic events.
+
+A related failure becomes a normalized `FailureObservation`. The model selects an existing same-Skill/same-workflow cluster when semantically equivalent or proposes a stable `pattern_key`; no embedding or vector database is used. SQLite counts each root once per cluster. Before `minLessonEpisodes`, the cluster remains `collecting`.
+
+At the threshold, synthesis receives normalized observations only, not raw inputs. Static validation rejects credentials, endpoints, paths, action/command/session IDs, Action Manifest material, bypass instructions, prompt injection, fixed coordinates/numbers/options, and answer-like wording. A second structured model validation must return `reusable=true`, `contains_specific_answer=false`, no `unsupported_literals`, and confidence at least `0.8`. Otherwise the cluster becomes `blocked` and is never injected.
+
+An activated `ScopedLesson` can be superseded only by an active replacement in the same Skill/workflow scope. Independent successful counterexamples can retire it and reopen its cluster. `references/LESSONS.md` is an atomic human-readable projection of active and historical Lessons plus collecting/blocked clusters; the SQLite ledger is authoritative. `activate_skill` returns only active, applicability-matched Lessons up to `maxLessonsPerSkill`.
+
+On first startup, root `LESSONS.md` entries are imported as inactive unbound legacy records. Existing pre-cluster active Lessons are deactivated, seeded into clusters from their known episode roots, and must be re-synthesized and revalidated before activation.
+
+### 10.4 Skill candidates and promotion
+
+Reusable semantic success creates or merges a candidate by Skill and workflow key. Update proposals must target the activated primary Skill; without a primary, reflection may propose a new non-duplicate Skill. Independent episode IDs provide support. Promotion requires `minSuccessfulEpisodes` and is blocked by active same-workflow Lessons, reflection conflicts, validation errors, or unsafe content.
+
+Generated content is limited to trigger, preconditions, generalized steps, verification checkpoints, recovery guidance, and applicability boundaries. It cannot contain scripts/assets, endpoints, credentials, fixed Gateway actions/IDs, Action Manifest copies, or instructions to bypass Forge/verification.
+
+New Skills are created under `workspace/skills/<name>/SKILL.md` with `always: false`. Updates replace exactly one `<!-- paos:learned-workflow:start -->` managed block and preserve human-authored content. A built-in baseline is archived and copied to a workspace override; built-in files are never changed. Atomic writes, structural/content validation, workspace reload, revision archives, and rollback guard every promotion. The current turn keeps its activated digest; refreshed summaries apply on a later turn.
+
+## 11. Extension workflows
+
+### 11.1 Add a Gateway action
 
 Action implementation and registration happen in Forge Gateway/Runtime, not PAOS:
 
@@ -243,17 +305,17 @@ Action implementation and registration happen in Forge Gateway/Runtime, not PAOS
 4. Keep terminal states within the supported contract.
 5. Add only generic contract/fake-Gateway tests in PAOS—never an action-specific verifier flag.
 
-### 10.2 Add an evidence source
+### 11.2 Add an evidence source
 
 Publish a stable `id`, monotonically increasing `seq`, legal `content_type`, and Base64 data on Gateway `/ws/images`. An optional `timestamp` must be real source time. Reference that source from PAOS target configuration or the task evidence policy.
 
 A new evidence kind must extend public contracts, collection/writing, request resolution, retention, and end-to-end tests together. Do not hide private artifact paths in action manifests.
 
-### 10.3 Add an Agent tool
+### 11.3 Add an Agent tool
 
 Only add a tool when the seven generic Forge tools cannot represent the capability. A new tool must not accept caller-supplied session/command IDs, POST directly to Gateway, or bypass Store/Orchestrator.
 
-## 11. Errors and observability
+## 12. Errors and observability
 
 Stable error prefixes support operational triage:
 
@@ -268,7 +330,9 @@ Stable error prefixes support operational triage:
 
 The SQLite event log is the orchestration audit source. Raw Gateway create/last/cancel responses remain in the session record. Public artifacts provide cross-process readable facts.
 
-## 12. Testing
+Evolution has a separate structured event stream including episode/assessment completion, eligibility rejection, observation/cluster support, Lesson activation/supersession/retirement, candidate support/block/promotion, validation rejection, budget deferral, baseline archive, and rollback. Logs expose IDs and bounded summaries rather than sensitive task values.
+
+## 13. Testing
 
 ```bash
 python -m pip install -e ".[dev]"
@@ -286,7 +350,11 @@ Tests should cover:
 - all four modes, missing evidence, service errors, retention, and review immutability;
 - restart before POST, 404 after intent, late capture, interrupted verification, recovery deduplication;
 - tool registration, system-event routing, and Forge-disabled behavior;
-- repository guard against the removed execution architecture.
+- repository guard against the removed execution architecture;
+- exact Skill activation, workspace precedence, primary uniqueness, supporting Skills, availability, and path rejection;
+- learnable-outcome classification, root/replay/recovery/review idempotency, redacted traces, job restart, and fail-open behavior;
+- Lesson eligibility, same-pattern clustering, independent-root threshold, static/model abstraction validation, projection, migration, supersession, and retirement;
+- first/second/third success promotion, blockers, managed-block protection, built-in override, atomic revision archive, reload, and rollback.
 
 Optional black-box tests connect only through `FORGE_GATEWAY_URL` and never modify Gateway source or configuration.
 
@@ -296,3 +364,4 @@ Optional black-box tests connect only through `FORGE_GATEWAY_URL` and never modi
 - [Communication Architecture](../user_development_guide/COMMUNICATION_en.md)
 - [Forge Integration Contract](../forge/README.md)
 - [Configuration Reference](04-forge-configuration-reference.md)
+- [Agent Experience and Skill Evolution](05-agent-experience-and-skill-evolution.md)

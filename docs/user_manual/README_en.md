@@ -1,6 +1,6 @@
 # PhyAgentOS Operations Manual
 
-> Version: 0.2.0 · [中文](README.md)
+> Version: 0.2.1 · [中文](README.md)
 
 This manual is for deployment, demonstrations, and operations. It focuses on running the Forge execution–evidence–verification–recovery loop reliably. See the [User Manual](../en/02-user-manual.md) for installation and task authoring, and the [Configuration Reference](../en/04-forge-configuration-reference.md) for exact parameters.
 
@@ -46,6 +46,13 @@ Use `paos agent` for interactive or one-message work and `paos gateway` for long
 - `evidenceRetention` satisfies privacy, audit, and disk policy.
 - Replan budget and deadline fit site-response requirements.
 
+### Experience and evolution
+
+- `agents.evolution` thresholds and model/provider are intentional for this deployment.
+- Workspace access permits `.paos/evolution/` and `skills/` atomic writes.
+- Operators know that root `LESSONS.md` is not global Agent context while evolution is enabled.
+- `AGENTS.md` and `EMBODIED.md` contain stable operator safety constraints; learned Lessons are not used as their replacement.
+
 ## 3. Startup and health
 
 Start Forge first, then PAOS:
@@ -84,6 +91,8 @@ Record the returned `session_id` and `command_id`. Use `forge_get_session` throu
 | `error_code/error_message` | Failure layer and detail |
 
 Do not rely on Gateway `succeeded` alone. In `enforce` or `recovery`, task success requires PAOS `status=succeeded` and a `success` verdict.
+
+Experience processing is asynchronous. Forge completion can be reported before its episode assessment, Lesson cluster synthesis, or Skill promotion finishes. Review `.paos/evolution/experience.sqlite3` events and `skills/<name>/references/LESSONS.md` for that separate status; never hold or repeat a physical task merely to wait for evolution.
 
 ## 5. Cancellation and reset
 
@@ -126,6 +135,7 @@ PAOS loads non-terminal records at startup:
 | Finalizing | Attempt after capture and contract writing | Inspect source and sequence |
 | Verifying | Mark old attempt abandoned and retry | Inspect provider/service |
 | Awaiting replan | May redeliver same recovery event | Check Planner child and deadline |
+| Evolution job running | Reset to pending on restart | Let background processing resume; Forge is unaffected |
 
 If physical state is unknown, stop automated work and require operator confirmation instead of probing with another task.
 
@@ -135,6 +145,10 @@ If physical state is unknown, stop automated work and require operator confirmat
 <workspace>/.paos/forge/orchestrator.sqlite3
 <workspace>/.paos/forge/orchestrator.sqlite3-wal
 <workspace>/.paos/forge/orchestrator.sqlite3-shm
+<workspace>/.paos/evolution/experience.sqlite3
+<workspace>/.paos/evolution/experience.sqlite3-wal
+<workspace>/.paos/evolution/revisions/
+<workspace>/skills/<skill>/references/LESSONS.md
 <workspace>/artifacts/forge/<session_id>/
 ```
 
@@ -147,6 +161,8 @@ Backup guidance:
 - Monitor Bundle, Execution, and event-log growth even with retention configured.
 
 `maxArtifactBytes` is a per-entity limit, not a per-session or workspace quota.
+
+Treat the evolution database as authoritative and the per-Skill `LESSONS.md` as a generated projection. Include both the database/WAL and Skill/revision tree in backups. Do not repair blocked clusters or candidates by editing SQLite or the projection directly.
 
 ## 9. Failure layers
 
@@ -170,6 +186,10 @@ Identity mismatch or `FORGE_EXECUTION_STATE_LOST`: treat as a duplicate-action r
 
 `VERIFICATION_REPLAN_LIMIT_REACHED` or `VERIFICATION_REPLAN_TIMEOUT`: automatic continuation is over. Review lessons, unmet criteria, and physical state before the user creates a new task.
 
+### F. Experience evolution
+
+A collecting or blocked Lesson cluster and a blocked Skill candidate are background-learning states, not task failures. Check independent root support, applicability, static policy, abstraction confidence, conflicts, Skill structure, and reload/rollback events. An evolution model/store error must fail open; escalate if it changes Forge state or delays the completion notification.
+
 ## 10. Operational acceptance checklist
 
 - [ ] Gateway API/version/supports validation passes.
@@ -182,6 +202,10 @@ Identity mismatch or `FORGE_EXECUTION_STATE_LOST`: treat as a duplicate-action r
 - [ ] Non-`off` work has a goal and criteria and receives a verdict or explicit failure.
 - [ ] User-facing outcome separates execution status from verification verdict.
 - [ ] Recovery child has fresh IDs and traceable parent/root lineage.
+- [ ] Matching workflows activate a registered primary Skill before execution; direct file reads are not counted as activation.
+- [ ] Evolution counts root lineages once and leaves unrelated/uncertain failures diagnostic-only.
+- [ ] Only active, scoped Lessons are dynamically loaded; operator safety files remain unchanged.
+- [ ] Promoted Skills have three configured independent successes, a managed block, revision history, and a reloadable workspace file.
 
 ## Next reading
 
@@ -189,3 +213,4 @@ Identity mismatch or `FORGE_EXECUTION_STATE_LOST`: treat as a duplicate-action r
 - [Configuration Reference](../en/04-forge-configuration-reference.md)
 - [Communication Architecture](../user_development_guide/COMMUNICATION_en.md)
 - [Forge Integration Contract](../forge/README.md)
+- [Agent Experience and Skill Evolution](../en/05-agent-experience-and-skill-evolution.md)

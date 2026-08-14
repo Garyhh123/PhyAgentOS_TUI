@@ -1,8 +1,8 @@
 # PhyAgentOS 通信架构
 
-> 版本：0.2.0 · [English](COMMUNICATION_en.md)
+> 版本：0.2.1 · [English](COMMUNICATION_en.md)
 
-## 1. 五个通信边界
+## 1. 六个通信边界
 
 PhyAgentOS 不用一条内部总线混合用户消息、物理执行与验证：
 
@@ -11,6 +11,7 @@ PhyAgentOS 不用一条内部总线混合用户消息、物理执行与验证：
 3. **PAOS/Gateway 边界**：异步 HTTP + WebSocket。
 4. **Verifier 边界**：Orchestrator ↔ 独立 Verification Service 进程。
 5. **持久化边界**：Orchestrator ↔ SQLite；Adapter/Verifier ↔ workspace artifacts。
+6. **经验边界**：AgentLoop ↔ experience coordinator ↔ evolution ledger 与 workspace Skills。
 
 ```text
 External Channel
@@ -26,6 +27,8 @@ External Channel
                 │
                 ▼
         Forge Runtime / Dora
+
+terminal root reference ─ Experience Coordinator ─ Evolution SQLite / Skill files
 ```
 
 ## 2. 用户消息边界
@@ -53,6 +56,8 @@ verify_forge_session
 create_replanned_forge_session
 ```
 
+启用 evolution 时，`activate_skill` 是 Agent context 工具，不是机器人执行接口。它解析已注册 Skill，返回完整工作流与适用 active Lesson，并记录 primary/supporting 归因；不会调用 Forge 或 Gateway。
+
 `forge_execute_task` 立即返回生成的 ID 与 `accepted`，不阻塞模型调用等待物理执行。Orchestrator 在后台推进状态，并通过 system event 把终态送回原 `session_key`。
 
 Completion event 包含：
@@ -70,6 +75,8 @@ Completion event 包含：
 ```
 
 Recovery event 包含 parent、goal、criteria、preserved constraints、unmet criteria、guidance、evidence refs 和 deadline。它明确要求 Planner 调用 `create_replanned_forge_session`，但不携带可执行 action。
+
+Terminal completion event 还带 `metadata.forge_session_id`。AgentLoop 使用该不可变引用调度后台经验捕获，不延迟或改变面向用户的 completion 链路。
 
 ## 4. PAOS/Gateway HTTP
 
@@ -159,7 +166,24 @@ Execution timeout 由 PAOS deadline 产生 `timed_out`，随后调用 cancel；�
 
 请求需要随机派生的 `X-PAOS-Admin-Token`。Service 只接收已解析的公共 contracts、多模态 evidence、history 和 lessons。它不访问 Gateway，也不创建 recovery child。
 
-## 9. 持久化边界
+## 9. 经验边界
+
+`forge_execute_task` 将当前 turn 的 activation/trace snapshot 绑定到已接受 root task。终结引用随后转换为唯一 root 的去敏 `TaskOutcomeEnvelope` 和 `TaskEpisode`。Adapter 只保存工具/action 名、input 字段名、semantic verdict、不透明 evidence reference 与不可变 lineage record ID，不把原始 inputs、outputs、凭据、endpoint 或 command ID 复制到学习内容。
+
+后台反思只与配置的模型 Provider 通信，不能调用 Gateway 或 Agent tools。结构化输出通过校验后才能支持 Skill candidate 或规范化 failure observation；Lesson 合成只接收 cluster 的规范化 observations。
+
+Evolution 只写：
+
+```text
+<workspace>/.paos/evolution/experience.sqlite3
+<workspace>/.paos/evolution/revisions/
+<workspace>/skills/<skill>/SKILL.md
+<workspace>/skills/<skill>/references/LESSONS.md
+```
+
+它不写 `AGENTS.md` 或 `EMBODIED.md`，也不参与 Forge 事务。
+
+## 10. 持久化边界
 
 ### SQLite
 
@@ -176,13 +200,13 @@ evidence_bundle.json
 evidence/*
 ```
 
-Verifier 写 `verification_result.json` 与 `LESSONS.md`。Artifact URI 必须相对 workspace，读取时再次 resolve 并检查不越界。
+Verifier 写 `verification_result.json`。关闭 evolution 时还可追加旧版根目录 `LESSONS.md`；启用时，原始 verifier Lesson 文本只作为反思输入，由经验账本生成 Skill 绑定投影。Artifact URI 必须相对 workspace，读取时再次 resolve 并检查不越界。
 
 ### 一致性边界
 
 SQLite 与 artifact 不是一个跨资源事务。因此关键顺序是：before entity/manifest 先完成再记录 reference；dispatch intent 在 HTTP mutation 前完成；Execution Record 首次写入后可在 DB commit crash window 中重新读取，但 identity 不匹配会失败。
 
-## 10. 信任边界
+## 11. 信任边界
 
 | 数据 | 信任策略 |
 |:-----|:---------|
@@ -192,9 +216,12 @@ SQLite 与 artifact 不是一个跨资源事务。因此关键顺序是：before
 | Artifact | safe URI、existence、byte size、SHA-256、media type 再校验 |
 | Verifier output | JSON、Pydantic、exact criteria、known evidence refs 校验 |
 | Recovery guidance | 只作为 Planner context，不作为命令 |
+| Experience input | 不可信、已去敏任务数据；使用严格版本化 assessment 模型 |
+| Learned Lesson/Skill | 激活/写入前经过静态安全/具体性检查与结构化校验 |
 
 ## 后续阅读
 
 - [集成开发指南](README.md)
 - [开发者手册](../zh/03-developer-manual.md)
 - [Forge 接入契约](../forge/README_zh.md)
+- [Agent 经验与 Skill 自进化](../zh/05-agent-experience-and-skill-evolution.md)

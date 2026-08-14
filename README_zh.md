@@ -13,7 +13,7 @@
   </p>
   <p>
     <img src="https://img.shields.io/badge/Python-≥3.11-3776AB?logo=python&logoColor=white" alt="Python">
-    <img src="https://img.shields.io/badge/Version-v0.2.0-47A882" alt="Version">
+    <img src="https://img.shields.io/badge/Version-v0.2.1-47A882" alt="Version">
     <img src="https://img.shields.io/badge/License-MIT-3DA639" alt="License">
     <a href="https://arxiv.org/pdf/2607.16636">
       <img src="https://img.shields.io/badge/技术报告-arXiv-b31b1b?logo=arxiv&logoColor=white" alt="技术报告">
@@ -38,6 +38,7 @@ PhyAgentOS 是一个面向具身任务的 Agent 框架。Agent 规划高层动�
 
 | 版本 | 日期 | 更新内容 |
 |:-----|:-----|:---------|
+| ![v0.2.1](https://img.shields.io/badge/v0.2.1-47A882) | 2026-08-14 | 增加经验证的任务经验、显式工作流 Skill 激活、受控 Skill 自进化，以及具有独立支持计数与抽象校验的聚类式作用域 Lesson。 |
 | ![v0.2.0](https://img.shields.io/badge/v0.2.0-47A882) | 2026-08-03 | 引入 Forge 执行架构，全面对接 Forge Gateway 1.0.0；新增不可变 Execution/Evidence 公共契约、系统级语义验证、Planner 主导的恢复、崩溃安全 SQLite 编排，并彻底移除旧 Runtime 执行链。 |
 | ![v0.1.7](https://img.shields.io/badge/v0.1.7-47A882) | 2026-07-05 | 支持 Policy loop 与 Target-native builtin 两条 Benchmark 路径，并加入 Agent 验证与失败恢复服务。 |
 | ![v0.1.6](https://img.shields.io/badge/v0.1.6-47A882) | 2026-06-27 | 增加 BEHAVIOR-1K 支持、`SessionVerifier` 与显式 Session 验证工具。 |
@@ -56,6 +57,7 @@ PhyAgentOS 是一个面向具身任务的 Agent 框架。Agent 规划高层动�
 <tr><td>🧠</td><td><b>动作无关验证</b></td><td>Verifier 只接收 goal、criteria、constraints、执行事实、证据、lineage history 与 lessons，不设计动作专用开关。</td></tr>
 <tr><td>🧱</td><td><b>崩溃安全编排</b></td><td>SQLite 事务持久化身份、状态与 dispatch intent。已尝试派发的任务在重启后只查询，不盲目重发 POST。</td></tr>
 <tr><td>🔄</td><td><b>Planner 主导恢复</b></td><td>恢复判定只产生不可执行的上下文；正常 Planner 必须用全新 session/command ID 创建 child action。</td></tr>
+<tr><td>📚</td><td><b>作用域经验</b></td><td>经过验证的 root lineage 支持可复用工作流 Skill 和聚类 Lesson；无关失败只保留诊断，学习到的指导仅随匹配 Skill 动态加载。</td></tr>
 </table>
 
 ## 架构
@@ -80,6 +82,11 @@ Forge Gateway 1.0.0       verdict / recovery request
        │
        ▼
 Forge Runtime + Dora + 机器人/仿真器
+
+终结 root lineage ─────► Experience Coordinator ──► evolution ledger
+                                │                         │
+                         Skill candidates          scoped Lessons
+                                └──────────► workspace Skills
 ```
 
 系统始终分离三类事实：
@@ -99,6 +106,7 @@ Forge Runtime + Dora + 机器人/仿真器
 | 验证 | 支持 `off`、`audit`、`enforce`、`recovery`，并生成逐 criteria 的结构化 verdict。 |
 | 恢复 | parent/child 原子转换、replan 预算、deadline、全新 ID 和 system event 唤醒正常 Planner。 |
 | 持久化 | SQLite WAL 事件日志与工作区 JSON/图像 artifact；Execution Record 不会被复核或 retention 覆盖。 |
+| 任务经验 | 显式 Skill 激活、去敏 root-lineage episode、异步反思、聚类式作用域 Lesson 与受控 Skill 晋升。 |
 | Agent 平台 | CLI、多渠道 Gateway、Provider、工具、Skills、MCP、记忆、Cron、Heartbeat 和知识工作区。 |
 
 ## 5 分钟快速开始
@@ -141,6 +149,15 @@ paos onboard
       "evidenceRetention": "failed",
       "maxReplansPerEpisode": 2,
       "maxVerifierCallsPerRun": 50
+    },
+    "evolution": {
+      "enabled": true,
+      "scope": "verified_forge_lineage",
+      "promotionMode": "guarded_auto",
+      "minSuccessfulEpisodes": 3,
+      "minLessonEpisodes": 3,
+      "maxLessonsPerSkill": 8,
+      "maxEvolutionCallsPerRun": 20
     }
   },
   "providers": {
@@ -230,6 +247,19 @@ paos gateway
 
 这些工具只在 `forge.enabled=true` 时注册。
 
+## 任务经验与 Skill 自进化
+
+`agents.evolution.enabled=true` 时，Agent 会在首次工具调用前检查已注册 Skill 摘要。`activate_skill(name, role)` 会加载完整工作流及当前任务适用的作用域 Lesson，并记录可审计的任务—Skill 绑定。每个 turn 最多一个 primary Skill，可有多个 supporting Skill；只有 primary 可被自动更新。直接读取 `SKILL.md` 不会建立该绑定。
+
+具有语义判定的 Forge root lineage 会在后台形成任务级经验：
+
+- 与工作流相关的语义失败先形成规范化 observation；同一失败模式默认需要三个独立 root lineage 支持，才能合成抽象 Lesson 并投影到 `skills/<name>/references/LESSONS.md`；
+- 任务不可满足、Verifier/证据能力不足、外部基础设施问题和不确定归因只记录诊断，不生成 Skill Lesson；
+- 语义成功支持 Skill candidate；默认三个独立成功 root lineage 后，才可晋升经过校验的 workspace Skill revision；
+- `inconclusive`、非法 verdict、review-only 和 `verification=off` 不训练 Skill。
+
+演化链路 fail-open，不改变 Forge 的提交、执行、证据、验证与恢复流程。Built-in Skill 不会原地修改；晋升结果写为 workspace override，旧版本保存在 `.paos/evolution/`。
+
 ## 持久化与工作区
 
 ```text
@@ -237,6 +267,10 @@ paos gateway
 ├── AGENTS.md / SOUL.md / USER.md / TOOLS.md / SKILLS.md
 ├── EMBODIED.md / ENVIRONMENT.md / LESSONS.md / TASK.md
 ├── .paos/forge/orchestrator.sqlite3
+├── .paos/evolution/experience.sqlite3
+├── .paos/evolution/revisions/<skill>/
+├── skills/<skill>/SKILL.md
+├── skills/<skill>/references/LESSONS.md
 └── artifacts/forge/<session_id>/
     ├── execution_record.json
     ├── evidence_bundle.json
@@ -245,13 +279,13 @@ paos gateway
     └── evidence/
 ```
 
-`EMBODIED.md`、`ENVIRONMENT.md` 和 SceneGraph 继续作为知识面存在，但不承担执行队列职责。PAOS 不再读取或生成旧 Runtime Markdown queue 文件。
+`EMBODIED.md`、`ENVIRONMENT.md` 和 SceneGraph 继续作为知识面存在，但不承担执行队列职责。启用 evolution 后，根目录 `LESSONS.md` 作为旧版/人工材料保留，但不再注入每个 Agent turn；学习型 Lesson 以经验数据库为事实源。PAOS 不再读取或生成旧 Runtime Markdown queue 文件。
 
 ## 项目结构
 
 ```text
 PhyAgentOS/
-├── PhyAgentOS/agent/          # AgentLoop、工具、记忆、Verifier 集成
+├── PhyAgentOS/agent/          # AgentLoop、工具、记忆、经验与 Verifier 集成
 ├── PhyAgentOS/forge/          # Gateway client、观测、Adapter、Store、Orchestrator
 ├── PhyAgentOS/verification/   # 公共契约、请求构造、Engine、Service
 ├── PhyAgentOS/channels/       # 消息渠道
@@ -264,11 +298,13 @@ PhyAgentOS/
 
 | 文档 | 面向 | 内容 |
 |:-----|:-----|:-----|
+| [Changelog](CHANGELOG.md) | 所有人 | 按 Added、Changed、Security 分类的详细发布记录 |
 | [文档索引](docs/README.md) | 所有人 | 双语阅读路径与完整文档地图 |
 | [框架介绍](docs/zh/01-framework-introduction.md) | 架构师、用户 | 设计、边界、生命周期和当前能力 |
 | [用户手册](docs/zh/02-user-manual.md) | 使用与运维人员 | 安装、配置、任务、Artifact 和排障 |
 | [开发者手册](docs/zh/03-developer-manual.md) | 开发者 | 契约、不变量、扩展点和测试 |
 | [Forge 配置参考](docs/zh/04-forge-configuration-reference.md) | 部署人员 | Forge、Evidence、Verification 和 Task 精确字段 |
+| [Agent 经验与 Skill 自进化](docs/zh/05-agent-experience-and-skill-evolution.md) | 用户、开发者 | Skill 激活、Episode、Lesson 聚类、晋升、持久化与安全门控 |
 | [运行手册](docs/user_manual/README.md) | 运维人员 | 启动、监控、重启、取消与故障处理 |
 | [集成开发指南](docs/user_development_guide/README.md) | 生态开发者 | 不引入 action-specific verifier 的 Gateway action 接入方式 |
 | [Forge 接入契约](docs/forge/README_zh.md) | Gateway/PAOS 开发者 | HTTP/WebSocket、身份、证据、验证、恢复和重启契约 |

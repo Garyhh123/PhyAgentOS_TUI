@@ -6,6 +6,8 @@ import re
 import shutil
 from pathlib import Path
 
+import yaml
+
 # Default builtin skills directory (relative to this file)
 BUILTIN_SKILLS_DIR = Path(__file__).parent.parent / "skills"
 
@@ -59,6 +61,18 @@ class SkillsLoader:
         if filter_unavailable:
             return [s for s in skills if self._check_requirements(self._get_skill_meta(s["name"]))]
         return skills
+
+    def resolve_skill(self, name: str, *, require_available: bool = True) -> dict[str, str] | None:
+        """Resolve a registered Skill by exact name without accepting arbitrary paths."""
+        if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name):
+            return None
+        for skill in self.list_skills(filter_unavailable=False):
+            if skill["name"] != name:
+                continue
+            if require_available and not self._check_requirements(self._get_skill_meta(name)):
+                return None
+            return dict(skill)
+        return None
 
     def load_skill(self, name: str) -> str | None:
         """
@@ -159,10 +173,41 @@ class SkillsLoader:
 
     def _get_skill_description(self, name: str) -> str:
         """Get the description of a skill from its frontmatter."""
+        content = self.load_skill(name) or ""
+        managed = re.search(
+            r"<!-- paos:learned-workflow:start -->[\s\S]*?### Trigger\s+"
+            r"([\s\S]*?)(?=\n### |\n<!-- paos:learned-workflow:end -->)",
+            content,
+        )
+        if managed and managed.group(1).strip():
+            return " ".join(managed.group(1).split())
         meta = self.get_skill_metadata(name)
         if meta and meta.get("description"):
             return meta["description"]
         return name  # Fallback to skill name
+
+    def build_evolution_catalog(
+        self, activated_names: set[str]
+    ) -> list[dict[str, str]]:
+        """Return redaction-safe summaries plus managed text for activated Skills only."""
+        catalog: list[dict[str, str]] = []
+        for skill in self.list_skills(filter_unavailable=False):
+            item = {
+                "name": skill["name"],
+                "source": skill["source"],
+                "description": self._get_skill_description(skill["name"]),
+            }
+            if skill["name"] in activated_names:
+                content = self.load_skill(skill["name"]) or ""
+                managed = re.search(
+                    r"<!-- paos:learned-workflow:start -->[\s\S]*?"
+                    r"<!-- paos:learned-workflow:end -->",
+                    content,
+                )
+                if managed:
+                    item["managed_workflow"] = managed.group(0)[:12000]
+            catalog.append(item)
+        return catalog
 
     def _strip_frontmatter(self, content: str) -> str:
         """Remove YAML frontmatter from markdown content."""
@@ -172,10 +217,10 @@ class SkillsLoader:
                 return content[match.end():].strip()
         return content
 
-    def _parse_paos_metadata(self, raw: str) -> dict:
+    def _parse_paos_metadata(self, raw: str | dict) -> dict:
         """Parse skill metadata JSON from frontmatter (supports PhyAgentOS and openclaw keys)."""
         try:
-            data = json.loads(raw)
+            data = raw if isinstance(raw, dict) else json.loads(raw)
             return data.get("PhyAgentOS", data.get("openclaw", {})) if isinstance(data, dict) else {}
         except (json.JSONDecodeError, TypeError):
             return {}
@@ -233,12 +278,10 @@ class SkillsLoader:
         if content.startswith("---"):
             match = re.match(r"^---\n(.*?)\n---", content, re.DOTALL)
             if match:
-                # Simple YAML parsing
-                metadata = {}
-                for line in match.group(1).split("\n"):
-                    if ":" in line:
-                        key, value = line.split(":", 1)
-                        metadata[key.strip()] = value.strip().strip('"\'')
-                return metadata
+                try:
+                    metadata = yaml.safe_load(match.group(1))
+                except yaml.YAMLError:
+                    return None
+                return metadata if isinstance(metadata, dict) else None
 
         return None

@@ -47,11 +47,13 @@ class ForgeTaskVerifier:
         session_secret: str | None = None,
         service_provider_spec: dict[str, Any] | None = None,
         max_calls: int = 50,
+        write_legacy_lessons: bool = True,
     ) -> None:
         self.workspace = Path(workspace).expanduser().resolve()
         self.engine = VerificationEngine(provider=provider, model=model, timeout_s=timeout_s)
         self.evidence_retention = evidence_retention
         self.max_calls = max(0, int(max_calls))
+        self.write_legacy_lessons = bool(write_legacy_lessons)
         self.calls = 0
         self.request_builder = VerificationRequestBuilder(self.workspace)
         self.service = VerificationServiceProcess(
@@ -199,6 +201,8 @@ class ForgeTaskVerifier:
         phase: str,
         error_code: str | None = None,
     ) -> None:
+        if not self.write_legacy_lessons:
+            return
         path = self.workspace / "LESSONS.md"
         entry = (
             f"\n\n## {utc_now().isoformat()} — {record.session_id}\n\n"

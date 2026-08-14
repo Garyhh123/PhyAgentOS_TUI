@@ -1,6 +1,6 @@
 # PhyAgentOS 开发者手册
 
-> 文档版本：0.2.0。本文面向 PAOS、Forge Gateway、Evidence、Verifier 与 Agent 工具开发者。
+> 文档版本：0.2.1。本文面向 PAOS、Forge Gateway、Evidence、Verifier、Agent 工具与经验演化开发者。
 
 ## 1. 开发原则
 
@@ -16,6 +16,8 @@
 8. Verifier prompt、公共 Verdict 和 Recovery Request 与具体 `action_type` 无关。
 9. parent `replanned` 与 child 创建必须在一个 SQLite 事务中完成。
 10. 修改执行、证据、验证、恢复或持久化时必须覆盖失败路径和重启路径。
+11. 经验按 root lineage 只计一次，保存去敏工作流结构而不是原始工具数据，且不进入 Forge 关键路径。
+12. 演化必须 fail-open，不改写 operator 安全文件，只修改通过校验的 workspace Skill managed block 或生成的 Lesson 投影。
 
 ## 2. 模块地图
 
@@ -27,7 +29,12 @@
 | Verification request | `PhyAgentOS/verification/request_builder.py` | 解析 Bundle、验证 digest/窗口/要求、构造多模态请求 |
 | Verification engine | `PhyAgentOS/verification/engine.py` | 无状态模型调用与 timeout |
 | Verification service | `PhyAgentOS/verification/service.py` | 独立进程、readiness、鉴权和严格 JSON 输出 |
-| Verifier facade | `PhyAgentOS/agent/session_verifier.py` | budget、attempt、retention、lesson 与 review |
+| Verifier facade | `PhyAgentOS/agent/session_verifier.py` | budget、attempt、retention、可选旧版 Lesson 写入与 review |
+| Skill 激活 | `PhyAgentOS/agent/experience/activation.py` | turn 级 primary/supporting 绑定、trace 字段名与 scoped Lesson 检索 |
+| 经验契约 | `PhyAgentOS/agent/experience/contracts.py` | Outcome、Episode、Assessment、Observation、Cluster、Lesson 与 Candidate 模型 |
+| Outcome adapter | `PhyAgentOS/agent/experience/source.py` | 通用 `TaskOutcomeSource` 与 Forge root-lineage envelope |
+| 经验协调器/存储 | `PhyAgentOS/agent/experience/coordinator.py`、`store.py` | 异步 job、root 幂等、SQLite WAL 账本与重启恢复 |
+| 反思与演化 | `PhyAgentOS/agent/experience/analyzer.py`、`evolution.py` | 结构化模型调用、Lesson 生命周期、Skill 校验/晋升/回滚 |
 | Gateway client | `PhyAgentOS/forge/client.py` | `httpx.AsyncClient` 的 Agent API 封装 |
 | Observation | `PhyAgentOS/forge/observation.py` | 异步 WebSocket、多 source 最新帧缓存与校验 |
 | Evidence writer | `PhyAgentOS/forge/evidence.py` | 安全路径、原子写入、SHA-256、snapshot 与 Bundle |
@@ -77,6 +84,23 @@ ForgeTaskRequest(
 
 Verifier 必须为输入的每条 success criterion 返回且只返回一个 `CriterionVerdict`，并逐字复制 criterion。`success` 要求全部 `satisfied`；`failure`/`replan_required` 至少有一项未满足或 unknown；`replan_required` 还必须提供动作无关的 `recovery_context`。
 
+### 3.6 经验契约
+
+经验子系统具有独立版本化边界：
+
+| 模型 | 作用 |
+|:-----|:-----|
+| `TaskOutcomeEnvelope` | Provider 无关的语义结果、criterion 状态、lineage attempts 与不透明记录/证据引用 |
+| `TaskEpisode` | 一个去敏 root task，加 Skill activations 与 workflow trace |
+| `ExperienceAssessment` | 包含复用判定、Skill proposal、failure observations、反证和冲突的结构化反思 |
+| `LessonEligibility` | `related | unrelated | uncertain` 归因、有限 reason enum 与置信度 |
+| `FailureObservation` | 不包含具体答案或原始任务值的规范化工作流失败模式 |
+| `LessonCluster` | 同 Skill、同 workflow、同 canonical pattern 的支持和合成状态 |
+| `ScopedLesson` | 适用/不适用边界、失败模式、建议、来源支持与生命周期状态 |
+| `SkillCandidate` | create/update proposal、独立支持、blocker、revision 与晋升状态 |
+
+这些契约拒绝额外字段。持久化 workflow trace 只包含工具名和输入字段名；endpoint、凭据、绝对路径、command ID、原始输出与 evidence locator 会被删除或替换成不透明引用。Lineage session ID 只作为内部不可变 record reference 保留，禁止进入生成的 Lesson/Skill 内容。
+
 ## 4. 状态机与事务
 
 允许转换定义在 `ALLOWED_FORGE_TRANSITIONS`。Store 的所有 update 会先加载模型、执行 mutation、验证转换、更新时间、写 JSON、追加 event，再提交事务。
@@ -102,6 +126,8 @@ forge_events
 ```
 
 `BEGIN IMMEDIATE` 用于任务创建与 replan，确保多个 PAOS Store 实例并发提交时仍只有一个 non-terminal lineage。
+
+经验状态独立存放在 `.paos/evolution/experience.sqlite3`。表包括 task binding、root 唯一的 episode/job、scoped Lesson、failure observation、Lesson cluster、唯一 `(cluster_id, root_task_id)` 支持、cluster job、Skill candidate、event 与 migration metadata。WAL 和 `BEGIN IMMEDIATE` 保护写入；进程启动时会把中断的 running job 恢复为 `pending`。该数据库不参与 Forge 状态转换。
 
 ## 5. Gateway 启动契约
 
@@ -211,10 +237,10 @@ Prompt 只包含：
 - immutable Execution Record；
 - Evidence Bundle 与实体；
 - root lineage history；
-- LESSONS；
+- 存在时的旧版/人工根目录 Lessons；
 - 合法 evidence IDs。
 
-非法服务输出会被规范为 `inconclusive`，随后公共模型和 exact-criteria validator 继续校验。`audit` 记录错误；`enforce`/`recovery` fail closed。
+非法服务输出会被规范为 `inconclusive`，随后公共模型和 exact-criteria validator 继续校验。`audit` 记录错误；`enforce`/`recovery` fail closed。Verdict 的 `lesson` 字段只作为反思输入；启用 evolution 时，Verifier 不再把它直接追加到根目录 `LESSONS.md`。
 
 ## 9. Recovery
 
@@ -230,9 +256,45 @@ Planner 调用 `create_replanned_forge_session` 时：
 - PAOS 生成新的 session/command ID；
 - parent terminal 与 child create 原子提交；重复调用返回已有 child。
 
-## 10. 扩展工作流
+## 10. Agent 任务经验与 Skill 自进化
 
-### 10.1 新增 Gateway action
+### 10.1 激活与归因
+
+`activate_skill` 只解析 `SkillsLoader` 注册的精确 hyphen-case 名称，遵循 workspace 优先于 built-in，并拒绝 unavailable Skill 和任意路径。一个 turn 可激活一个 primary 和多个 supporting Skill。返回值包含完整 Skill、activation record/digest 与排序后的 active Lesson。只有 primary 可自动更新；supporting Skill 可接收失败归因。
+
+AgentLoop 在 turn 内记录工具顺序和参数字段名。`forge_execute_task` 接受新 root session 后，将 activation snapshot 绑定到 root ID。直接读取 `SKILL.md` 不算激活；无激活任务保持 unbound，系统不会事后猜测关联。
+
+### 10.2 Outcome 捕获与反思 job
+
+`ForgeTaskOutcomeSource` 把完整 root lineage 转换为去敏 `TaskOutcomeEnvelope`。自动终结 system event 对同一 root 最多创建一个 episode/job；recovery child、重复 event、进程 replay 与人工 review 都不能增加独立支持。
+
+只有语义 `success`、`failure`、`replan_required` 可学习。成功必须具有非空 criterion statuses 且全部为 `satisfied`。恢复后成功属于 `mixed`：既可支持最终成功工作流，也保留规范化失败尝试。`off`、`inconclusive`、非法/服务错误和 review-only 结果被排除。
+
+Coordinator 先持久化再调度 `asyncio` 反思，并按已存 job 策略重试。其调用计数与 `maxVerifierCallsPerRun` 分离；evolution budget 耗尽只延后 job，不改变任务结果。
+
+### 10.3 Lesson 聚类与生命周期
+
+反思模型为每个 failed/replanned 工作流模式输出 `LessonEligibility`。只有 `decision=related` 且 `reason=workflow_related` 继续；`task_unsatisfiable`、`verifier_limit`、`evidence_limit`、`external_or_infrastructure`、`user_constraint` 和 `unknown` 只形成诊断事件。
+
+相关失败转换为规范化 `FailureObservation`。模型在语义等价时选择同 Skill/同 workflow 的现有 cluster，否则提出稳定 `pattern_key`；首期不使用 embedding 或向量数据库。SQLite 对每个 cluster 的 root 只计一次；低于 `minLessonEpisodes` 时保持 `collecting`。
+
+达到门槛后，Lesson 合成只接收规范化 observations，不接收原始 inputs。静态校验拒绝凭据、endpoint、路径、action/command/session ID、Action Manifest 内容、绕过指令、prompt injection、固定坐标/数值/选项与答案式表达。第二层结构化模型校验必须得到 `reusable=true`、`contains_specific_answer=false`、空 `unsupported_literals` 且置信度至少 `0.8`；否则 cluster 变为 `blocked`，永不注入。
+
+active `ScopedLesson` 只能被同 Skill/workflow 作用域内的 active replacement supersede。独立成功反证可使其 retired 并重新打开 cluster。`references/LESSONS.md` 是 active/历史 Lesson 及 collecting/blocked cluster 的原子人类可读投影，SQLite 账本才是事实源。`activate_skill` 最多返回 `maxLessonsPerSkill` 条 active 且作用域匹配的 Lesson。
+
+首次启动时，根目录 `LESSONS.md` 条目被导入为 inactive unbound legacy record。已有的 pre-cluster active Lesson 会先降为 inactive，按已知 episode roots 形成 cluster seed，并在重新合成和验证通过后才可恢复 active。
+
+### 10.4 Skill candidate 与晋升
+
+可复用语义成功按 Skill 和 workflow key 创建或合并 candidate。Update proposal 必须指向已激活 primary Skill；没有 primary 时可提出不重复的新 Skill。独立 episode ID 提供支持；晋升要求达到 `minSuccessfulEpisodes`，并会被同 workflow active Lesson、反思冲突、校验错误或不安全内容阻止。
+
+生成内容只允许 trigger、preconditions、通用 steps、verification checkpoints、recovery guidance 和 applicability boundaries，不允许 scripts/assets、endpoint、凭据、固定 Gateway action/ID、Action Manifest 副本或绕过 Forge/verification 的指令。
+
+新 Skill 写入 `workspace/skills/<name>/SKILL.md` 且 `always: false`。更新只替换一个 `<!-- paos:learned-workflow:start -->` managed block，保留人工正文。Built-in baseline 先归档，再复制为 workspace override；built-in 文件永不修改。原子写入、结构/内容校验、workspace reload、revision archive 与 rollback 保护每次晋升。当前 turn 继续使用已激活 digest，后续 turn 才读取刷新后的 summary。
+
+## 11. 扩展工作流
+
+### 11.1 新增 Gateway action
 
 action 实现与注册发生在 Forge Gateway/Runtime 仓库，而不是 PAOS：
 
@@ -242,17 +304,17 @@ action 实现与注册发生在 Forge Gateway/Runtime 仓库，而不是 PAOS：
 4. 保证终态枚举符合契约。
 5. 在 PAOS 中只增加通用 contract/fake Gateway 测试；不要添加 action-specific verifier flag。
 
-### 10.2 新增证据 source
+### 11.2 新增证据 source
 
 在 Gateway `/ws/images` 发布稳定 `id`、单调递增 `seq`、合法 `content_type` 和 Base64 数据；可选 `timestamp` 必须是真实 source time。PAOS target config 或 task evidence policy 引用 source ID。
 
 需要新 evidence kind 时，应同时扩展公共契约、采集/写入、request builder、retention 和端到端测试，而不是在 action manifest 中塞入私有路径。
 
-### 10.3 新增 Agent tool
+### 11.3 新增 Agent tool
 
 只有当能力不能由七个通用 Forge tools 表达时才新增。新 tool 不得让调用者指定 session/command ID，不得直接 POST Gateway，不得绕过 Store/Orchestrator。
 
-## 11. 错误与可观测性
+## 12. 错误与可观测性
 
 稳定错误前缀用于运维分层：
 
@@ -267,7 +329,9 @@ action 实现与注册发生在 Forge Gateway/Runtime 仓库，而不是 PAOS：
 
 SQLite event log 是编排审计源；Gateway 原始 create/last/cancel response 保存在 session record 中；公共 Artifact 提供跨进程可读事实。
 
-## 12. 测试
+Evolution 使用独立结构化 event stream，包括 episode/assessment 完成、eligibility rejected、observation/cluster support、Lesson activated/superseded/retired、candidate supported/blocked/promoted、validation rejected、budget deferred、baseline archived 与 rollback。日志只暴露 ID 和有限摘要，不记录敏感任务值。
+
+## 13. 测试
 
 ```bash
 python -m pip install -e ".[dev]"
@@ -285,7 +349,11 @@ python -m compileall -q PhyAgentOS tests
 - 四种 mode、缺证、Verifier 服务错误、retention 和 review 不改终态；
 - restart 的 POST 前、POST 后 404、补采、验证中断与 recovery 去重；
 - Agent tool 注册、system event 路由和 Forge disabled；
-- repository guard，防止旧执行体系返回活动代码。
+- repository guard，防止旧执行体系返回活动代码；
+- 精确 Skill 激活、workspace 优先级、primary 唯一、supporting、availability 与路径拒绝；
+- learnable outcome 分类、root/replay/recovery/review 幂等、trace 去敏、job restart 与 fail-open；
+- Lesson eligibility、同模式聚类、独立 root 门槛、静态/模型抽象校验、投影、迁移、supersession 与 retirement；
+- 第一/二/三次成功晋升、blocker、managed block 保护、built-in override、原子 revision archive、reload 与 rollback。
 
 可选黑盒测试只通过 `FORGE_GATEWAY_URL` 连接运行中的 Gateway，不修改其源码或配置。
 
@@ -295,3 +363,4 @@ python -m compileall -q PhyAgentOS tests
 - [通信架构](../user_development_guide/COMMUNICATION.md)
 - [Forge 接入契约](../forge/README_zh.md)
 - [配置参考](04-forge-configuration-reference.md)
+- [Agent 经验与 Skill 自进化](05-agent-experience-and-skill-evolution.md)

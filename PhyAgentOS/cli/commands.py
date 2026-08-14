@@ -222,15 +222,35 @@ def onboard():
     console.print("\n[dim]Want Telegram/WhatsApp? See: https://github.com/HKUDS/PhyAgentOS#-chat-apps[/dim]")
 
 
-def _make_provider(config: Config):
+def _make_provider(
+    config: Config,
+    model_override: str | None = None,
+    provider_name_override: str | None = None,
+):
     """Create the appropriate LLM provider from config."""
     from PhyAgentOS.providers.azure_openai_provider import AzureOpenAIProvider
     from PhyAgentOS.providers.base import GenerationSettings
     from PhyAgentOS.providers.openai_codex_provider import OpenAICodexProvider
 
-    model = config.agents.defaults.model
-    provider_name = config.get_provider_name(model)
-    p = config.get_provider(model)
+    model = model_override or config.agents.defaults.model
+    provider_name = provider_name_override or config.get_provider_name(model)
+    p = (
+        getattr(config.providers, provider_name, None)
+        if provider_name_override
+        else config.get_provider(model)
+    )
+
+    def api_base() -> str | None:
+        if p is not None and p.api_base:
+            return p.api_base
+        if provider_name_override:
+            from PhyAgentOS.providers.registry import find_by_name
+
+            spec = find_by_name(provider_name)
+            if spec and (spec.is_gateway or spec.is_local):
+                return spec.default_api_base
+            return None
+        return config.get_api_base(model)
 
     # OpenAI Codex (OAuth)
     if provider_name == "openai_codex" or model.startswith("openai-codex/"):
@@ -240,7 +260,7 @@ def _make_provider(config: Config):
         from PhyAgentOS.providers.custom_provider import CustomProvider
         provider = CustomProvider(
             api_key=p.api_key if p else "no-key",
-            api_base=config.get_api_base(model) or "http://localhost:8000/v1",
+            api_base=api_base() or "http://localhost:8000/v1",
             default_model=model,
         )
     # Azure OpenAI: direct Azure OpenAI endpoint with deployment name
@@ -265,7 +285,7 @@ def _make_provider(config: Config):
             raise typer.Exit(1)
         provider = LiteLLMProvider(
             api_key=p.api_key if p else None,
-            api_base=config.get_api_base(model),
+            api_base=api_base(),
             default_model=model,
             extra_headers=p.extra_headers if p else None,
             provider_name=provider_name,
@@ -278,6 +298,37 @@ def _make_provider(config: Config):
         reasoning_effort=defaults.reasoning_effort,
     )
     return provider
+
+
+def _make_evolution_provider(config: Config, default_provider):
+    """Resolve the optional evolution model/provider independently of verifier budget."""
+    settings = config.agents.evolution
+    if not settings.enabled:
+        return default_provider, config.agents.defaults.model
+    verification = config.agents.verification
+    model = settings.model or verification.model or config.agents.defaults.model
+    provider_name = (
+        settings.provider
+        or verification.provider
+        or config.get_provider_name(model)
+    )
+    default_name = config.get_provider_name(config.agents.defaults.model)
+    if provider_name == default_name:
+        return default_provider, model
+    if not provider_name:
+        console.print(
+            f"[yellow]Evolution provider could not be resolved for {model!r}; "
+            "falling back to the Agent provider.[/yellow]"
+        )
+        return default_provider, config.agents.defaults.model
+    try:
+        return _make_provider(config, model, provider_name.replace("-", "_")), model
+    except Exception as exc:
+        console.print(
+            "[yellow]Evolution provider initialization failed; falling back to the Agent "
+            f"provider ({type(exc).__name__}).[/yellow]"
+        )
+        return default_provider, config.agents.defaults.model
 
 
 def _make_forge_verifier(config: Config, provider):
@@ -321,6 +372,7 @@ def _make_forge_verifier(config: Config, provider):
         service_port=settings.service_port,
         service_provider_spec=provider_spec,
         max_calls=settings.max_verifier_calls_per_run,
+        write_legacy_lessons=not config.agents.evolution.enabled,
     )
 
 
@@ -411,6 +463,7 @@ def gateway(
         sync_workspace_templates(config.workspace_path)
     bus = MessageBus()
     provider = _make_provider(config)
+    evolution_provider, evolution_model = _make_evolution_provider(config, provider)
     forge_orchestrator = _make_forge_orchestrator(config, provider, bus)
     session_manager = SessionManager(config.workspace_path)
 
@@ -436,6 +489,9 @@ def gateway(
         channels_config=config.channels,
         embodiment_registry=registry,
         forge_orchestrator=forge_orchestrator,
+        evolution_config=config.agents.evolution,
+        evolution_provider=evolution_provider,
+        evolution_model=evolution_model,
     )
 
     # Set cron callback (needs agent)
@@ -606,6 +662,7 @@ def agent(
 
     bus = MessageBus()
     provider = _make_provider(config)
+    evolution_provider, evolution_model = _make_evolution_provider(config, provider)
     forge_orchestrator = _make_forge_orchestrator(config, provider, bus)
 
     # Create cron service for tool usage (no callback needed for CLI unless running)
@@ -633,6 +690,9 @@ def agent(
         channels_config=config.channels,
         embodiment_registry=registry,
         forge_orchestrator=forge_orchestrator,
+        evolution_config=config.agents.evolution,
+        evolution_provider=evolution_provider,
+        evolution_model=evolution_model,
     )
 
     # Show spinner when logs are off (no output to miss); skip when logs are on

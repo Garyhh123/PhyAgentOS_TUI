@@ -34,7 +34,7 @@ from PhyAgentOS.providers.providers_manager import ProvidersManager
 from PhyAgentOS.session.manager import Session, SessionManager
 
 if TYPE_CHECKING:
-    from PhyAgentOS.config.schema import ChannelsConfig, ExecToolConfig
+    from PhyAgentOS.config.schema import AgentEvolutionConfig, ChannelsConfig, ExecToolConfig
     from PhyAgentOS.cron.service import CronService
     from PhyAgentOS.forge.orchestrator import ForgeSessionOrchestrator
 
@@ -71,6 +71,9 @@ class AgentLoop:
         channels_config: ChannelsConfig | None = None,
         embodiment_registry: EmbodimentRegistry | None = None,
         forge_orchestrator: ForgeSessionOrchestrator | None = None,
+        evolution_config: AgentEvolutionConfig | None = None,
+        evolution_provider: LLMProvider | None = None,
+        evolution_model: str | None = None,
     ):
         from PhyAgentOS.config.schema import ExecToolConfig
         self.bus = bus
@@ -87,6 +90,30 @@ class AgentLoop:
         self.restrict_to_workspace = restrict_to_workspace
         self.forge_orchestrator = forge_orchestrator
 
+        self.experience = None
+        if evolution_config is not None and evolution_config.enabled:
+            try:
+                from PhyAgentOS.agent.experience.analyzer import ModelExperienceAnalyzer
+                from PhyAgentOS.agent.experience.coordinator import ExperienceCoordinator
+
+                self.experience = ExperienceCoordinator(
+                    workspace=workspace,
+                    analyzer=ModelExperienceAnalyzer(
+                        provider=evolution_provider or provider,
+                        model=evolution_model or model or provider.get_default_model(),
+                    ),
+                    forge_orchestrator=forge_orchestrator,
+                    min_successful_episodes=evolution_config.min_successful_episodes,
+                    min_lesson_episodes=evolution_config.min_lesson_episodes,
+                    max_lessons_per_skill=evolution_config.max_lessons_per_skill,
+                    max_calls=evolution_config.max_evolution_calls_per_run,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Experience evolution initialization failed open: error_type={}",
+                    type(exc).__name__,
+                )
+
         self.context = ContextBuilder(
             workspace,
             forge_context_provider=(
@@ -94,6 +121,7 @@ class AgentLoop:
                 if forge_orchestrator is not None
                 else None
             ),
+            evolution_enabled=self.experience is not None,
         )
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
@@ -156,6 +184,10 @@ class AgentLoop:
             self.tools.register(ImageTool(self.provider, send_callback=self.bus.publish_outbound))
 
         self.tools.register(SceneGraphQueryTool(workspace=self.workspace))
+        if self.experience is not None:
+            from PhyAgentOS.agent.tools.skill_activation import ActivateSkillTool
+
+            self.tools.register(ActivateSkillTool(self.experience.activation))
         if self.forge_orchestrator is not None:
             from PhyAgentOS.agent.tools.forge import (
                 CreateReplannedForgeSessionTool,
@@ -168,7 +200,7 @@ class AgentLoop:
             )
 
             for tool in (
-                ForgeExecuteTaskTool(self.forge_orchestrator),
+                ForgeExecuteTaskTool(self.forge_orchestrator, self.experience),
                 ForgeGetSessionTool(self.forge_orchestrator),
                 ForgeCancelSessionTool(self.forge_orchestrator),
                 ForgeGetContextTool(self.forge_orchestrator),
@@ -180,6 +212,8 @@ class AgentLoop:
 
     async def _connect_mcp(self) -> None:
         """Connect to configured MCP servers (one-time, lazy)."""
+        if self.experience is not None:
+            await self.experience.start()
         if self._mcp_connected or self._mcp_connecting or not self._mcp_servers:
             return
         self._mcp_connecting = True
@@ -214,6 +248,8 @@ class AgentLoop:
                     tool.set_context(channel, chat_id, *([message_id] if name == "message" else []))
         if tool := self.tools.get("forge_execute_task"):
             tool.set_context(channel, chat_id, session_key)
+        if tool := self.tools.get("activate_skill"):
+            tool.set_context(session_key or f"{channel}:{chat_id}")
 
     @staticmethod
     def _strip_think(text: str | None) -> str | None:
@@ -237,6 +273,7 @@ class AgentLoop:
         self,
         initial_messages: list[dict],
         on_progress: Callable[..., Awaitable[None]] | None = None,
+        experience_session_key: str | None = None,
     ) -> tuple[str | None, list[str], list[dict]]:
         """Run the agent iteration loop."""
         messages = initial_messages
@@ -274,6 +311,10 @@ class AgentLoop:
 
                 for tool_call in response.tool_calls:
                     tools_used.append(tool_call.name)
+                    if self.experience is not None and experience_session_key is not None:
+                        self.experience.record_tool(
+                            experience_session_key, tool_call.name, tool_call.arguments
+                        )
                     args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
                     logger.info("Tool call: {}({})", tool_call.name, args_str[:200])
                     result = await self.tools.execute(tool_call.name, tool_call.arguments)
@@ -396,6 +437,8 @@ class AgentLoop:
     def stop(self) -> None:
         """Stop the agent loop."""
         self._running = False
+        if self.experience is not None:
+            self.experience.stop()
         logger.info("Agent loop stopping")
 
     async def _process_message(
@@ -411,20 +454,26 @@ class AgentLoop:
                                 else ("cli", msg.chat_id))
             logger.info("Processing system message from {}", msg.sender_id)
             key = msg.session_key_override or f"{channel}:{chat_id}"
+            if self.experience is not None and msg.metadata.get("forge_session_id"):
+                self.experience.schedule_forge_completion(
+                    str(msg.metadata["forge_session_id"])
+                )
             session = self.sessions.get_or_create(key)
             await self.memory_consolidator.maybe_consolidate_by_tokens(session)
             self._set_tool_context(
                 channel,
                 chat_id,
                 msg.metadata.get("message_id"),
-                msg.session_key,
+                key,
             )
             history = session.get_history(max_messages=0)
             messages = self.context.build_messages(
                 history=history,
                 current_message=msg.content, channel=channel, chat_id=chat_id,
             )
-            final_content, _, all_msgs = await self._run_agent_loop(messages)
+            final_content, _, all_msgs = await self._run_agent_loop(
+                messages, experience_session_key=key
+            )
             self._save_turn(session, all_msgs, 1 + len(history))
             self.sessions.save(session)
             await self.memory_consolidator.maybe_consolidate_by_tokens(session)
@@ -436,6 +485,8 @@ class AgentLoop:
 
         key = session_key or msg.session_key
         session = self.sessions.get_or_create(key)
+        if self.experience is not None:
+            self.experience.begin_turn(key, msg.content)
 
         # Slash commands
         cmd = msg.content.strip().lower()
@@ -477,7 +528,7 @@ class AgentLoop:
             msg.channel,
             msg.chat_id,
             msg.metadata.get("message_id"),
-            msg.session_key,
+            key,
         )
         if message_tool := self.tools.get("message"):
             if isinstance(message_tool, MessageTool):
@@ -500,7 +551,9 @@ class AgentLoop:
             ))
 
         final_content, _, all_msgs = await self._run_agent_loop(
-            initial_messages, on_progress=on_progress or _bus_progress,
+            initial_messages,
+            on_progress=on_progress or _bus_progress,
+            experience_session_key=key,
         )
 
         if final_content is None:

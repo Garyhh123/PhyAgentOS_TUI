@@ -1,6 +1,6 @@
 # Forge 接入契约
 
-> PhyAgentOS 0.2.0 · Forge Gateway 1.0.0 · API `paos-forge-gateway-mvp-plus.v1` · [English](README.md)
+> PhyAgentOS 0.2.1 · Forge Gateway 1.0.0 · API `paos-forge-gateway-mvp-plus.v1` · [English](README.md)
 
 本文是 PhyAgentOS 唯一机器人执行链的技术契约。Gateway、Forge Runtime、Dora dataflow、策略与硬件集成位于 PAOS 外部，不由 PAOS 修改。
 
@@ -280,7 +280,7 @@ accepted → capturing_before → dispatching → running → finalizing
 | `enforce` | 要求完整证据与合法 verifier | 只有 `success` 成功，其余 fail closed |
 | `recovery` | 同样严格验证 | 只有合法 `replan_required` 进入 recovery |
 
-Verifier prompt 只包含 goal、criteria、constraints、immutable execution、evidence、lineage history、lessons 与合法 evidence refs。不得按 action type 分支，也不得输出可执行 action。
+Verifier prompt 只包含 goal、criteria、constraints、immutable execution、evidence、lineage history、可用的旧版/人工 Lessons 与合法 evidence refs。不得按 action type 分支，也不得输出可执行 action。其原始 `lesson` 输出本身不是 active Agent Lesson。
 
 ## 12. Verification Service
 
@@ -345,10 +345,16 @@ PAOS 正常退出会请求取消每个活动 Gateway session 并保存结果。
 | execution timeout | 请求 cancel；保留 last response/evidence/cancel response |
 | 验证时 evidence 缺失/非法 | audit 记录；enforce/recovery fail closed |
 | verdict 非法/service 失败 | audit 记录；enforce/recovery fail closed |
-| replan budget/deadline 耗尽 | parent failed 并写 lesson |
+| replan budget/deadline 耗尽 | parent failed；只有关闭 Agent evolution 时才追加旧版 Lesson |
 | dispatch 后 Gateway session 丢失 | 失败且不重复 action |
 
-## 17. Conformance 测试
+## 17. Agent 经验边界
+
+Root lineage 的最终 child 终结后，普通 completion system event 同时给 AgentLoop 一个不可变 Forge session reference。启用 evolution 时，`ForgeTaskOutcomeSource` 读取持久化 lineage，并在后台为该 root 最多创建一个去敏任务 episode。
+
+经验链可以使用 semantic verdict 与 failed/replanned attempts，但不修改 Forge record、不增加 Gateway 请求、不延迟 completion event，也不把 verifier guidance 转换为可执行 action。`off`、`inconclusive`、非法/错误与 review-only 结果不生成可晋升经验。Lesson 相关性、聚类、抽象与 Skill 晋升属于本 Gateway 契约之外的 Agent 侧职责。
+
+## 18. Conformance 测试
 
 兼容接入应覆盖：
 
@@ -362,6 +368,7 @@ PAOS 正常退出会请求取消每个活动 Gateway session 并保存结果。
 - Store 并发、合法 transition、单活动 lineage、原子 replan；
 - dispatch 前后重启、session 丢失、late evidence、verification 中断；
 - 仅 Forge enabled 时暴露 tools，system event 路由正确。
+- 启用 Agent evolution 或其 fail-open 时，终结 root-lineage notification 保持不变。
 
 可选黑盒测试通过 `FORGE_GATEWAY_URL` 连接，不修改 Gateway 源码或配置。
 
@@ -371,5 +378,6 @@ PAOS 正常退出会请求取消每个活动 Gateway session 并保存结果。
 - [用户手册](../zh/02-user-manual.md)
 - [开发者手册](../zh/03-developer-manual.md)
 - [配置参考](../zh/04-forge-configuration-reference.md)
+- [Agent 经验与 Skill 自进化](../zh/05-agent-experience-and-skill-evolution.md)
 - [集成开发指南](../user_development_guide/README.md)
 - [通信架构](../user_development_guide/COMMUNICATION.md)

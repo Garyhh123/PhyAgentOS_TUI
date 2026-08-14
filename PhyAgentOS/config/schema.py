@@ -344,12 +344,33 @@ class AgentVerificationConfig(Base):
     service_port: int = Field(default=8100, ge=1, le=65535)
 
 
+class AgentEvolutionConfig(Base):
+    """Task-level experience capture and guarded Skill evolution."""
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+    )
+
+    enabled: bool = True
+    scope: Literal["verified_forge_lineage"] = "verified_forge_lineage"
+    promotion_mode: Literal["guarded_auto"] = "guarded_auto"
+    min_successful_episodes: int = Field(default=3, ge=1)
+    min_lesson_episodes: int = Field(default=3, ge=1)
+    max_lessons_per_skill: int = Field(default=8, ge=1, le=50)
+    max_evolution_calls_per_run: int = Field(default=20, ge=0)
+    model: str | None = None
+    provider: str | None = None
+
+
 class AgentsConfig(Base):
     """Agent configuration."""
 
     defaults: AgentDefaults = Field(default_factory=AgentDefaults)
     modes: AgentModes = Field(default_factory=AgentModes)
     verification: AgentVerificationConfig = Field(default_factory=AgentVerificationConfig)
+    evolution: AgentEvolutionConfig = Field(default_factory=AgentEvolutionConfig)
 
 
 class ProviderConfig(Base):

@@ -1,6 +1,6 @@
 # Forge Integration Contract
 
-> PhyAgentOS 0.2.0 · Forge Gateway 1.0.0 · API `paos-forge-gateway-mvp-plus.v1` · [中文](README_zh.md)
+> PhyAgentOS 0.2.1 · Forge Gateway 1.0.0 · API `paos-forge-gateway-mvp-plus.v1` · [中文](README_zh.md)
 
 This document is the technical contract for the only robot-execution path supported by PhyAgentOS. Gateway, Forge Runtime, Dora dataflows, policies, and hardware integrations remain external and are not modified by PAOS.
 
@@ -280,7 +280,7 @@ accepted → capturing_before → dispatching → running → finalizing
 | `enforce` | Complete evidence and valid verifier required | `success` succeeds; everything else fails closed |
 | `recovery` | Same strict verification | Only valid `replan_required` enters recovery |
 
-The verifier prompt contains only goal, criteria, constraints, immutable execution, evidence, lineage history, lessons, and valid evidence references. It must never branch on action type or emit an executable action.
+The verifier prompt contains only goal, criteria, constraints, immutable execution, evidence, lineage history, available legacy/human Lessons, and valid evidence references. It must never branch on action type or emit an executable action. Its raw `lesson` output is not itself an active Agent Lesson.
 
 ## 12. Verification Service
 
@@ -345,10 +345,16 @@ Deletion leaves a tombstone in the Bundle: URI, source, time, sequence, size, di
 | Execution timeout | Request cancel; retain last response/evidence/cancel response |
 | Missing/invalid evidence at verification | Audit records; enforce/recovery fail closed |
 | Invalid verdict/service failure | Audit records; enforce/recovery fail closed |
-| Replan budget/deadline exhausted | Fail parent and write lesson |
+| Replan budget/deadline exhausted | Fail parent; legacy Lesson append occurs only when Agent evolution is disabled |
 | Gateway session lost after dispatch | Fail without repeating action |
 
-## 17. Conformance tests
+## 17. Agent experience boundary
+
+After the final child in a root lineage terminates, the ordinary completion system event also gives AgentLoop an immutable Forge session reference. When evolution is enabled, `ForgeTaskOutcomeSource` reads the persisted lineage and asynchronously creates at most one redacted task episode for that root.
+
+The experience path may use semantic verdicts and failed/replanned attempts, but it does not mutate a Forge record, add a Gateway request, delay the completion event, or turn verifier guidance into an executable action. `off`, `inconclusive`, invalid/error, and review-only results do not create promotable experience. Lesson eligibility, clustering, abstraction, and Skill promotion remain Agent-side concerns outside this Gateway contract.
+
+## 18. Conformance tests
 
 A compatible integration covers:
 
@@ -362,6 +368,7 @@ A compatible integration covers:
 - Store concurrency, legal transitions, one active lineage, atomic replan;
 - restart before/after dispatch, lost session, late evidence, interrupted verification;
 - Agent tool exposure only when Forge is enabled and correct system-event routing.
+- terminal root-lineage notification remains unchanged when Agent evolution is enabled or fails.
 
 Optional black-box tests connect through `FORGE_GATEWAY_URL`; they do not modify Gateway source or configuration.
 
@@ -371,5 +378,6 @@ Optional black-box tests connect through `FORGE_GATEWAY_URL`; they do not modify
 - [User Manual](../en/02-user-manual.md)
 - [Developer Manual](../en/03-developer-manual.md)
 - [Configuration Reference](../en/04-forge-configuration-reference.md)
+- [Agent Experience and Skill Evolution](../en/05-agent-experience-and-skill-evolution.md)
 - [Integration Development Guide](../user_development_guide/README_en.md)
 - [Communication Architecture](../user_development_guide/COMMUNICATION_en.md)

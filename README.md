@@ -13,7 +13,7 @@
   </p>
   <p>
     <img src="https://img.shields.io/badge/Python-≥3.11-3776AB?logo=python&logoColor=white" alt="Python">
-    <img src="https://img.shields.io/badge/Version-v0.2.0-47A882" alt="Version">
+    <img src="https://img.shields.io/badge/Version-v0.2.1-47A882" alt="Version">
     <img src="https://img.shields.io/badge/License-MIT-3DA639" alt="License">
     <a href="https://arxiv.org/pdf/2607.16636">
       <img src="https://img.shields.io/badge/Tech_Report-arXiv-b31b1b?logo=arxiv&logoColor=white" alt="Tech Report">
@@ -38,6 +38,7 @@ PhyAgentOS is an agent framework for embodied tasks. The Agent plans a high-leve
 
 | Version | Date | Update |
 |:--------|:-----|:-------|
+| ![v0.2.1](https://img.shields.io/badge/v0.2.1-47A882) | 2026-08-14 | Added verified task experience, explicit workflow Skill activation, guarded Skill evolution, and clustered, scope-aware Lessons with independent-support and abstraction checks. |
 | ![v0.2.0](https://img.shields.io/badge/v0.2.0-47A882) | 2026-08-03 | Introduced the Forge execution architecture with Forge Gateway 1.0.0, immutable execution and evidence contracts, system-level semantic verification, Planner-owned recovery, crash-safe SQLite orchestration, and complete removal of the legacy Runtime execution chain. |
 | ![v0.1.7](https://img.shields.io/badge/v0.1.7-47A882) | 2026-07-05 | Added benchmarking for policy-loop and target-native builtin paths, plus the Agent verification and failure-recovery service. |
 | ![v0.1.6](https://img.shields.io/badge/v0.1.6-47A882) | 2026-06-27 | Added BEHAVIOR-1K support, `SessionVerifier`, and the explicit session-verification tool. |
@@ -56,6 +57,7 @@ PhyAgentOS is an agent framework for embodied tasks. The Agent plans a high-leve
 <tr><td>🧠</td><td><b>Action-agnostic verification</b></td><td>The verifier receives the goal, criteria, constraints, execution facts, evidence, lineage history, and lessons—never an action-specific verification switch.</td></tr>
 <tr><td>🧱</td><td><b>Crash-safe orchestration</b></td><td>SQLite transactions persist identity, state transitions, and dispatch intent before mutation. A restart queries an attempted session and never blindly repeats POST.</td></tr>
 <tr><td>🔄</td><td><b>Planner-owned recovery</b></td><td>A recovery verdict produces non-executable context. The normal Planner must create a fresh child action with new session and command IDs.</td></tr>
+<tr><td>📚</td><td><b>Scoped experience</b></td><td>Verified root lineages support reusable workflow Skills and clustered Lessons; unrelated failures remain diagnostics and learned guidance is loaded only with the matching Skill.</td></tr>
 </table>
 
 ## Architecture
@@ -80,6 +82,11 @@ Forge Gateway 1.0.0       verdict / recovery request
        │
        ▼
 Forge Runtime + Dora + robot/simulator
+
+terminal root lineage ──► Experience Coordinator ──► evolution ledger
+                                │                         │
+                         Skill candidates          scoped Lessons
+                                └──────────► workspace Skills
 ```
 
 The system keeps three records separate:
@@ -99,6 +106,7 @@ The system keeps three records separate:
 | Verification | `off`, `audit`, `enforce`, and `recovery` modes with structured per-criterion verdicts. |
 | Recovery | Atomic parent/child transition, bounded replans, deadlines, fresh IDs, and normal-Planner wake-up through system events. |
 | Persistence | SQLite WAL event log plus workspace-relative JSON/image artifacts; immutable Execution Records survive review and retention. |
+| Task experience | Explicit Skill activation, redacted root-lineage episodes, asynchronous reflection, clustered scoped Lessons, and guarded Skill promotion. |
 | Agent platform | CLI and multi-channel gateway, provider abstraction, tools, skills, MCP, memory, Cron, Heartbeat, and knowledge workspaces. |
 
 ## 5-minute quick start
@@ -141,6 +149,15 @@ The configuration file is serialized in camelCase; snake_case keys are also acce
       "evidenceRetention": "failed",
       "maxReplansPerEpisode": 2,
       "maxVerifierCallsPerRun": 50
+    },
+    "evolution": {
+      "enabled": true,
+      "scope": "verified_forge_lineage",
+      "promotionMode": "guarded_auto",
+      "minSuccessfulEpisodes": 3,
+      "minLessonEpisodes": 3,
+      "maxLessonsPerSkill": 8,
+      "maxEvolutionCallsPerRun": 20
     }
   },
   "providers": {
@@ -230,6 +247,28 @@ A typical non-`off` contract looks like this:
 
 These tools are registered only when `forge.enabled` is true.
 
+## Task experience and Skill evolution
+
+When `agents.evolution.enabled` is true, the Agent checks the registered Skill summaries before
+its first tool call. `activate_skill(name, role)` loads the complete workflow and applicable
+scoped Lessons while recording an auditable task-to-Skill binding. A turn may have one primary
+Skill and multiple supporting Skills; only the primary can be updated automatically. Reading a
+`SKILL.md` directly does not create this binding. Verified Forge root lineages are reflected on
+asynchronously:
+
+- workflow-related semantic failures first form normalized observations; three independent root
+  lineages with the same failure pattern are required before an abstract scoped lesson can become
+  active and project to `skills/<name>/references/LESSONS.md`;
+- task impossibility, verifier/evidence limitations, infrastructure failures, and uncertain causes
+  remain diagnostic-only and never become Skill lessons;
+- semantic successes support a Skill candidate;
+- three independent successful root lineages promote a validated workspace Skill revision;
+- inconclusive, invalid, review-only, and `verification=off` outcomes never train a Skill.
+
+Evolution is fail-open and does not change Forge submission, execution, evidence, verification,
+or recovery. Built-in Skills remain immutable; promoted changes are written as workspace overrides
+with revision history under `.paos/evolution/`.
+
 ## Persistence and workspace
 
 ```text
@@ -237,6 +276,10 @@ These tools are registered only when `forge.enabled` is true.
 ├── AGENTS.md / SOUL.md / USER.md / TOOLS.md / SKILLS.md
 ├── EMBODIED.md / ENVIRONMENT.md / LESSONS.md / TASK.md
 ├── .paos/forge/orchestrator.sqlite3
+├── .paos/evolution/experience.sqlite3
+├── .paos/evolution/revisions/<skill>/
+├── skills/<skill>/SKILL.md
+├── skills/<skill>/references/LESSONS.md
 └── artifacts/forge/<session_id>/
     ├── execution_record.json
     ├── evidence_bundle.json
@@ -245,13 +288,13 @@ These tools are registered only when `forge.enabled` is true.
     └── evidence/
 ```
 
-`EMBODIED.md`, `ENVIRONMENT.md`, and SceneGraph remain knowledge surfaces. They are not execution queues. PAOS no longer reads or generates the former Runtime Markdown queue files.
+`EMBODIED.md`, `ENVIRONMENT.md`, and SceneGraph remain knowledge surfaces. They are not execution queues. With evolution enabled, the root `LESSONS.md` is retained as legacy/human-authored material but is not injected into every Agent turn; the experience database is authoritative for learned Lessons. PAOS no longer reads or generates the former Runtime Markdown queue files.
 
 ## Project structure
 
 ```text
 PhyAgentOS/
-├── PhyAgentOS/agent/          # AgentLoop, tools, memory, verifier integration
+├── PhyAgentOS/agent/          # AgentLoop, tools, memory, experience, verifier integration
 ├── PhyAgentOS/forge/          # Gateway client, observations, adapter, store, orchestrator
 ├── PhyAgentOS/verification/   # Public contracts, request builder, engine, service
 ├── PhyAgentOS/channels/       # Messaging channels
@@ -264,11 +307,13 @@ PhyAgentOS/
 
 | Document | Audience | Description |
 |:---------|:---------|:------------|
+| [Changelog](CHANGELOG.md) | Everyone | Detailed release notes grouped by Added, Changed, and Security |
 | [Documentation index](docs/README.md) | Everyone | Bilingual reading paths and document map |
 | [Framework introduction](docs/en/01-framework-introduction.md) | Architects and users | Design, boundaries, lifecycle, and current scope |
 | [User manual](docs/en/02-user-manual.md) | Operators and users | Installation, configuration, tasks, artifacts, and troubleshooting |
 | [Developer manual](docs/en/03-developer-manual.md) | Contributors | Contracts, invariants, extension points, and tests |
 | [Forge configuration reference](docs/en/04-forge-configuration-reference.md) | Deployers | Exact Forge, evidence, verification, and task fields |
+| [Agent experience and Skill evolution](docs/en/05-agent-experience-and-skill-evolution.md) | Users and developers | Skill activation, episodes, Lesson clustering, promotion, persistence, and guardrails |
 | [Operations manual](docs/user_manual/README_en.md) | Operations | Startup, monitoring, restart, cancellation, and incident handling |
 | [Integration guide](docs/user_development_guide/README_en.md) | Integrators | Connecting Gateway actions without action-specific verifier code |
 | [Forge integration contract](docs/forge/README.md) | Gateway/PAOS developers | HTTP/WebSocket, identity, evidence, verification, recovery, and restart contracts |

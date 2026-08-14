@@ -17,8 +17,9 @@ def _json(value: Any) -> str:
 
 
 class ForgeExecuteTaskTool(Tool):
-    def __init__(self, orchestrator: ForgeSessionOrchestrator) -> None:
+    def __init__(self, orchestrator: ForgeSessionOrchestrator, experience=None) -> None:
         self.orchestrator = orchestrator
+        self.experience = experience
         self.channel = "cli"
         self.chat_id = "direct"
         self.session_key: str | None = None
@@ -82,6 +83,11 @@ class ForgeExecuteTaskTool(Tool):
             chat_id=self.chat_id,
             session_key=self.session_key,
         )
+        if self.experience is not None:
+            self.experience.bind_forge_task(
+                record.root_session_id,
+                session_key=self.session_key or f"{self.channel}:{self.chat_id}",
+            )
         return _json(
             {
                 "ok": True,

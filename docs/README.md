@@ -1,7 +1,7 @@
 # PhyAgentOS Documentation
 
-版本 / Version: **0.2.0**<br>
-实现基线 / Implementation baseline: **Forge-only source, 2026-08-03**
+版本 / Version: **0.2.1**<br>
+实现基线 / Implementation baseline: **Forge execution with Agent experience evolution, 2026-08-14**
 
 本目录由 PhyAgentOS 开发团队面向用户、运维人员和生态开发者维护。文档只把仓库源码、配置 Schema 与测试实际覆盖的行为称为“当前能力”。`plan/` 中的设计报告是历史背景，不替代这里的运行契约。
 
@@ -15,6 +15,7 @@ The PhyAgentOS team maintains this directory for users, operators, and ecosystem
 2. [用户手册](zh/02-user-manual.md)：安装、Provider/Forge 配置、任务描述、验证模式、Artifact 与排障。
 3. [开发者手册](zh/03-developer-manual.md)：公共模型、状态机、Gateway 身份校验、Evidence、Verifier、Recovery 与测试。
 4. [Forge 配置参考](zh/04-forge-configuration-reference.md)：全局 Forge、Evidence、Verification、Task Contract 和 Embodiment 字段。
+5. [Agent 经验与 Skill 自进化](zh/05-agent-experience-and-skill-evolution.md)：Skill 激活与归因、Episode、Lesson 聚类、Skill 晋升、持久化和安全门控。
 
 ### 专题手册
 
@@ -34,6 +35,7 @@ The PhyAgentOS team maintains this directory for users, operators, and ecosystem
 | 用 Docker 快速部署 | [Docker 部署指南](user_manual/DOCKER.md) |
 | 在 Gateway 增加新机器人动作 | [集成开发指南](user_development_guide/README.md) → [开发者手册](zh/03-developer-manual.md) |
 | 修改证据、验证、恢复或持久化 | [开发者手册](zh/03-developer-manual.md) → [Forge 接入契约](forge/README_zh.md) |
+| 使用或扩展任务经验、Lesson 与 Skill 自进化 | [Agent 经验与 Skill 自进化](zh/05-agent-experience-and-skill-evolution.md) → [开发者手册](zh/03-developer-manual.md) |
 
 ## English
 
@@ -43,6 +45,7 @@ The PhyAgentOS team maintains this directory for users, operators, and ecosystem
 2. [User Manual](en/02-user-manual.md): installation, provider and Forge configuration, task description, verification modes, artifacts, and troubleshooting.
 3. [Developer Manual](en/03-developer-manual.md): public models, state machine, Gateway identity validation, evidence, verifier, recovery, and testing.
 4. [Forge Configuration Reference](en/04-forge-configuration-reference.md): exact global Forge, evidence, verification, task-contract, and embodiment fields.
+5. [Agent Experience and Skill Evolution](en/05-agent-experience-and-skill-evolution.md): Skill activation and attribution, episodes, Lesson clustering, Skill promotion, persistence, and guardrails.
 
 ### Focused manuals
 
@@ -62,6 +65,7 @@ The PhyAgentOS team maintains this directory for users, operators, and ecosystem
 | Deploy quickly with Docker | [Docker Deployment Guide](user_manual/DOCKER_en.md) |
 | Add a new robot action in Gateway | [Integration Guide](user_development_guide/README_en.md) → [Developer Manual](en/03-developer-manual.md) |
 | Change evidence, verification, recovery, or persistence | [Developer Manual](en/03-developer-manual.md) → [Forge Integration Contract](forge/README.md) |
+| Use or extend task experience, Lessons, or Skill evolution | [Agent Experience and Skill Evolution](en/05-agent-experience-and-skill-evolution.md) → [Developer Manual](en/03-developer-manual.md) |
 
 ## Terminology
 
@@ -73,7 +77,12 @@ The PhyAgentOS team maintains this directory for users, operators, and ecosystem
 | Evidence Bundle | Validated, workspace-relative artifact references and capture-quality metadata. |
 | Verdict | A structured semantic decision over every success criterion. |
 | Root lineage | The original task plus any Planner-created recovery children. It owns the single execution slot. |
+| Skill activation | An explicit, per-turn binding between a registered workflow Skill and a task; a direct file read is not an activation. |
+| Task episode | One redacted experience record for a completed, semantically verified root lineage. |
+| Failure observation | A normalized, non-answer-specific description of a workflow-related failure pattern. |
+| Lesson cluster | Independent root-lineage observations grouped by Skill, workflow, and canonical failure pattern. |
+| Scoped Lesson | A validated Lesson with explicit applicability boundaries, dynamically loaded only for a matching activated Skill. |
 
 ## Compatibility note
 
-Active documentation intentionally contains no compatibility instructions for the removed PAOS Runtime/Target/SkillRuntime/Watchdog/SessionRunner/Markdown queue architecture. Existing user workspaces are not deleted automatically; see the cleanup section in the [User Manual](en/02-user-manual.md#13-legacy-workspace-cleanup) or [用户手册](zh/02-user-manual.md#13-旧工作区清理).
+Active documentation intentionally contains no compatibility instructions for the removed PAOS Runtime/Target/SkillRuntime/Watchdog/SessionRunner/Markdown queue architecture. Existing user workspaces are not deleted automatically; see the cleanup section in the [User Manual](en/02-user-manual.md#14-legacy-workspace-cleanup) or [用户手册](zh/02-user-manual.md#14-旧工作区清理).

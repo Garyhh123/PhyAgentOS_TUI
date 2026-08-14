@@ -1,6 +1,6 @@
 # PhyAgentOS User Manual
 
-> Documentation version: 0.2.0. This manual covers the current Forge-only execution path. PhyAgentOS no longer provides the legacy Runtime, Watchdog, or Markdown Session queue.
+> Documentation version: 0.2.1. This manual covers the current Forge execution path and Agent task-experience workflow. PhyAgentOS no longer provides the legacy Runtime, Watchdog, or Markdown Session queue.
 
 ## 1. Requirements and installation
 
@@ -76,7 +76,7 @@ Minimal provider example:
 }
 ```
 
-The Agent and verifier use the same model by default. Set `agents.verification.model` and `agents.verification.provider` to separate them. Never commit API keys; long-running deployments should also restrict configuration-file permissions.
+The Agent and verifier use the same model by default. Set `agents.verification.model` and `agents.verification.provider` to separate them. Evolution inherits the verification model/provider, then falls back to the Agent defaults; `agents.evolution.model` and `agents.evolution.provider` may override that choice. Never commit API keys; long-running deployments should also restrict configuration-file permissions.
 
 OAuth providers can be authenticated with:
 
@@ -99,6 +99,15 @@ paos provider login github-copilot
       "replanTimeoutS": 120,
       "serviceHost": "127.0.0.1",
       "servicePort": 8100
+    },
+    "evolution": {
+      "enabled": true,
+      "scope": "verified_forge_lineage",
+      "promotionMode": "guarded_auto",
+      "minSuccessfulEpisodes": 3,
+      "minLessonEpisodes": 3,
+      "maxLessonsPerSkill": 8,
+      "maxEvolutionCallsPerRun": 20
     }
   },
   "forge": {
@@ -220,6 +229,18 @@ The Agent eventually calls `forge_execute_task` with a structure such as:
 
 PAOS generates session and command IDs. Callers cannot specify, reuse, or copy them from prior tasks.
 
+### 6.3 Activate a matching workflow Skill
+
+When evolution is enabled, the system prompt lists registered Skill summaries. Before the first execution tool call, the Agent should call:
+
+```text
+activate_skill(name="<exact-registered-name>", role="primary")
+```
+
+Use one primary Skill for the main workflow and optional `supporting` Skills for auxiliary knowledge. Activation accepts only exact, available names from the Skill registry; it does not accept paths. It returns the full `SKILL.md`, an activation ID, and up to `maxLessonsPerSkill` active Lessons whose applicability overlaps the current task. A normal `read_file` of `SKILL.md` is useful for inspection but does not bind the task to that Skill for experience attribution.
+
+If no Skill summary matches, the Agent may continue normally. A verified outcome can still form an unbound episode or candidate and may later be associated with a workflow.
+
 ## 7. Verification modes
 
 | Mode | Use when | Behavior |
@@ -327,7 +348,37 @@ On normal shutdown PAOS attempts to cancel the active Gateway session and stores
 
 This configuration contains no driver, Target, or Gateway routing semantics.
 
-## 13. Legacy workspace cleanup
+## 13. Task experience, Lessons, and Skill evolution
+
+The experience path starts only after a Forge root lineage reaches a terminal semantic outcome. It runs asynchronously and does not delay the original Forge completion notification.
+
+Learnable outcomes are classified by semantic verdict:
+
+- final `success` with every criterion satisfied can support a workflow Skill candidate;
+- a lineage containing `failure` or `replan_required` may contribute a failure observation even when a recovery child eventually succeeds;
+- `verification=off`, `inconclusive`, invalid/service-error verdicts, and manual review do not produce promotable experience;
+- replayed events and recovery children remain part of one root episode and do not add independent support.
+
+Lesson generation is intentionally conservative about attribution, not about task execution. Task impossibility, verifier/evidence limitations, external infrastructure, conflicting user constraints, and uncertain causes remain diagnostic-only. A workflow-related failure is first normalized into an observation without concrete answers, entity values, coordinates, raw inputs, or tool output. Observations are clustered by Skill, workflow, and failure pattern. With default settings, three distinct root lineages are required before synthesis and validation can activate a Lesson.
+
+Only active Lessons are returned by `activate_skill`. Each includes `applies_when`, `does_not_apply_when`, failure mode, recommendation, severity, and observation count. Successful counterexamples may retire a Lesson; a narrower validated replacement may supersede it. The generated sidecar displays Active, Collecting, Blocked, Superseded, Retired, and Inactive material for human review, but only Active entries enter Agent context.
+
+Successful reusable workflows create or merge a Skill candidate. Three independent successful root lineages are required by default. Promotion is blocked by active same-workflow Lessons, reflection conflicts, malformed Skill structure, or unsafe/specific content. New Skills use `always: false`; updates replace only the PAOS-managed learned-workflow block. Built-in Skills are copied to a workspace override instead of being modified in place.
+
+The experience database is authoritative:
+
+```text
+<workspace>/.paos/evolution/experience.sqlite3
+<workspace>/.paos/evolution/revisions/<skill>/
+<workspace>/skills/<skill>/SKILL.md
+<workspace>/skills/<skill>/references/LESSONS.md
+```
+
+The legacy root `LESSONS.md` is preserved and imported once as inactive, unbound material. It is not globally injected while evolution is enabled. Disable `agents.evolution.enabled` to retain the former global-context/write behavior. Evolution errors fail open and never change or block Forge execution.
+
+For the full lifecycle and extension contract, see [Agent Experience and Skill Evolution](05-agent-experience-and-skill-evolution.md).
+
+## 14. Legacy workspace cleanup
 
 PAOS never deletes user-owned files automatically. Back up the workspace, then optionally remove obsolete execution protocol files:
 
@@ -342,7 +393,7 @@ artifacts/runtime/
 
 Keep `EMBODIED.md`, `ENVIRONMENT.md`, `LESSONS.md`, `TASK.md`, and other user knowledge. Current code neither reads nor generates the obsolete execution protocol.
 
-## 14. Troubleshooting
+## 15. Troubleshooting
 
 ### API or capability failure at startup
 
@@ -380,10 +431,19 @@ Check provider settings, model support, `servicePort` conflicts, and timeout. `a
 
 Another root lineage is not terminal. Query it with `forge_get_session` and cancel if necessary. Never edit SQLite directly to bypass serialization.
 
+### No Lesson is returned by `activate_skill`
+
+Confirm the Skill is available and explicitly activated, the task text overlaps the Lesson's `applies_when` scope, the Lesson is `active`, and `maxLessonsPerSkill` is positive. Collecting, blocked, unbound, inactive, superseded, and retired entries are intentionally excluded.
+
+### A Lesson cluster or Skill candidate remains blocked
+
+Inspect `skills/<name>/references/LESSONS.md` and the evolution event ledger. Typical reasons are insufficient independent root support, a workflow-related conflict, a task-specific literal, unsafe content, abstraction confidence below `0.8`, or a structural/reload validation failure. The task that produced the experience remains unaffected.
+
 ## Next reading
 
 - [Framework Introduction](01-framework-introduction.md)
 - [Forge Configuration Reference](04-forge-configuration-reference.md)
+- [Agent Experience and Skill Evolution](05-agent-experience-and-skill-evolution.md)
 - [Operations Manual](../user_manual/README_en.md)
 - [Forge Integration Contract](../forge/README.md)
 - [Documentation Index](../README.md)

@@ -23,6 +23,7 @@ nano.*.save
 SECURITY.md
 .kilo
 test
-tests/
+tests/*
 plan/
 external/
+CHANGELOG.md

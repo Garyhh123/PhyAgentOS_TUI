@@ -34,9 +34,11 @@ class ContextBuilder:
         workspace: Path,
         *,
         forge_context_provider: Callable[[], str] | None = None,
+        evolution_enabled: bool = False,
     ):
         self.workspace = workspace
         self.forge_context_provider = forge_context_provider
+        self.evolution_enabled = evolution_enabled
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace)
 
@@ -60,9 +62,16 @@ class ContextBuilder:
 
         skills_summary = self.skills.build_skills_summary()
         if skills_summary:
+            activation_instruction = (
+                "Before the first tool call, check these summaries. For a matching workflow, use "
+                "activate_skill with the exact Skill name; it loads the instructions and only the "
+                "applicable scoped lessons."
+                if self.evolution_enabled
+                else "To use a skill, read its SKILL.md file using the read_file tool."
+            )
             parts.append(f"""# Skills
 
-The following skills extend your capabilities. To use a skill, read its SKILL.md file using the read_file tool.
+The following skills extend your capabilities. {activation_instruction}
 Skills with available="false" need dependencies installed first - you can try installing them with apt/brew.
 
 {skills_summary}""")
@@ -150,6 +159,8 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
 
         # Embodied extensions — present only when the workspace provides them.
         for filename in self.EMBODIED_FILES:
+            if self.evolution_enabled and filename == "LESSONS.md":
+                continue
             file_path = self.workspace / filename
             if file_path.exists():
                 content = file_path.read_text(encoding="utf-8")

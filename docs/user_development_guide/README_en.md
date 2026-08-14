@@ -1,6 +1,6 @@
 # PhyAgentOS Integration Development Guide
 
-> Version: 0.2.0 · [中文](README.md)
+> Version: 0.2.1 · [中文](README.md)
 
 This guide is for integrators of Forge Gateway, robot capabilities, evidence sources, LLM providers, and PAOS Agent tools. Robot execution now enters only through Forge Gateway 1.0.0. PAOS no longer exposes Target, Policy, SkillRuntime, or SessionRunner extension points.
 
@@ -16,6 +16,8 @@ This guide is for integrators of Forge Gateway, robot capabilities, evidence sou
 | New verifier model | PAOS Provider configuration/implementation | Support multimodal input and strict JSON output |
 | New Agent entry point | PAOS Channel | Use MessageBus/AgentLoop; never call Gateway directly |
 | New execution tool | Prefer generic Forge tools | Never bypass Orchestrator/Store or expose caller identities |
+| New workflow Skill | Workspace `skills/<name>/SKILL.md` or guarded evolution | Keep robot actions discoverable and executable only through Forge tools |
+| New trusted task outcome source | Implement `TaskOutcomeSource` | Produce the versioned redacted envelope; reuse Agent Lesson/Skill evolution |
 
 ## 2. Integrate a Gateway action
 
@@ -179,6 +181,8 @@ Public output passes `VerificationVerdict`, covers every criterion exactly once,
 - Store/event observability;
 - providers;
 - channels and other non-execution entry points.
+- provider-neutral `TaskOutcomeSource` adapters that preserve semantic-verdict and root-idempotency requirements;
+- workflow Skills that use live capability discovery and the existing Forge tools.
 
 ### Do not introduce
 
@@ -189,6 +193,8 @@ Public output passes `VerificationVerdict`, covers every criterion exactly once,
 - caller-supplied session/command IDs;
 - direct POST/retry outside Store and Orchestrator;
 - verdicts written into Execution Records.
+- raw tool inputs/outputs, task-specific answers, credentials, endpoints, or executable Gateway IDs in learned Lessons/Skills;
+- a second Lesson store or direct mutation of generated Skill Lesson projections.
 
 ## 8. Fake Gateway test loop
 
@@ -225,3 +231,4 @@ Optional real-Gateway tests read `FORGE_GATEWAY_URL` only and never mutate Gatew
 - [Communication Architecture](COMMUNICATION_en.md)
 - [Forge Integration Contract](../forge/README.md)
 - [Configuration Reference](../en/04-forge-configuration-reference.md)
+- [Agent Experience and Skill Evolution](../en/05-agent-experience-and-skill-evolution.md)

@@ -1,6 +1,6 @@
 # Forge 配置参考
 
-> 适用于 PhyAgentOS 0.2.0 与 Forge Gateway API `paos-forge-gateway-mvp-plus.v1`。
+> 适用于 PhyAgentOS 0.2.1 与 Forge Gateway API `paos-forge-gateway-mvp-plus.v1`。
 
 ## 1. 配置位置与命名
 
@@ -60,7 +60,37 @@ task.verification.evidence_policy.required_sources（非空）
 
 Verification Service 启动 readiness 等待为有界操作。服务启动失败不会无限阻塞；Orchestrator 会记录错误，非 `off` 新任务也会被拒绝。
 
-## 5. `ForgeTaskRequest`
+## 5. `agents.evolution`
+
+| JSON 字段 | 类型 | 默认值 | 约束与含义 |
+|:----------|:-----|:-------|:-----------|
+| `enabled` | boolean | `true` | 启用显式 Skill 激活、经验账本和后台演化。故障不会阻塞任务执行。 |
+| `scope` | literal | `verified_forge_lineage` | 首期只消费具有 semantic verdict 的 Forge root lineage。 |
+| `promotionMode` | literal | `guarded_auto` | 只允许经过门控验证的自动晋升。 |
+| `minSuccessfulEpisodes` | integer | `3` | 相同候选晋升所需的独立成功 root lineage 数，至少为 1。 |
+| `minLessonEpisodes` | integer | `3` | 聚类 Lesson 激活前所需的独立、工作流相关失败 root lineage 数，至少为 1。 |
+| `maxLessonsPerSkill` | integer | `8` | `activate_skill` 单次返回的 scoped lesson 上限，范围 `1..50`。 |
+| `maxEvolutionCallsPerRun` | integer | `20` | 独立于 verifier 的后台反思调用预算；0 表示代码层不限制。 |
+| `model` | string/null | `null` | null 时继承 verification model，再回退到 Agent 默认模型。 |
+| `provider` | string/null | `null` | null 时继承 verification provider，再按 model 自动匹配。 |
+
+启用后，根目录旧 `LESSONS.md` 保留但不再全局注入；Skill 相关 lesson 按需从经验账本加载，并投影到 `skills/<name>/references/LESSONS.md`。与工作流无关的失败仅记录诊断，相关失败经过归一化和聚类后才能激活。门槛按不同 Forge root lineage 计数，不把 recovery child、review、重复 event 或 replay 作为独立支持。
+
+Evolution model/provider 独立于 verifier call budget 解析：
+
+```text
+agents.evolution.model
+  → agents.verification.model
+  → agents.defaults.model
+
+agents.evolution.provider
+  → agents.verification.provider
+  → 按选定 model 推断 provider
+```
+
+`enabled=false` 会移除 `activate_skill`，恢复根目录 `LESSONS.md` 的普通 Agent 上下文和 Verifier 旧版 Lesson 追加行为，但不会修改或删除已有经验数据库、Skill sidecar 或 revision archive。
+
+## 6. `ForgeTaskRequest`
 
 Agent tool `forge_execute_task` 接受以下业务字段；`version` 与 `source` 使用模型默认值：
 
@@ -74,7 +104,7 @@ Agent tool `forge_execute_task` 接受以下业务字段；`version` 与 `source
 
 调用方没有 `session_id` 或 `command_id` 字段。PAOS 生成 `forge_<uuid>` 与 `command_<uuid>`。
 
-## 6. `TaskVerificationContract`
+## 7. `TaskVerificationContract`
 
 | 字段 | 类型 | 默认值 | 说明 |
 |:-----|:-----|:-------|:-----|
@@ -93,7 +123,7 @@ Agent tool `forge_execute_task` 接受以下业务字段；`version` 与 `source
 | `required_sources` | string[] | `[]` | 对 image kind，before/after 均需包含每个 source。 |
 | `minimum_association` | enum | `best_effort` | `best_effort | authoritative`；当前 authoritative 在执行前失败。 |
 
-## 7. Mode 行为矩阵
+## 8. Mode 行为矩阵
 
 | 情况 | `off` | `audit` | `enforce` | `recovery` |
 |:-----|:------|:--------|:----------|:-----------|
@@ -104,7 +134,7 @@ Agent tool `forge_execute_task` 接受以下业务字段；`version` 与 `source
 | `inconclusive` | 不适用 | 记录，保留 execution 终态 | failed | failed |
 | `replan_required` | 不适用 | 不恢复 | failed | `awaiting_replan` |
 
-## 8. `embodiments`
+## 9. `embodiments`
 
 Embodiment 只配置知识拓扑，不选择执行 adapter：
 
@@ -116,9 +146,9 @@ Embodiment 只配置知识拓扑，不选择执行 adapter：
 
 Instance 字段：`robotId`、`workspace` 必填；`enabled=true`；`profileName` 与 `sharedEnvironment` 可选。额外字段被拒绝，因此旧 `driver` 字段必须删除。
 
-## 9. 推荐配置
+## 10. 推荐配置
 
-### 9.1 只验证执行链
+### 10.1 只验证执行链
 
 ```json
 {
@@ -129,6 +159,9 @@ Instance 字段：`robotId`、`workspace` 必填；`enabled=true`；`profileName
   "agents": {
     "verification": {
       "serviceEnabled": false
+    },
+    "evolution": {
+      "enabled": false
     }
   }
 }
@@ -136,7 +169,7 @@ Instance 字段：`robotId`、`workspace` 必填；`enabled=true`；`profileName
 
 此配置只允许 `verification.mode=off` 的任务。
 
-### 9.2 长期运行的验证配置
+### 10.2 长期运行的验证配置
 
 ```json
 {
@@ -152,6 +185,17 @@ Instance 字段：`robotId`、`workspace` 必填；`enabled=true`；`profileName
       "replanTimeoutS": 120,
       "serviceHost": "127.0.0.1",
       "servicePort": 8100
+    },
+    "evolution": {
+      "enabled": true,
+      "scope": "verified_forge_lineage",
+      "promotionMode": "guarded_auto",
+      "minSuccessfulEpisodes": 3,
+      "minLessonEpisodes": 3,
+      "maxLessonsPerSkill": 8,
+      "maxEvolutionCallsPerRun": 20,
+      "model": null,
+      "provider": null
     }
   },
   "forge": {
@@ -173,7 +217,7 @@ Instance 字段：`robotId`、`workspace` 必填；`enabled=true`；`profileName
 }
 ```
 
-## 10. 配置检查
+## 11. 配置检查
 
 ```bash
 paos status
@@ -186,5 +230,6 @@ paos agent -m "调用 forge_get_context，仅报告 API version、supports、act
 
 - [用户手册](02-user-manual.md)
 - [开发者手册](03-developer-manual.md)
+- [Agent 经验与 Skill 自进化](05-agent-experience-and-skill-evolution.md)
 - [运行手册](../user_manual/README.md)
 - [Forge 接入契约](../forge/README_zh.md)

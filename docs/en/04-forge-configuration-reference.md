@@ -1,6 +1,6 @@
 # Forge Configuration Reference
 
-> Applies to PhyAgentOS 0.2.0 and Forge Gateway API `paos-forge-gateway-mvp-plus.v1`.
+> Applies to PhyAgentOS 0.2.1 and Forge Gateway API `paos-forge-gateway-mvp-plus.v1`.
 
 ## 1. Location and naming
 
@@ -60,7 +60,37 @@ task.verification.evidence_policy.required_sources (non-empty)
 
 Verification Service readiness is bounded. Startup failure does not wait forever. Orchestrator records the error and refuses new non-`off` work.
 
-## 5. `ForgeTaskRequest`
+## 5. `agents.evolution`
+
+| JSON field | Type | Default | Constraint and meaning |
+|:-----------|:-----|:--------|:-----------------------|
+| `enabled` | boolean | `true` | Enables explicit Skill activation, the experience ledger, and background evolution. Failures never block task execution. |
+| `scope` | literal | `verified_forge_lineage` | The first release consumes only Forge root lineages with semantic verdicts. |
+| `promotionMode` | literal | `guarded_auto` | Allows only validated, guarded automatic promotion. |
+| `minSuccessfulEpisodes` | integer | `3` | Independent successful root lineages required for one candidate; at least 1. |
+| `minLessonEpisodes` | integer | `3` | Independent workflow-related failure root lineages required before a clustered Lesson can activate; at least 1. |
+| `maxLessonsPerSkill` | integer | `8` | Scoped lessons returned by one `activate_skill` call; range `1..50`. |
+| `maxEvolutionCallsPerRun` | integer | `20` | Background reflection budget, separate from verifier calls; zero disables the code-level limit. |
+| `model` | string/null | `null` | Inherits the verification model, then the Agent default model. |
+| `provider` | string/null | `null` | Inherits the verification provider, then auto-matches the selected model. |
+
+When enabled, the legacy root `LESSONS.md` is preserved but no longer injected globally. Skill-bound lessons are loaded on demand from the ledger and projected to `skills/<name>/references/LESSONS.md`. Failures unrelated to the workflow remain diagnostic-only; related failures are normalized and clustered before activation. Thresholds count distinct Forge root lineages, not recovery children, reviews, duplicate events, or replays.
+
+The evolution model/provider is resolved independently of the verifier call budget:
+
+```text
+agents.evolution.model
+  → agents.verification.model
+  → agents.defaults.model
+
+agents.evolution.provider
+  → agents.verification.provider
+  → provider inferred from the selected model
+```
+
+`enabled=false` removes `activate_skill`, restores root `LESSONS.md` to normal Agent context, and allows the verifier's legacy Lesson append behavior. It does not modify or delete the experience database, Skill sidecars, or revision archive.
+
+## 6. `ForgeTaskRequest`
 
 The `forge_execute_task` Agent tool accepts these business fields; `version` and `source` use model defaults:
 
@@ -74,7 +104,7 @@ The `forge_execute_task` Agent tool accepts these business fields; `version` and
 
 There are no caller fields for `session_id` or `command_id`. PAOS generates `forge_<uuid>` and `command_<uuid>`.
 
-## 6. `TaskVerificationContract`
+## 7. `TaskVerificationContract`
 
 | Field | Type | Default | Meaning |
 |:------|:-----|:--------|:--------|
@@ -93,7 +123,7 @@ There are no caller fields for `session_id` or `command_id`. PAOS generates `for
 | `required_sources` | string[] | `[]` | Every source must exist for image kinds in both phases. |
 | `minimum_association` | enum | `best_effort` | `best_effort | authoritative`; authoritative currently fails before execution. |
 
-## 7. Mode behavior matrix
+## 8. Mode behavior matrix
 
 | Condition | `off` | `audit` | `enforce` | `recovery` |
 |:----------|:------|:--------|:----------|:-----------|
@@ -104,7 +134,7 @@ There are no caller fields for `session_id` or `command_id`. PAOS generates `for
 | `inconclusive` | N/A | Record; preserve execution terminal | Failed | Failed |
 | `replan_required` | N/A | No recovery | Failed | `awaiting_replan` |
 
-## 8. `embodiments`
+## 9. `embodiments`
 
 Embodiment config describes knowledge topology, not execution adapters:
 
@@ -116,9 +146,9 @@ Embodiment config describes knowledge topology, not execution adapters:
 
 Instance fields: `robotId` and `workspace` are required; `enabled=true`; `profileName` and `sharedEnvironment` are optional. Extra fields are forbidden, so legacy `driver` fields must be removed.
 
-## 9. Recommended configurations
+## 10. Recommended configurations
 
-### 9.1 Execution-chain smoke use
+### 10.1 Execution-chain smoke use
 
 ```json
 {
@@ -129,6 +159,9 @@ Instance fields: `robotId` and `workspace` are required; `enabled=true`; `profil
   "agents": {
     "verification": {
       "serviceEnabled": false
+    },
+    "evolution": {
+      "enabled": false
     }
   }
 }
@@ -136,7 +169,7 @@ Instance fields: `robotId` and `workspace` are required; `enabled=true`; `profil
 
 This configuration permits only tasks with `verification.mode=off`.
 
-### 9.2 Long-running verified use
+### 10.2 Long-running verified use
 
 ```json
 {
@@ -152,6 +185,17 @@ This configuration permits only tasks with `verification.mode=off`.
       "replanTimeoutS": 120,
       "serviceHost": "127.0.0.1",
       "servicePort": 8100
+    },
+    "evolution": {
+      "enabled": true,
+      "scope": "verified_forge_lineage",
+      "promotionMode": "guarded_auto",
+      "minSuccessfulEpisodes": 3,
+      "minLessonEpisodes": 3,
+      "maxLessonsPerSkill": 8,
+      "maxEvolutionCallsPerRun": 20,
+      "model": null,
+      "provider": null
     }
   },
   "forge": {
@@ -173,7 +217,7 @@ This configuration permits only tasks with `verification.mode=off`.
 }
 ```
 
-## 10. Configuration checks
+## 11. Configuration checks
 
 ```bash
 paos status
@@ -186,5 +230,6 @@ paos agent -m "Call forge_get_context and report only API version, supports, act
 
 - [User Manual](02-user-manual.md)
 - [Developer Manual](03-developer-manual.md)
+- [Agent Experience and Skill Evolution](05-agent-experience-and-skill-evolution.md)
 - [Operations Manual](../user_manual/README_en.md)
 - [Forge Integration Contract](../forge/README.md)
