@@ -47,11 +47,13 @@ class ForgeTaskVerifier:
         session_secret: str | None = None,
         service_provider_spec: dict[str, Any] | None = None,
         max_calls: int = 50,
+        write_legacy_lessons: bool = True,
     ) -> None:
         self.workspace = Path(workspace).expanduser().resolve()
         self.engine = VerificationEngine(provider=provider, model=model, timeout_s=timeout_s)
         self.evidence_retention = evidence_retention
         self.max_calls = max(0, int(max_calls))
+        self.write_legacy_lessons = bool(write_legacy_lessons)
         self.calls = 0
         self.request_builder = VerificationRequestBuilder(self.workspace)
         self.service = VerificationServiceProcess(
@@ -78,25 +80,47 @@ class ForgeTaskVerifier:
         source: Literal["auto", "tool"] = "auto",
         mode: Literal["apply", "review"] = "apply",
     ) -> tuple[VerificationVerdict, VerificationRequest, VerificationAttempt]:
+        request = self.request_builder.build(record, history=history, lessons=lessons)
+        verdict, attempt = await self.verify_content(
+            content=request.content,
+            expected_criteria=record.request.verification.success_criteria,
+            valid_evidence_refs=set(request.valid_evidence_refs),
+            source=source,
+            mode=mode,
+        )
+        return verdict, request, attempt
+
+    async def verify_content(
+        self,
+        *,
+        content: list[dict[str, Any]],
+        expected_criteria: list[str],
+        valid_evidence_refs: set[str],
+        source: Literal["auto", "tool"] = "auto",
+        mode: Literal["apply", "review"] = "apply",
+    ) -> tuple[VerificationVerdict, VerificationAttempt]:
+        """Verify any Agent-owned task aggregate using the existing verifier service."""
         if self.max_calls and self.calls >= self.max_calls:
             raise VerificationBudgetError(
                 f"verifier call budget exhausted ({self.max_calls})"
             )
-        request = self.request_builder.build(record, history=history, lessons=lessons)
         self.calls += 1
-        data = await asyncio.to_thread(self._start_and_verify, request.content)
+        data = await asyncio.to_thread(self._start_and_verify, content)
         try:
             verdict = VerificationVerdict.model_validate(data)
         except Exception as exc:
             raise VerificationVerdictError(str(exc)) from exc
-        self._validate_verdict(record, request, verdict)
-        attempt = VerificationAttempt(
+        self._validate_generic_verdict(
+            expected_criteria=expected_criteria,
+            valid_evidence_refs=valid_evidence_refs,
+            verdict=verdict,
+        )
+        return verdict, VerificationAttempt(
             attempt_id=f"verification_{uuid4().hex[:12]}",
             source=source,
             mode=mode,
             verdict=verdict.verdict,
         )
-        return verdict, request, attempt
 
     def _start_and_verify(self, content: list[dict[str, Any]]) -> dict[str, Any]:
         self.service.start()
@@ -108,7 +132,20 @@ class ForgeTaskVerifier:
         request: VerificationRequest,
         verdict: VerificationVerdict,
     ) -> None:
-        expected = record.request.verification.success_criteria
+        ForgeTaskVerifier._validate_generic_verdict(
+            expected_criteria=record.request.verification.success_criteria,
+            valid_evidence_refs=set(request.valid_evidence_refs),
+            verdict=verdict,
+        )
+
+    @staticmethod
+    def _validate_generic_verdict(
+        *,
+        expected_criteria: list[str],
+        valid_evidence_refs: set[str],
+        verdict: VerificationVerdict,
+    ) -> None:
+        expected = expected_criteria
         actual = [item.criterion for item in verdict.criteria]
         if len(actual) != len(expected) or set(actual) != set(expected):
             raise VerificationVerdictError(
@@ -117,7 +154,7 @@ class ForgeTaskVerifier:
         refs = set(verdict.evidence_refs)
         for criterion in verdict.criteria:
             refs.update(criterion.evidence_refs)
-        unknown = refs - set(request.valid_evidence_refs)
+        unknown = refs - valid_evidence_refs
         if unknown:
             raise VerificationVerdictError(
                 "verifier referenced unknown evidence: " + ", ".join(sorted(unknown))
@@ -199,6 +236,8 @@ class ForgeTaskVerifier:
         phase: str,
         error_code: str | None = None,
     ) -> None:
+        if not self.write_legacy_lessons:
+            return
         path = self.workspace / "LESSONS.md"
         entry = (
             f"\n\n## {utc_now().isoformat()} — {record.session_id}\n\n"

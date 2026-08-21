@@ -25,11 +25,21 @@ from PhyAgentOS.verification.contracts import (
 
 
 class ForgeEvidenceWriter:
-    def __init__(self, workspace: str | Path, session_id: str, command_id: str) -> None:
+    def __init__(
+        self,
+        workspace: str | Path,
+        session_id: str,
+        command_id: str,
+        *,
+        artifact_namespace: str = "forge",
+    ) -> None:
         self.workspace = Path(workspace).expanduser().resolve()
         self.session_id = session_id
         self.command_id = command_id
-        self.artifact_dir = self.workspace / "artifacts" / "forge" / session_id
+        namespace = Path(artifact_namespace)
+        if namespace.is_absolute() or ".." in namespace.parts:
+            raise ValueError("artifact namespace must be a safe relative path")
+        self.artifact_dir = self.workspace / "artifacts" / namespace / session_id
         if not self.artifact_dir.resolve().is_relative_to(self.workspace):
             raise ValueError("Forge artifact directory escapes workspace")
         self.evidence_dir = self.artifact_dir / "evidence"

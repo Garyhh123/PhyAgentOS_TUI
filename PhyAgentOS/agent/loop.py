@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sys
+from collections.abc import MutableSet
 from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import TYPE_CHECKING, Awaitable, Callable
@@ -34,9 +35,10 @@ from PhyAgentOS.providers.providers_manager import ProvidersManager
 from PhyAgentOS.session.manager import Session, SessionManager
 
 if TYPE_CHECKING:
-    from PhyAgentOS.config.schema import ChannelsConfig, ExecToolConfig
+    from PhyAgentOS.config.schema import AgentEvolutionConfig, ChannelsConfig, ExecToolConfig
     from PhyAgentOS.cron.service import CronService
-    from PhyAgentOS.forge.orchestrator import ForgeSessionOrchestrator
+    from PhyAgentOS.forge.task import AgentTaskCoordinator
+    from PhyAgentOS.forge.tool_client import ForgeToolClient
 
 
 class AgentLoop:
@@ -70,7 +72,13 @@ class AgentLoop:
         mcp_servers: dict | None = None,
         channels_config: ChannelsConfig | None = None,
         embodiment_registry: EmbodimentRegistry | None = None,
-        forge_orchestrator: ForgeSessionOrchestrator | None = None,
+        forge_tool_client: ForgeToolClient | None = None,
+        forge_tool_invocation_ids: MutableSet[str] | None = None,
+        forge_task_coordinator: AgentTaskCoordinator | None = None,
+        runtime_availability_provider: Callable[[str], bool] | None = None,
+        evolution_config: AgentEvolutionConfig | None = None,
+        evolution_provider: LLMProvider | None = None,
+        evolution_model: str | None = None,
     ):
         from PhyAgentOS.config.schema import ExecToolConfig
         self.bus = bus
@@ -85,16 +93,47 @@ class AgentLoop:
         self.exec_config = exec_config or ExecToolConfig()
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
-        self.forge_orchestrator = forge_orchestrator
+        self.forge_tool_client = forge_tool_client
+        self.forge_tool_invocation_ids = forge_tool_invocation_ids
+        self.forge_task_coordinator = forge_task_coordinator
+
+        self.experience = None
+        if evolution_config is not None and evolution_config.enabled:
+            try:
+                from PhyAgentOS.agent.experience.analyzer import ModelExperienceAnalyzer
+                from PhyAgentOS.agent.experience.coordinator import ExperienceCoordinator
+
+                self.experience = ExperienceCoordinator(
+                    workspace=workspace,
+                    analyzer=ModelExperienceAnalyzer(
+                        provider=evolution_provider or provider,
+                        model=evolution_model or model or provider.get_default_model(),
+                    ),
+                    task_coordinator=forge_task_coordinator,
+                    runtime_availability_provider=runtime_availability_provider,
+                    min_successful_episodes=evolution_config.min_successful_episodes,
+                    min_lesson_episodes=evolution_config.min_lesson_episodes,
+                    max_lessons_per_skill=evolution_config.max_lessons_per_skill,
+                    max_calls=evolution_config.max_evolution_calls_per_run,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Experience evolution initialization failed open: error_type={}",
+                    type(exc).__name__,
+                )
 
         self.context = ContextBuilder(
             workspace,
             forge_context_provider=(
-                forge_orchestrator.capabilities_summary
-                if forge_orchestrator is not None
+                forge_task_coordinator.capabilities_summary
+                if forge_task_coordinator is not None
                 else None
             ),
+            evolution_enabled=self.experience is not None,
+            runtime_availability_provider=runtime_availability_provider,
         )
+        if self.forge_task_coordinator is not None:
+            self.forge_task_coordinator.set_experience(self.experience)
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
         self.embodiment_registry = embodiment_registry
@@ -156,30 +195,29 @@ class AgentLoop:
             self.tools.register(ImageTool(self.provider, send_callback=self.bus.publish_outbound))
 
         self.tools.register(SceneGraphQueryTool(workspace=self.workspace))
-        if self.forge_orchestrator is not None:
-            from PhyAgentOS.agent.tools.forge import (
-                CreateReplannedForgeSessionTool,
-                ForgeCancelSessionTool,
-                ForgeExecuteTaskTool,
-                ForgeGetContextTool,
-                ForgeGetSessionTool,
-                ForgeResetTool,
-                VerifyForgeSessionTool,
-            )
+        if self.experience is not None:
+            from PhyAgentOS.agent.tools.skill_activation import ActivateSkillTool
 
-            for tool in (
-                ForgeExecuteTaskTool(self.forge_orchestrator),
-                ForgeGetSessionTool(self.forge_orchestrator),
-                ForgeCancelSessionTool(self.forge_orchestrator),
-                ForgeGetContextTool(self.forge_orchestrator),
-                ForgeResetTool(self.forge_orchestrator),
-                VerifyForgeSessionTool(self.forge_orchestrator),
-                CreateReplannedForgeSessionTool(self.forge_orchestrator),
+            self.tools.register(ActivateSkillTool(self.experience.activation))
+        if self.forge_task_coordinator is not None:
+            from PhyAgentOS.agent.tools.forge_task import build_forge_task_tools
+
+            for tool in build_forge_task_tools(self.forge_task_coordinator):
+                self.tools.register(tool)
+        if self.forge_tool_client is not None:
+            from PhyAgentOS.agent.tools.forge_tool_api import build_forge_tool_api_tools
+
+            for tool in build_forge_tool_api_tools(
+                self.forge_tool_client,
+                invocation_ids=self.forge_tool_invocation_ids,
+                coordinator=self.forge_task_coordinator,
             ):
                 self.tools.register(tool)
 
     async def _connect_mcp(self) -> None:
         """Connect to configured MCP servers (one-time, lazy)."""
+        if self.experience is not None:
+            await self.experience.start()
         if self._mcp_connected or self._mcp_connecting or not self._mcp_servers:
             return
         self._mcp_connecting = True
@@ -212,8 +250,10 @@ class AgentLoop:
             if tool := self.tools.get(name):
                 if hasattr(tool, "set_context"):
                     tool.set_context(channel, chat_id, *([message_id] if name == "message" else []))
-        if tool := self.tools.get("forge_execute_task"):
-            tool.set_context(channel, chat_id, session_key)
+        if tool := self.tools.get("forge_task_create"):
+            tool.set_context(session_key or f"{channel}:{chat_id}")
+        if tool := self.tools.get("activate_skill"):
+            tool.set_context(session_key or f"{channel}:{chat_id}")
 
     @staticmethod
     def _strip_think(text: str | None) -> str | None:
@@ -237,6 +277,7 @@ class AgentLoop:
         self,
         initial_messages: list[dict],
         on_progress: Callable[..., Awaitable[None]] | None = None,
+        experience_session_key: str | None = None,
     ) -> tuple[str | None, list[str], list[dict]]:
         """Run the agent iteration loop."""
         messages = initial_messages
@@ -274,6 +315,10 @@ class AgentLoop:
 
                 for tool_call in response.tool_calls:
                     tools_used.append(tool_call.name)
+                    if self.experience is not None and experience_session_key is not None:
+                        self.experience.record_tool(
+                            experience_session_key, tool_call.name, tool_call.arguments
+                        )
                     args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
                     logger.info("Tool call: {}({})", tool_call.name, args_str[:200])
                     result = await self.tools.execute(tool_call.name, tool_call.arguments)
@@ -337,15 +382,24 @@ class AgentLoop:
                 pass
         sub_cancelled = await self.subagents.cancel_by_session(msg.session_key)
         forge_cancelled = 0
-        if self.forge_orchestrator is not None:
-            for record in self.forge_orchestrator.store.nonterminal():
-                if record.origin_session_key == msg.session_key:
-                    await self.forge_orchestrator.cancel_session(
-                        record.session_id, reason="user_stop"
-                    )
-                    forge_cancelled += 1
-        total = cancelled + sub_cancelled + forge_cancelled
-        content = f"Stopped {total} task(s)." if total else "No active task to stop."
+        if self.forge_task_coordinator is not None:
+            record = self.forge_task_coordinator.store.active()
+            if record is not None and record.origin_session_key == msg.session_key:
+                await self.forge_task_coordinator.cancel_task(
+                    record.task_id, reason="user_stop"
+                )
+                forge_cancelled = 1
+        local_stopped = cancelled + sub_cancelled
+        if forge_cancelled:
+            content = (
+                f"Stopped {local_stopped} local task(s); requested cancellation for "
+                f"{forge_cancelled} Forge AgentTask(s). Physical Action stop is not proven "
+                "until Gateway status/result becomes terminal."
+            )
+        elif local_stopped:
+            content = f"Stopped {local_stopped} task(s)."
+        else:
+            content = "No active task to stop."
         await self.bus.publish_outbound(OutboundMessage(
             channel=msg.channel, chat_id=msg.chat_id, content=content,
         ))
@@ -392,10 +446,19 @@ class AgentLoop:
             except (RuntimeError, BaseExceptionGroup):
                 pass  # MCP SDK cancel scope cleanup is noisy but harmless
             self._mcp_stack = None
+        if self.forge_tool_client is not None:
+            await self.forge_tool_client.close()
 
     def stop(self) -> None:
         """Stop the agent loop."""
         self._running = False
+        if self.experience is not None:
+            self.experience.stop()
+        if (
+            self.forge_task_coordinator is not None
+            and self.forge_task_coordinator.verifier is not None
+        ):
+            self.forge_task_coordinator.verifier.stop()
         logger.info("Agent loop stopping")
 
     async def _process_message(
@@ -411,20 +474,29 @@ class AgentLoop:
                                 else ("cli", msg.chat_id))
             logger.info("Processing system message from {}", msg.sender_id)
             key = msg.session_key_override or f"{channel}:{chat_id}"
+            task_ref = msg.metadata.get("agent_task_id") or msg.metadata.get(
+                "forge_session_id"
+            )
+            if self.experience is not None and task_ref:
+                self.experience.schedule_forge_completion(
+                    str(task_ref)
+                )
             session = self.sessions.get_or_create(key)
             await self.memory_consolidator.maybe_consolidate_by_tokens(session)
             self._set_tool_context(
                 channel,
                 chat_id,
                 msg.metadata.get("message_id"),
-                msg.session_key,
+                key,
             )
             history = session.get_history(max_messages=0)
             messages = self.context.build_messages(
                 history=history,
                 current_message=msg.content, channel=channel, chat_id=chat_id,
             )
-            final_content, _, all_msgs = await self._run_agent_loop(messages)
+            final_content, _, all_msgs = await self._run_agent_loop(
+                messages, experience_session_key=key
+            )
             self._save_turn(session, all_msgs, 1 + len(history))
             self.sessions.save(session)
             await self.memory_consolidator.maybe_consolidate_by_tokens(session)
@@ -436,6 +508,8 @@ class AgentLoop:
 
         key = session_key or msg.session_key
         session = self.sessions.get_or_create(key)
+        if self.experience is not None:
+            self.experience.begin_turn(key, msg.content)
 
         # Slash commands
         cmd = msg.content.strip().lower()
@@ -477,7 +551,7 @@ class AgentLoop:
             msg.channel,
             msg.chat_id,
             msg.metadata.get("message_id"),
-            msg.session_key,
+            key,
         )
         if message_tool := self.tools.get("message"):
             if isinstance(message_tool, MessageTool):
@@ -500,7 +574,9 @@ class AgentLoop:
             ))
 
         final_content, _, all_msgs = await self._run_agent_loop(
-            initial_messages, on_progress=on_progress or _bus_progress,
+            initial_messages,
+            on_progress=on_progress or _bus_progress,
+            experience_session_key=key,
         )
 
         if final_content is None:

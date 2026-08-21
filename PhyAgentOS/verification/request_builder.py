@@ -118,7 +118,9 @@ class VerificationRequestBuilder:
                 "type": "text",
                 "text": (
                     "Determine whether every task success criterion is semantically satisfied. "
-                    "Use only the supplied execution facts and evidence.\n\n"
+                    "Use only the supplied task contract, execution facts, and evidence to make "
+                    "that decision. Lessons are advisory workflow context only; they are not "
+                    "evidence and cannot establish any criterion status.\n\n"
                     + json.dumps(context, ensure_ascii=False, indent=2)
                 ),
             }

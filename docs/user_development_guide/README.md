@@ -1,227 +1,212 @@
 # PhyAgentOS 集成开发指南
 
-> 版本：0.2.0 · [English](README_en.md)
+[English](README_en.md) · [文档索引](../README.md)
 
-本指南面向 Forge Gateway、机器人能力、证据源、LLM Provider 和 PAOS Agent 工具的集成开发者。当前机器人执行只通过 Forge Gateway 1.0.0；PAOS 不再内置 Target/Policy/SkillRuntime/SessionRunner 扩展点。
+> 版本：0.2.2
 
-## 1. 选择正确扩展点
+## 1. 选择接入点
 
-| 需求 | 应修改的位置 | PAOS 侧工作 |
-|:-----|:-------------|:------------|
-| 新机器人/仿真环境 | Forge Runtime / Dora / hardware integration | 不新增 driver；确认 Gateway contract 可用 |
-| 新高层动作 | Forge Gateway capabilities 与 action dispatch | 通常无需产品代码，只补通用 contract/E2E 测试与文档 |
-| 新 policy | Forge action 背后的 policy/runtime | capability 暴露通用 policy identity/result semantics |
-| 新摄像头 | Gateway `/ws/images` producer | 配置 source ID，测试 before/after sequence |
-| 新结构化状态 | Gateway `/ws/state` 或公共 evidence-kind 扩展 | 若新增 kind，同时扩展 contracts/resolver/retention/test |
-| 新 verifier 模型 | PAOS Provider 配置/实现 | 保证多模态输入与严格 JSON 输出 |
-| 新 Agent 入口 | PAOS Channel | 经 MessageBus/AgentLoop，不能直接调用 Gateway |
-| 新执行工具 | 优先复用通用 Forge tools | 不能绕过 Orchestrator/Store，也不能暴露调用方 ID |
+| 能力 | 接入点 |
+|:-----|:-------|
+| 机器人读取或计算 | Gateway Query ToolSpec + ToolEndpoint operation |
+| 机器人物理效果 | Gateway Action ToolSpec + ToolEndpoint operation |
+| Dora nodes 与部署资产 | manifest v2 Skill Bundle 与锁定 Node artifacts |
+| 工作流说明 | 由 SkillsLoader 发现的 `SKILL.md` |
+| 用户任务成功 | 通用 `TaskVerificationContract` 与 AgentTask finalize |
+| 新模型 Provider | 现有 provider registry/configuration |
+| 非机器人 Agent 能力 | 现有 Agent ToolRegistry 或动态 MCP |
 
-## 2. 接入一个 Gateway action
+不要把 Agent 代码直接连接到机器人 SDK、Dora node、仿真器或其他 Gateway Session/Policy API。
 
-### 2.1 Capability 声明
+## 2. 定义 ToolSpec
 
-Gateway 在 `/agent/runtime/capabilities` 的 `actions` 中发布 action：
+每个 ToolSpec 包含稳定 `tool_id`、implementation/endpoint binding、operation、
+`semantics: query|action`、description、严格 input/output JSON schema、readiness，以及空间
+输入所需 robot frame profile。
 
-```json
-{
-  "actions": {
-    "place_object": {
-      "description": "Place an object in a target area.",
-      "policy_id": "manipulation_policy",
-      "command": "place_object",
-      "required_parameters": ["object", "target"],
-      "input_mapping": {
-        "object": "object",
-        "target": "target"
-      },
-      "result_semantics": "command_completed",
-      "completion": {
-        "source": "policy_command_status"
-      }
-    }
-  }
-}
+```yaml
+tool_id: motion.resolve_relative_pose
+implementation_id: motion.integration
+endpoint_id: motion.relative_pose
+operation: resolve
+semantics: query
+description: Resolve a relative end-effector delta into an absolute target pose.
+input_schema:
+  type: object
+  additionalProperties: false
+  required: [translation_frame, translation_m]
+  properties:
+    translation_frame: {enum: [tcp, base]}
+    translation_m:
+      type: object
+      additionalProperties: false
+      required: [x, y, z]
+      properties:
+        x: {type: number}
+        y: {type: number}
+        z: {type: number}
+output_schema:
+  type: object
+robot_frame_profile:
+  base_frame: arm_base
+  tool_frame: tcp
 ```
 
-字段原则：
+同步读取或不产生机器人效果的确定性解析使用 Query；物理或长时间效果使用 Action。在执行方
+定义 Endpoint operation `max_concurrency`，PAOS 不创建跨 Tool lease。
 
-- `description`、`required_parameters`、`input_mapping` 帮助 Planner 构造合法 inputs；
-- `policy_id` 与 `command` 组成执行 identity，create/get response 必须一致；
-- `result_semantics` 与 `completion` 说明 Gateway “完成”意味着什么；
-- 不要在 capability 中加入 `verify_grasp`、`grasp_verify_enabled` 或 verifier prompt；
-- action-specific 结果可放在 command `outputs`，但任务成功仍由 criteria 判定。
+## 3. 实现 Query 与 Action 行为
 
-### 2.2 Create 与 Get
-
-PAOS POST：
-
-```json
-{
-  "session_id": "forge_<paos-generated>",
-  "command_id": "command_<paos-generated>",
-  "action_type": "place_object",
-  "instruction": "Place the red object in the tray.",
-  "source": "paos-agent",
-  "inputs": {
-    "object": "red object",
-    "target": "tray"
-  }
-}
-```
-
-Gateway create/get 响应需要让 PAOS 解析出：
-
-```json
-{
-  "ok": true,
-  "data": {
-    "session": {
-      "session_id": "forge_<same>",
-      "action_type": "place_object",
-      "status": "running"
-    },
-    "command": {
-      "command_id": "command_<same>",
-      "session_id": "forge_<same>",
-      "request_id": "command_<same>",
-      "action_type": "place_object",
-      "policy_id": "manipulation_policy",
-      "command": "place_object",
-      "status": "running"
-    }
-  }
-}
-```
-
-终态时 session/command `status` 必须相同，并且只使用 `succeeded`、`failed`、`cancelled`。PAOS 不从 outputs、静稳或固定等待推断终态。
-
-### 2.3 Cancel
-
-`POST /agent/sessions/{session_id}/cancel` 接收 reason。Gateway 应尽力终止尚未完成的 command，并返回可持久化的 JSON 响应。即使 cancel transport 失败，PAOS 仍会保存失败详情并终结自己的任务状态。
-
-## 3. 接入图像证据
-
-`/ws/images` 每条消息应为 JSON：
-
-```json
-{
-  "type": "image",
-  "id": "front",
-  "seq": 42,
-  "timestamp": 1785744000.123,
-  "content_type": "image/jpeg",
-  "data": "<base64>"
-}
-```
-
-要求：
-
-- `id` 在重连和整个部署中保持稳定；
-- 每个 source 的 `seq` 单调递增；
-- `timestamp` 可省略；提供时必须有限且表示真实 source time；
-- `content_type` 为 JPEG、PNG 或 WebP，且实体 magic bytes 一致；
-- 单帧实体不超过 PAOS `maxArtifactBytes`；
-- Gateway 终态后仍要发布至少一个更新 sequence，以满足 after 边界。
-
-多摄像头独立维护 sequence。不要把相机名编码进 action type，也不要依赖数组顺序区分 source。
-
-## 4. 接入 robot state
-
-当 task `required_kinds` 包含 `robot_state` 时，PAOS 要求 before/after 都有 `/ws/state` 消息。消息必须是 JSON object，大小受 `maxArtifactBytes` 限制。
-
-Gateway 1.0.0 state message 没有统一 source timestamp 契约，因此 PAOS 只记录 `received_at`。如果未来增加 authoritative timestamp，应先升级公共 Gateway/Evidence contract，而不是让 Adapter 猜测字段。
-
-## 5. 设计 Task Verification Contract
-
-集成方不为 action 创建 verifier 分支，而是帮助 Agent/用户写可观察标准。
-
-不推荐：
+Query 从 ToolSpec 解析并调用：
 
 ```text
-goal: grasp succeeded
-criterion: policy returned succeeded
+POST /tools/{endpoint_id}/{operation}:invoke → HTTP 200
 ```
 
-推荐：
+Action admission 使用：
 
 ```text
-goal: object is held securely above the table
-criteria:
-  - final image shows the object clear of the table surface
-  - gripper and object maintain visible contact
-constraints:
-  - no other object leaves the workspace
+POST /tools/{tool_id}:invoke → HTTP 202 + invocation_id + attempt_id
+GET  /invocations/{invocation_id}
+GET  /invocations/{invocation_id}/result
+POST /invocations/{invocation_id}/cancel
 ```
 
-Gateway command status可以作为执行证据，但不能替代环境结果证据。
+Action status/result 必须暴露明确生命周期；result pending 时可返回 HTTP 202。Cancel accepted
+只表示控制处理。无法恢复执行事实时应返回显式 unknown，不能伪造 cancelled 或 success。
 
-## 6. Provider 与 Verifier 接入
+Input/output 必须是有限 JSON 并满足 ToolSpec。空间 Tool 必须说明 frame、unit、tolerance 与
+orientation behavior，避免 Agent 无法通过 `forge_tool_context` 检查的隐藏默认值。
 
-Verifier Provider 通过现有 Provider registry 选择。集成新 Provider 时需要支持：
+## 4. 构建 manifest v2 Skill Bundle
 
-- `chat_with_retry()`；
-- system + multimodal user content；
-- `temperature=0`；
-- timeout/cancellation；
-- 返回纯 JSON object；
-- 在独立 Verification Service 子进程中可由 serializable provider spec 重建。
+已安装 Skill Bundle 包含：
 
-公共输出必须通过 `VerificationVerdict` 校验，并且 exactly-once 覆盖全部 criteria、只引用合法 evidence ID。
+```text
+<skill>/
+├── skill.yaml
+├── SKILL.md
+├── profiles/<profile>/dataflow.yaml
+├── profiles/<profile>/...
+└── assets/...
+```
 
-## 7. PAOS 侧扩展边界
+最小 manifest 结构：
 
-### 可以扩展
+```yaml
+manifest_version: 2
+name: example-skill
+version: "1.0.0"
+description: Example robot workflow.
+skill_document: SKILL.md
+gateway_url: http://127.0.0.1:19002
+required_tools: [example.query, example.action]
+profiles:
+  sim:
+    dataflow: profiles/sim/dataflow.yaml
+    required_binaries: [gateway, example_node]
+    required_assets: [assets/scene.xml]
+    required_environment: []
+    environment: {}
+artifacts:
+  resolver: registry
+  nodes:
+    gateway:
+      artifact_id: gateway-1.0.0-linux-x86_64
+      version: "1.0.0"
+      platform: linux
+      arch: x86_64
+      digest: <64-character-sha256>
+```
 
-- 新的通用 evidence kind；
-- 新的 public-contract version（需要显式版本与迁移决策）；
-- Gateway-neutral observation transport reliability；
-- Store/event observability；
-- Provider；
-- Channel 或其他非执行入口。
+所有路径必须相对并包含在 Bundle 内。Registry Node lock 必须有 digest。Bundle archive
+inventory 需要覆盖每个文件及 SHA-256；links、路径穿越、冲突、过度展开和未列出内容会被拒绝。
 
-### 不应引入
+## 5. 发布 artifacts
 
-- action-specific verifier 开关或 prompt；
-- PAOS 内部 robot SDK/Policy client；
-- 第二套 SessionRunner 或文件 queue；
-- 基于固定 sleep、静稳、outputs 猜测 Gateway terminal；
-- 调用者指定 session/command ID；
-- 绕过 Store 直接 POST/重发；
-- 把 verdict 写回 Execution Record。
+Resource Registry 或 schema v3 静态 index 必须提供 artifact identity、URL、精确 size 与
+SHA-256。Node metadata 还提供 node digest 和 Skill lock 要求的 identity 字段。相同 artifact
+identity 下不能发布可变内容。
 
-## 8. Fake Gateway 测试闭环
+使用与用户一致的公开命令测试安装：
 
-默认集成测试应使用本地 fake HTTP/WebSocket server，模拟真实 Gateway shape：
+```bash
+paos skill install example-skill --version 1.0.0
+paos forge-node verify <node-id> <artifact-id>
+paos skill inspect example-skill
+```
 
-1. capabilities 通过严格校验；
-2. collectors 接收全部 before sources；
-3. 验证 before snapshot 已落盘后才允许 create；
-4. create 返回匹配 identity；
-5. GET 依次返回 queued/running/terminal；
-6. terminal 后发布更高 sequence；
-7. 断言 Execution/Evidence/Verification 与最终状态；
-8. 覆盖 timeout/cancel、404 resume、断线、乱序、缺证和非法 identity。
+Installer 先 staging、校验，再原子替换，失败则 rollback。不得要求调用方关闭摘要校验。
 
-可选真实 Gateway 测试只读取 `FORGE_GATEWAY_URL`，不得改写 Gateway 源码、配置或运行时数据。
+## 6. 设计 Dora profile
 
-## 9. 接入验收清单
+Dataflow 为每个 Node 定义明确 inputs/outputs，并使用 Gateway profile 声明的 Tool request/
+response ports。必需 executable 从不可变 Runtime environment 解析；assets 保留在 Skill Bundle
+中并使用可重定位路径。
 
-- [ ] Gateway API version 与四项 required supports 正确。
-- [ ] action capability 完整且 identity 稳定。
-- [ ] required inputs/input mapping 可供 Planner 理解。
-- [ ] create/get/cancel 使用一致的响应 envelope。
-- [ ] `request_id == command_id`。
-- [ ] session/command/action/policy/command identity 全程一致。
-- [ ] terminal status 枚举与 session/command 一致。
-- [ ] 每个图像 source ID 稳定、sequence 单调。
-- [ ] before 可在 POST 前获得，after 可在 terminal 后获得。
-- [ ] 任务标准不依赖 action-specific verifier 代码。
-- [ ] Fake Gateway 成功与全部关键拒绝路径通过。
+RuntimeManager 创建确定 flow name，校验 Dora 与必需文件，启动 flow，再等待 Gateway
+`/tools` 与全部 required Tool context。Manifest URL 已有 Gateway 监听时不会静默接管。
+
+Tool API 作为物理执行面时，应在 profile 禁用 Gateway Agent API：
+
+```yaml
+agent:
+  enabled: false
+tools:
+  enabled: true
+```
+
+## 7. 编写工作流说明
+
+`SKILL.md` 应说明何时激活、检查哪些 context、Query → Action 顺序、task binding、终态核对、
+verification checkpoint 与安全恢复规则。不得嵌入 secret、Registry URL、任务特定坐标或绕过
+Gateway/verification 的指令。
+
+验证型工作流只创建一个 AgentTask，把全部相关 Query/Action 绑定到同一 task，全部 Action
+终结后 finalize，并只在 recovery verdict 允许时追加 PlanRevision。
+
+## 8. Evidence 与 verification
+
+机器人能力接入应暴露 Tool execution facts，而不是编写 action-specific verifier code。PAOS 在
+AgentTask finalize 时采集配置的 image/state source 并应用通用 verification contract。
+Tool output schema 应包含有用的终态 result semantics、final state/error 和相关 tolerance。
+
+未来若引入 authoritative evidence，应显式升级 evidence contract；不能用约定把 best-effort
+WebSocket association 提升为权威。
+
+## 9. Fake Gateway 与 conformance 测试
+
+进入真机或仿真前，使用 mock HTTP transport 测试：
+
+- Tool list/spec/context 与 Query binding resolution；
+- Action HTTP 202 admission 及 invocation/attempt identity；
+- pending status/result 与已知终态；
+- cancel requested/accepted 不产生虚假停止；
+- timeout/unknown 不盲目重试；
+- endpoint concurrency rejection；
+- 绑定和无任务调用经过相同 routes；
+- AgentTask 单活动限制、revisions、evidence 与聚合 verification；
+- archive traversal/link/collision/digest 攻击与事务 rollback；
+- Runtime start/status/log/stop 与 availability 传播。
+
+随后完成模拟工作流。真实机器人或 MuJoCo 验收必须记录确切 Bundle、node digests、profile 与
+环境。
+
+## 10. 接入验收清单
+
+- [ ] Tool semantics 与 schema 明确、严格；
+- [ ] Frame、unit、tolerance 与 readiness 可检查；
+- [ ] Gateway operation 负责 `max_concurrency`；
+- [ ] Query/Action 使用文档 HTTP 契约；
+- [ ] Invocation/attempt ID 与 PAOS task ID 分离；
+- [ ] Cancel、timeout、unknown 不推断物理停止；
+- [ ] Bundle/Node artifacts 有不可变 size/digest metadata；
+- [ ] Runtime profile 从干净环境启动并使全部 Tool context ready；
+- [ ] Tool-only profile 禁用 Gateway Agent API；
+- [ ] 通用 Agent tools、verification、experience、evolution 不需要能力专用分支。
 
 ## 后续阅读
 
 - [开发者手册](../zh/03-developer-manual.md)
 - [通信架构](COMMUNICATION.md)
-- [Forge 接入契约](../forge/README_zh.md)
-- [配置参考](../zh/04-forge-configuration-reference.md)
+- [Forge Tool API 契约](../forge/README_zh.md)

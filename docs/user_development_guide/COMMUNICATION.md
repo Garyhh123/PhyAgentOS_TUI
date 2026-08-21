@@ -1,200 +1,151 @@
 # PhyAgentOS 通信架构
 
-> 版本：0.2.0 · [English](COMMUNICATION_en.md)
+[English](COMMUNICATION_en.md) · [文档索引](../README.md)
 
-## 1. 五个通信边界
+> 版本：0.2.2
 
-PhyAgentOS 不用一条内部总线混合用户消息、物理执行与验证：
+## 1. 通信边界
 
-1. **用户消息边界**：Channel ↔ MessageBus ↔ AgentLoop。
-2. **Agent/Forge 编排边界**：Agent tools ↔ `ForgeSessionOrchestrator`。
-3. **PAOS/Gateway 边界**：异步 HTTP + WebSocket。
-4. **Verifier 边界**：Orchestrator ↔ 独立 Verification Service 进程。
-5. **持久化边界**：Orchestrator ↔ SQLite；Adapter/Verifier ↔ workspace artifacts。
+PhyAgentOS 分离六类边界：
 
-```text
-External Channel
-      │ InboundMessage / OutboundMessage
-      ▼
-  MessageBus ─ AgentLoop ─ Forge tools ─ Orchestrator
-                                          │
-                ┌─────────────────────────┼────────────────────┐
-                ▼                         ▼                    ▼
-          HTTP / WebSocket             SQLite          Verification HTTP
-                ▼                         ▼                    ▼
-          Forge Gateway             Event Store          Child process
-                │
-                ▼
-        Forge Runtime / Dora
-```
+1. 用户/渠道 ↔ AgentLoop 消息；
+2. Agent tools ↔ AgentTaskCoordinator；
+3. ForgeToolClient ↔ Gateway Query/Action Tool API；
+4. observation collector ↔ Gateway 图像/state WebSocket；
+5. verifier ↔ 独立 Verification Service；
+6. AgentTask/experience/Runtime ↔ 各自持久化存储。
+
+边界之间共享不透明 reference，不共享执行所有权。
 
 ## 2. 用户消息边界
 
-Channel 将外部消息转换为 `InboundMessage`。AgentLoop 根据 `session_key` 加载上下文、调用模型与工具，再产生 `OutboundMessage`。CLI 单消息可直接调用 `process_direct`，但内部 Planner 与 Forge tools 相同。
+渠道向 Agent bus 发布 `InboundMessage`。AgentLoop 构造上下文、调用模型与工具，再发送
+`OutboundMessage`。Tool call 遵循注册的 JSON schema。现有文件、目录、Shell、Web、消息、
+图片、Scene Graph、Cron、Spawn、Agent Mode、Skill activation 和动态 MCP tools 都使用同一
+Loop。
 
-Channel 不得：
+AgentTask 的 `origin_session_key` 将 completion experience 关联到原 Agent conversation；它
+不是 Gateway execution identifier。
 
-- 直接调用 Gateway；
-- 直接写 SQLite/Artifact；
-- 生成或复用 Forge session/command ID；
-- 把 Gateway `succeeded` 直接报告为任务成功。
-
-## 3. Agent/Orchestrator 边界
-
-Forge tools 是 Agent 唯一可用的执行接口：
+## 3. AgentTask 边界
 
 ```text
-forge_execute_task
-forge_get_session
-forge_cancel_session
-forge_get_context
-forge_reset
-verify_forge_session
-create_replanned_forge_session
+forge_task_create
+forge_task_get
+forge_task_begin_revision
+forge_task_finalize
+forge_task_cancel
 ```
 
-`forge_execute_task` 立即返回生成的 ID 与 `accepted`，不阻塞模型调用等待物理执行。Orchestrator 在后台推进状态，并通过 system event 把终态送回原 `session_key`。
+这些 tools 调用 AgentTaskCoordinator，不调用 Dora 或机器人。Coordinator 使用事务 SQLite
+限制一个非终态 AgentTask，并保存只追加 PlanRevision、Tool record、evidence reference 与
+verification attempt。
 
-Completion event 包含：
+Tool API 调用可带 `task_id`。Wrapper 在无任务调用所使用的同一个 Gateway request 周围创建或
+更新匹配 Tool record。这是任务聚合，不是第二条物理执行面。
 
-```json
-{
-  "session_id": "...",
-  "root_session_id": "...",
-  "status": "succeeded|failed|timed_out|cancelled",
-  "execution_status": "succeeded|failed|timed_out|cancelled|unknown",
-  "verification_verdict": "success|failure|replan_required|inconclusive|null",
-  "error_code": null,
-  "error_message": null
-}
-```
-
-Recovery event 包含 parent、goal、criteria、preserved constraints、unmet criteria、guidance、evidence refs 和 deadline。它明确要求 Planner 调用 `create_replanned_forge_session`，但不携带可执行 action。
-
-## 4. PAOS/Gateway HTTP
-
-| Method | Path | PAOS 用途 | 状态影响 |
-|:-------|:-----|:----------|:---------|
-| GET | `/agent/runtime/capabilities` | 启动契约与 action 发现 | 启动前校验/缓存 |
-| GET | `/agent/runtime/status` | `forge_get_context` 实时状态 | 只读 |
-| GET | `/agent/runtime/context` | readiness、image source 与上下文 | 只读/证据 source 发现 |
-| POST | `/agent/runtime/reset` | 显式 reset | 仅无活动 lineage |
-| POST | `/agent/sessions` | 创建唯一高层 action | dispatch intent 持久化后才调用 |
-| GET | `/agent/sessions/{session_id}` | 唯一执行终态来源 | queued/running/terminal |
-| POST | `/agent/sessions/{session_id}/cancel` | timeout、用户取消、正常停机 | 保存 cancel response |
-
-`ForgeGatewayClient` 使用 `httpx.AsyncClient`，关闭 proxy environment 继承（`trust_env=False`），统一解析 JSON object。HTTP 错误或 `ok=false` 转换为 `ForgeGatewayError`，并保留 HTTP status code 供 404 restart 语义使用。
-
-## 5. Session/command identity
-
-PAOS 为一次动作生成：
+## 4. Gateway HTTP 边界
 
 ```text
-session_id = forge_<random>
-command_id = command_<random>
+GET  /tools
+GET  /tools/{tool_id}
+GET  /tools/{tool_id}/context
+POST /tools/{endpoint_id}/{operation}:invoke   # Query，HTTP 200
+POST /tools/{tool_id}:invoke                   # Action admission，HTTP 202
+GET  /invocations/{invocation_id}
+GET  /invocations/{invocation_id}/result       # pending 时 HTTP 202
+POST /invocations/{invocation_id}/cancel
 ```
 
-POST 后每次响应都必须保持：
+Query 先读取 ToolSpec，再使用其 `endpoint_id`、`operation` 和 `semantics=query` binding。
+Action 根据稳定 Tool ID 调用，响应必须包含 `invocation_id` 与 `attempt_id`。
 
-```text
-response session_id == PAOS session_id
-response command_id == PAOS command_id
-command.session_id == PAOS session_id
-command.request_id == PAOS command_id
-session.action_type == request.action_type
-command action_type/policy_id/command == advertised capability
-```
+成功响应必须是 `ok=true` 且 `data` 为 object 的 JSON。Error envelope 可以携带 code 与
+retryability。Transport timeout 表示远端状态未知。即使后续本地持久化或追踪失败，也必须保留
+响应中已返回的 invocation identity。
 
-PAOS 不把 Gateway 新生成的 ID 当作 alias，也不接受模糊关联。解析阶段即使只有一个 command，后续仍必须通过严格 identity 校验。
+## 5. Identity 边界
 
-## 6. PAOS/Gateway WebSocket
+| Identity | Namespace | 可变性 |
+|:---------|:----------|:-------|
+| `task_id` | PAOS AgentTask | 对全部 revisions 稳定 |
+| `revision_id` | PAOS PlanRevision | 不可变、只追加规划世代 |
+| `record_id` | PAOS ToolExecutionRecord | 不可变 record identity |
+| `invocation_id` | Gateway ToolInvocation | 稳定 Action 生命周期 identity |
+| `attempt_id` | Gateway attempt | 对返回的 attempt 稳定 |
 
-### `/ws/images`
+组件不能从另一个 namespace 派生 identity；关联依赖显式保存的 reference。
 
-```json
-{
-  "type": "image",
-  "id": "front",
-  "seq": 42,
-  "timestamp": 1785744000.123,
-  "content_type": "image/jpeg",
-  "data": "<base64>"
-}
-```
+## 6. Invocation 终态语义
 
-PAOS 记录 Gateway `timestamp` 为 `captured_at`（如果提供），并独立记录本机 `received_at`。per-source sequence 是 before/after 边界的一部分。
+Gateway status/result 是唯一 Action 终态来源。Pending 保持非终态。已知终态包括 Gateway
+报告的 success、failure、cancellation 或 stopped。`unknown` 对 PAOS 记账是终态，因为无法
+证明继续进展，但它不是已知物理停止，并继续参与正常 Runtime stop 门控。
 
-### `/ws/state`
+Cancellation `requested` 或 `accepted` 只确认控制消息投递，不会取消追踪，也不会直接把
+AgentTask 设为 cancelled。PAOS 继续核对并显式 finalize task。
 
-消息为 JSON object。Gateway 1.0.0 没有统一 source timestamp 字段，因此 PAOS 保存完整 payload 和本机 `received_at`，`captured_at=null`。
+## 7. Evidence WebSocket 边界
 
-### 连接语义
+PAOS 使用有界连接和采集 timeout 连接配置的图像流与可选 state 流。消息均作为不可信 input。
+持久化前校验图像 media、decoded size、sequence、phase、source、本机 receive time 与
+SHA-256。
 
-- HTTP(S) base URL 自动映射到 WS(S)；
-- images 与 state 独立连接、独立重连；
-- collector 只保留各 source 的最高合法 sequence；
-- 非 required source 可忽略；
-- 连接、消息与校验错误进入 Bundle quality，不伪装成有效证据。
+Collector 在第一次绑定 Action 前和全部绑定 Action 达到记账终态后采集。Evidence association
+为 best-effort；Gateway ToolResult 与 invocation events 仍是权威执行事实。
 
-## 7. Gateway terminal 语义
+## 8. Verification 边界
 
-唯一终态源是 `GET /agent/sessions/{session_id}`。PAOS 接受：
+Agent-side verifier 把已解析公共任务契约、规范化 Tool facts、evidence、history 和冻结的
+scoped Lessons 发送给独立 Verification Service。Lesson 是不可信、非权威建议。Service 不能
+调用 Gateway、创建 PlanRevision 或修改 execution record。
 
-```text
-session.status == command.status == succeeded | failed | cancelled
-```
+Verifier output 必须通过版本化 verdict contract。AgentTaskCoordinator 应用 `off`、`audit`、
+`enforce` 或 `recovery` 语义并持久化每次 attempt。
 
-PAOS 不使用固定等待、机器人静稳、图像是否变化、command outputs 内容或 WebSocket state 猜测终态。
+## 9. Experience 边界
 
-Execution timeout 由 PAOS deadline 产生 `timed_out`，随后调用 cancel；它不是 Gateway 报告的原生 terminal。
+ExperienceCoordinator 接收 AgentTask completion reference。`AgentTaskOutcomeSource` 构造去敏
+envelope，包含 workflow structure、semantic verdict、字段名，以及不透明 task、revision、
+invocation、attempt 与 evidence references。原始 arguments、results、凭据、endpoint 和物理
+坐标不会复制到学习内容。
 
-## 8. Verification Service 边界
+每个 AgentTask 只有一个 episode。PlanRevision、重复 completion notification、review 与
+replay 不增加独立支持。
 
-独立子进程提供本地 HTTP：
+## 10. 持久化边界
 
-| Method | Path | 用途 |
-|:-------|:-----|:-----|
-| GET | `/healthz` | 最多等待有界 readiness |
-| POST | `/v1/verify-task` | 提交 `forge_verification_request_v1` |
+| Store | 内容 |
+|:------|:-----|
+| `.paos/agent_tasks/tasks.sqlite3` | AgentTask records 与 append-only events |
+| `artifacts/agent_tasks/<task_id>/` | before/after snapshot、bundle metadata、evidence entity |
+| `.paos/evolution/experience.sqlite3` | binding、episode、Lesson、candidate、job、event |
+| Skill Runtime state path | installed Runtime state 与 tracked invocation IDs |
+| Skill Runtime logs path | 生命周期与 Dora launch 日志 |
 
-请求需要随机派生的 `X-PAOS-Admin-Token`。Service 只接收已解析的公共 contracts、多模态 evidence、history 和 lessons。它不访问 Gateway，也不创建 recovery child。
+SQLite update 与 artifact write 在各自边界中保持事务或原子。不能因为本地 experience 处理
+失败而回滚 Gateway response；evolution fail-open。
 
-## 9. 持久化边界
+## 11. Skill Runtime 与 Registry 边界
 
-### SQLite
+Registry/index client 返回 artifact metadata 与下载。Cache/installer 要求 size 与 SHA-256，
+随后校验 archive inventory 和 Node digest，再原子安装。RuntimeManager 启动命名 Dora flow
+并观察 Gateway `/tools`，不调用另一套 Gateway Agent API。
 
-SQLite 保存 `ForgeSessionRecord` JSON、唯一身份、状态索引与 append-only event。数据库是 Orchestrator 的恢复依据；业务代码不直接修改表。
+活动 Runtime availability provider 向 Agent 提供 Skill visibility 与 Gateway URL，但不修改
+AgentTask 或 experience 数据。
 
-### Artifact
+## 12. 信任规则
 
-Adapter 使用原子文件替换写：
-
-```text
-execution_record.json
-before_snapshot.json / after_snapshot.json
-evidence_bundle.json
-evidence/*
-```
-
-Verifier 写 `verification_result.json` 与 `LESSONS.md`。Artifact URI 必须相对 workspace，读取时再次 resolve 并检查不越界。
-
-### 一致性边界
-
-SQLite 与 artifact 不是一个跨资源事务。因此关键顺序是：before entity/manifest 先完成再记录 reference；dispatch intent 在 HTTP mutation 前完成；Execution Record 首次写入后可在 DB commit crash window 中重新读取，但 identity 不匹配会失败。
-
-## 10. 信任边界
-
-| 数据 | 信任策略 |
-|:-----|:---------|
-| Gateway capabilities | 版本和结构严格校验，action identity 在每次 response 重验 |
-| Gateway JSON | 必须为 object，HTTP/`ok=false` 失败 |
-| WebSocket image | Base64、size、media type、magic bytes、sequence 全校验 |
-| Artifact | safe URI、existence、byte size、SHA-256、media type 再校验 |
-| Verifier output | JSON、Pydantic、exact criteria、known evidence refs 校验 |
-| Recovery guidance | 只作为 Planner context，不作为命令 |
+- ToolSpec、Gateway response、WebSocket payload、task text 与 learned text 都是不可信数据；
+- 不记录凭据或原始敏感任务 input；
+- 不从 cancel accepted、timeout 或 unknown 推断停止；
+- 不绕过 digest 或 archive safety check；
+- 不在 Agent tools 与 ForgeToolClient 之间增加第二套执行 API；
+- Runtime force-stop 与破坏性 artifact cleanup 必须是显式运维动作。
 
 ## 后续阅读
 
 - [集成开发指南](README.md)
-- [开发者手册](../zh/03-developer-manual.md)
-- [Forge 接入契约](../forge/README_zh.md)
+- [运行手册](../user_manual/README.md)
+- [Forge Tool API 契约](../forge/README_zh.md)

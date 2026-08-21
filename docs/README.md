@@ -1,7 +1,7 @@
 # PhyAgentOS Documentation
 
-版本 / Version: **0.2.0**<br>
-实现基线 / Implementation baseline: **Forge-only source, 2026-08-03**
+版本 / Version: **0.2.2**<br>
+实现基线 / Implementation baseline: **Forge Tool API, AgentTask, Skill Runtime, and Agent experience evolution, 2026-08-21**
 
 本目录由 PhyAgentOS 开发团队面向用户、运维人员和生态开发者维护。文档只把仓库源码、配置 Schema 与测试实际覆盖的行为称为“当前能力”。`plan/` 中的设计报告是历史背景，不替代这里的运行契约。
 
@@ -13,8 +13,9 @@ The PhyAgentOS team maintains this directory for users, operators, and ecosystem
 
 1. [框架介绍](zh/01-framework-introduction.md)：项目定位、控制面边界、执行—证据—判定分离、生命周期与实现范围。
 2. [用户手册](zh/02-user-manual.md)：安装、Provider/Forge 配置、任务描述、验证模式、Artifact 与排障。
-3. [开发者手册](zh/03-developer-manual.md)：公共模型、状态机、Gateway 身份校验、Evidence、Verifier、Recovery 与测试。
-4. [Forge 配置参考](zh/04-forge-configuration-reference.md)：全局 Forge、Evidence、Verification、Task Contract 和 Embodiment 字段。
+3. [开发者手册](zh/03-developer-manual.md)：AgentTask、Tool API client、Skill Runtime、Evidence、Verifier、Recovery 与测试。
+4. [Forge 配置参考](zh/04-forge-configuration-reference.md)：Forge Tool API、Resource Registry、Evidence、Verification、AgentTask 和 Embodiment 字段。
+5. [Agent 经验与 Skill 自进化](zh/05-agent-experience-and-skill-evolution.md)：Skill 激活与归因、Episode、Lesson 聚类、Skill 晋升、持久化和安全门控。
 
 ### 专题手册
 
@@ -22,7 +23,7 @@ The PhyAgentOS team maintains this directory for users, operators, and ecosystem
 - [Docker 部署指南](user_manual/DOCKER.md)：基于 Docker 的快速部署，配合一键脚本完成构建、初始化与运行（仅外连网关，无入站端口）。
 - [集成开发指南](user_development_guide/README.md)：为 Gateway 增加 action、提供证据源、对接 Provider，以及 PAOS 扩展边界。
 - [通信架构](user_development_guide/COMMUNICATION.md)：Agent 消息、Forge HTTP/WebSocket、system event、SQLite 与 Artifact 边界。
-- [Forge 接入契约](forge/README_zh.md)：Gateway 1.0.0 的完整执行、证据、验证、恢复和崩溃恢复契约。
+- [Forge Tool API 接入契约](forge/README_zh.md)：Query/Action、ToolInvocation、AgentTask、证据、验证、恢复和 Skill Runtime 契约。
 
 ### 推荐阅读路径
 
@@ -34,6 +35,7 @@ The PhyAgentOS team maintains this directory for users, operators, and ecosystem
 | 用 Docker 快速部署 | [Docker 部署指南](user_manual/DOCKER.md) |
 | 在 Gateway 增加新机器人动作 | [集成开发指南](user_development_guide/README.md) → [开发者手册](zh/03-developer-manual.md) |
 | 修改证据、验证、恢复或持久化 | [开发者手册](zh/03-developer-manual.md) → [Forge 接入契约](forge/README_zh.md) |
+| 使用或扩展任务经验、Lesson 与 Skill 自进化 | [Agent 经验与 Skill 自进化](zh/05-agent-experience-and-skill-evolution.md) → [开发者手册](zh/03-developer-manual.md) |
 
 ## English
 
@@ -41,8 +43,9 @@ The PhyAgentOS team maintains this directory for users, operators, and ecosystem
 
 1. [Framework Introduction](en/01-framework-introduction.md): positioning, control-plane boundaries, execution/evidence/verdict separation, lifecycle, and implemented scope.
 2. [User Manual](en/02-user-manual.md): installation, provider and Forge configuration, task description, verification modes, artifacts, and troubleshooting.
-3. [Developer Manual](en/03-developer-manual.md): public models, state machine, Gateway identity validation, evidence, verifier, recovery, and testing.
-4. [Forge Configuration Reference](en/04-forge-configuration-reference.md): exact global Forge, evidence, verification, task-contract, and embodiment fields.
+3. [Developer Manual](en/03-developer-manual.md): AgentTask, Tool API client, Skill Runtime, evidence, verifier, recovery, and testing.
+4. [Forge Configuration Reference](en/04-forge-configuration-reference.md): exact Forge Tool API, Resource Registry, evidence, verification, AgentTask, and embodiment fields.
+5. [Agent Experience and Skill Evolution](en/05-agent-experience-and-skill-evolution.md): Skill activation and attribution, episodes, Lesson clustering, Skill promotion, persistence, and guardrails.
 
 ### Focused manuals
 
@@ -50,7 +53,7 @@ The PhyAgentOS team maintains this directory for users, operators, and ecosystem
 - [Docker Deployment Guide](user_manual/DOCKER_en.md): Docker-based quick deployment with a one-click script for build, init, and run (outbound-only gateway, no inbound port).
 - [Integration Development Guide](user_development_guide/README_en.md): adding Gateway actions, exposing evidence sources, connecting providers, and PAOS extension boundaries.
 - [Communication Architecture](user_development_guide/COMMUNICATION_en.md): Agent messages, Forge HTTP/WebSocket, system events, SQLite, and artifact boundaries.
-- [Forge Integration Contract](forge/README.md): the complete Gateway 1.0.0 execution, evidence, verification, recovery, and crash-recovery contract.
+- [Forge Tool API Integration Contract](forge/README.md): Query/Action, ToolInvocation, AgentTask, evidence, verification, recovery, and Skill Runtime contracts.
 
 ### Suggested reading paths
 
@@ -62,18 +65,31 @@ The PhyAgentOS team maintains this directory for users, operators, and ecosystem
 | Deploy quickly with Docker | [Docker Deployment Guide](user_manual/DOCKER_en.md) |
 | Add a new robot action in Gateway | [Integration Guide](user_development_guide/README_en.md) → [Developer Manual](en/03-developer-manual.md) |
 | Change evidence, verification, recovery, or persistence | [Developer Manual](en/03-developer-manual.md) → [Forge Integration Contract](forge/README.md) |
+| Use or extend task experience, Lessons, or Skill evolution | [Agent Experience and Skill Evolution](en/05-agent-experience-and-skill-evolution.md) → [Developer Manual](en/03-developer-manual.md) |
 
 ## Terminology
 
 | Term | Meaning |
 |:-----|:--------|
-| PAOS session | The persistent orchestration record owned by PhyAgentOS. Its ID is also sent to Gateway as the requested session ID. |
-| Gateway command | The high-level Forge action identified by a PAOS-generated command ID. |
-| Execution Record | Immutable normalized facts derived from the Gateway session and command. |
+| AgentTask | The PAOS aggregate for a user-visible goal, immutable PlanRevisions, bound calls, evidence, and verification. It does not execute the robot. |
+| PlanRevision | One append-only planning generation inside a stable AgentTask identity. |
+| Query record | The PAOS record of one synchronous Gateway Query bound to an AgentTask. |
+| ToolInvocation | The Gateway-owned identity and lifecycle of one asynchronous Action. |
+| Attempt | The Gateway execution attempt identified separately from the ToolInvocation and AgentTask. |
+| Tool execution record | A normalized PAOS Query result or Action invocation reference attached to one PlanRevision. |
 | Evidence Bundle | Validated, workspace-relative artifact references and capture-quality metadata. |
 | Verdict | A structured semantic decision over every success criterion. |
-| Root lineage | The original task plus any Planner-created recovery children. It owns the single execution slot. |
+| Task lineage | One AgentTask and all of its PlanRevisions; only one AgentTask may be non-terminal globally. |
+| Skill activation | An explicit, per-turn binding between a registered workflow Skill and a task; a direct file read is not an activation. |
+| Task episode | One redacted experience record for a completed, semantically verified AgentTask lineage. |
+| Failure observation | A normalized, non-answer-specific description of a workflow-related failure pattern. |
+| Lesson cluster | Independent AgentTask observations grouped by Skill, workflow, and canonical failure pattern. |
+| Scoped Lesson | A validated Lesson with explicit applicability boundaries, dynamically loaded only for a matching activated Skill. |
 
-## Compatibility note
+## Runtime and compatibility boundaries
 
-Active documentation intentionally contains no compatibility instructions for the removed PAOS Runtime/Target/SkillRuntime/Watchdog/SessionRunner/Markdown queue architecture. Existing user workspaces are not deleted automatically; see the cleanup section in the [User Manual](en/02-user-manual.md#13-legacy-workspace-cleanup) or [用户手册](zh/02-user-manual.md#13-旧工作区清理).
+PAOS supports Forge Query and Action through `/tools` and `/invocations`. The Agent-side aggregate
+is AgentTask, while physical execution remains owned by Gateway ToolInvocation and ToolEndpoint.
+Skill Runtime manages manifest-v2 bundles and named Dora profiles; it is distinct from the removed
+Markdown queue Runtime. Existing evolution, experience, verification, and Agent workspace data are
+read in place. Registry downloads are explicit and digest-verified.

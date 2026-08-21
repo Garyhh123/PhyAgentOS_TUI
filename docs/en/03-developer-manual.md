@@ -1,298 +1,200 @@
 # PhyAgentOS Developer Manual
 
-> Documentation version: 0.2.0. This manual is for PAOS, Forge Gateway, evidence, verifier, and Agent-tool developers.
+[中文](../zh/03-developer-manual.md) · [Documentation index](../README.md)
 
-## 1. Development principles
+> Documentation version: 0.2.2.
 
-Changes touching embodied execution must preserve these invariants:
+## 1. Development invariants
 
-1. Forge Gateway is the only robot execution entry point.
-2. Gateway terminal state is execution fact; task success follows verification policy.
-3. Only PAOS generates session and command IDs; callers cannot provide or reuse them.
-4. A session with recorded dispatch intent is never automatically POSTed again.
-5. Gateway session, command, request, action, command identity, and policy identity all match.
-6. A written Execution Record cannot be overwritten by verification, review, or retention.
-7. Evidence preserves real source, sequence, source time when present, and PAOS receive time; it never fabricates authoritative association.
-8. Verifier prompts, public verdicts, and Recovery Requests are independent of `action_type`.
-9. Parent `replanned` and child creation occur in one SQLite transaction.
-10. Execution, evidence, verification, recovery, and persistence changes include failure and restart tests.
+1. Robot execution has one physical path: `ForgeToolClient → Gateway Tool API → ToolEndpoint`.
+2. AgentTask aggregates planning, evidence, and verdicts; it never executes the robot.
+3. `task_id`, `revision_id`, Query record ID, `invocation_id`, and `attempt_id` are distinct.
+4. Forge ToolResult and invocation events are authoritative execution facts.
+5. Action admission, cancellation acceptance, timeout, and `unknown` do not prove physical stop.
+6. General Agent tools, verification, experience, evolution, and dynamic MCP remain independent.
+7. Runtime artifacts are installed only after bounded archive and digest verification.
 
 ## 2. Module map
 
-| Area | Path | Responsibility |
-|:-----|:-----|:---------------|
-| Agent integration | `PhyAgentOS/agent/loop.py` | Register tools, inject capability summary, handle system events |
-| Agent tools | `PhyAgentOS/agent/tools/forge.py` | JSON schemas, call context, Orchestrator facade |
-| Public contracts | `PhyAgentOS/verification/contracts.py` | Task, Session, Execution, Evidence, Verdict, Recovery, state machine |
-| Verification request | `PhyAgentOS/verification/request_builder.py` | Resolve bundle, validate digest/window/requirements, build multimodal request |
-| Verification engine | `PhyAgentOS/verification/engine.py` | Stateless model call and timeout |
-| Verification service | `PhyAgentOS/verification/service.py` | Child process, readiness, authentication, strict JSON output |
-| Verifier facade | `PhyAgentOS/agent/session_verifier.py` | Budgets, attempts, retention, lessons, review |
-| Gateway client | `PhyAgentOS/forge/client.py` | `httpx.AsyncClient` wrapper for Agent API |
-| Observation | `PhyAgentOS/forge/observation.py` | Async WebSockets, bounded per-source latest frames, validation |
-| Evidence writer | `PhyAgentOS/forge/evidence.py` | Safe paths, atomic writes, SHA-256, snapshots, bundles |
-| Adapter | `PhyAgentOS/forge/adapter.py` | One-action execution, identity, polling, timeout, cancellation, mapping |
-| Store | `PhyAgentOS/forge/store.py` | SQLite WAL, transactions, state, events, atomic replan |
-| Orchestrator | `PhyAgentOS/forge/orchestrator.py` | Async tasks, modes, restart, recovery, notification |
-| Configuration | `PhyAgentOS/config/schema.py` | Forge, evidence, verification, and embodiment schemas |
+| Module | Responsibility |
+|:-------|:---------------|
+| `agent/loop.py` | Existing Agent loop, general tools, dynamic MCP, Forge tool registration, context, and lifecycle |
+| `agent/tools/forge_tool_api.py` | Six Agent wrappers over Query/Action Tool API |
+| `agent/tools/forge_task.py` | Five AgentTask lifecycle tools |
+| `forge/tool_client.py` | Strict asynchronous HTTP client and response validation |
+| `forge/task.py` | AgentTask models, SQLite store, Tool binding, evidence capture, verification, and recovery |
+| `forge/observation.py`, `forge/evidence.py` | Best-effort image/state collection and artifact writing |
+| `skill_runtime/` | Manifest, catalog, safe archive, installer, Registry, state, Runtime manager, and availability |
+| `agent/experience/` | Activation, episodes, assessment, Lessons, Skill candidates, and evolution |
+| `verification/` | Public task, evidence, request, and verdict contracts plus verification service |
 
-## 3. Public models
+## 3. Forge Tool API client
 
-### 3.1 `ForgeTaskRequest`
+`ForgeToolClient` accepts only JSON object envelopes with `ok=true` and object-valued `data`.
+Errors preserve HTTP status, error code, retryability, and any returned invocation identity.
 
-```python
-ForgeTaskRequest(
-    task_description="Place the red object in the tray",
-    action_type="<gateway-advertised-action>",
-    inputs={...},
-    verification=TaskVerificationContract(...),
-    execution_timeout_s=300.0,
-)
-```
+| Operation | HTTP contract |
+|:----------|:--------------|
+| List Tools | `GET /tools` → 200 |
+| Read ToolSpec | `GET /tools/{tool_id}` → 200 |
+| Read context | `GET /tools/{tool_id}/context` → 200 |
+| Invoke Query | resolve ToolSpec, then `POST /tools/{endpoint_id}/{operation}:invoke` → 200 |
+| Admit Action | `POST /tools/{tool_id}:invoke` → 202 |
+| Action status | `GET /invocations/{invocation_id}` → 200 |
+| Action result | `GET /invocations/{invocation_id}/result` → 200 or pending 202 |
+| Request cancel | `POST /invocations/{invocation_id}/cancel` → 200 or accepted 202 |
 
-`inputs` must contain finite JSON values. NaN, Infinity, non-serializable objects, and blank `task_description` or `action_type` values are rejected.
+Path components are percent-encoded. Invocation input is `{arguments, caller_id?, timeout_ms?}`.
+An Action admission must contain non-empty `invocation_id` and `attempt_id`. If PAOS local tracking
+fails after Gateway acceptance, the authoritative response is retained with a `paos_warnings`
+entry rather than replaced by a false transport failure.
 
-### 3.2 `TaskVerificationContract`
+## 4. Agent-facing tools
 
-When `mode != off`, goal and at least one criterion are required. Criteria and constraints cannot contain blank items. Evidence policy requires `rgb_image` by default and may override sources per task. Empty task sources fall back to Forge target configuration or readiness discovery.
+Task lifecycle:
 
-### 3.3 `ExecutionRecord`
+- `forge_task_create(task_description, verification)`;
+- `forge_task_get(task_id)`;
+- `forge_task_begin_revision(task_id, reason)`;
+- `forge_task_finalize(task_id)`;
+- `forge_task_cancel(task_id, reason?)`.
 
-This model is `frozen=True` and contains:
+Tool transport:
 
-- PAOS/Gateway session and command IDs;
-- Gateway API and instance identity;
-- action type and policy ID;
-- normalized execution status;
-- generic capability `result_semantics` and `completion` declarations;
-- Gateway timeline, outputs, and error.
+- `forge_tool_context(tool_id)`;
+- `forge_tool_query(tool_id, arguments, task_id?, caller_id?, timeout_ms?)`;
+- `forge_tool_start_action(tool_id, arguments, task_id?, caller_id?, timeout_ms?)`;
+- `forge_tool_action_status(invocation_id)`;
+- `forge_tool_action_result(invocation_id)`;
+- `forge_tool_cancel_action(invocation_id)`.
 
-Never put a task verdict into this model or change Gateway `succeeded` to `failed` because a verifier rejected the semantic result.
+Bound and unbound calls invoke the same HTTP methods. Bound calls additionally create or update a
+ToolExecutionRecord in the active revision. Tool wrappers must never invent a Gateway result.
 
-### 3.4 `EvidenceBundle`
+## 5. AgentTask contracts and transactions
 
-Each artifact has phase, kind, source ID, sequence, capture/receive time, media type, byte size, SHA-256, a safe workspace-relative URI, and retention state. `EvidenceQuality` separately records completeness, association, missing requirements, stale artifacts, and errors.
+`AgentTaskRecord` contains a stable ID, task description, `TaskVerificationContract`, status,
+append-only PlanRevisions, evidence references, verification attempts, cancellation state, and
+timestamps. Each `PlanRevision` contains its own Tool records, verdict, and verification attempts.
 
-### 3.5 `VerificationVerdict`
+`AgentTaskStore` uses SQLite WAL and `BEGIN IMMEDIATE`. Creation queries for any non-terminal task
+inside the same transaction, enforcing one global active slot across processes. Updates write the
+complete validated record and an append-only event. Callers do not modify tables directly.
 
-The verifier returns exactly one `CriterionVerdict` for each input success criterion and copies the criterion verbatim. `success` requires every criterion to be `satisfied`. `failure` and `replan_required` require at least one unmet or unknown item. `replan_required` also requires action-independent `recovery_context`.
+Terminal task states are `succeeded`, `failed`, and `cancelled`. Non-terminal states are
+`executing`, `cancelling`, and `awaiting_replan`. Tool status `unknown` is terminal for aggregate
+accounting but is a failure, not evidence of stop.
 
-## 4. State machine and transactions
+## 6. Bound execution lifecycle
 
-`ALLOWED_FORGE_TRANSITIONS` defines every legal transition. Every Store update loads the model, applies a mutation, validates the transition, updates time, writes JSON, appends an event, and commits.
+1. Create an AgentTask and revision 1.
+2. On the first bound Action, perform best-effort before-capture.
+3. Invoke Query or admit Action through ForgeToolClient.
+4. Persist Query response or Action invocation/attempt references.
+5. Update Action record only from authoritative status/result responses.
+6. After every bound Action is terminal, perform after-capture on finalize.
+7. Aggregate Tool records, evidence, and the task contract for verification.
+8. Persist task and revision verdicts; schedule one terminal experience episode.
 
-SQLite tables:
+Once a record is terminal, later observations do not rewrite it. Cancellation responses are
+stored, but `requested` or `accepted` leaves the task in `cancelling` until reconciliation and
+explicit finalization.
 
-```text
-forge_sessions
-  session_id PRIMARY KEY
-  command_id UNIQUE
-  root_session_id
-  parent_session_id UNIQUE
-  status
-  record_json
-  created_at / updated_at
+## 7. Verification and recovery
 
-forge_events
-  event_id PRIMARY KEY
-  session_id FOREIGN KEY
-  event_type
-  created_at
-  payload_json
-```
+`TaskVerificationContract` remains the public user-level contract. The verifier receives goal,
+criteria, constraints, all bound execution facts, validated evidence, prior attempts, and frozen
+Skill-scoped advisory Lessons.
 
-Task creation and replan use `BEGIN IMMEDIATE`, keeping one non-terminal lineage even when multiple Store instances submit concurrently.
+In recovery mode, a valid `replan_required` verdict moves the task to `awaiting_replan` with a
+deadline. `begin_revision` checks the same `task_id`, replan budget, deadline, and task state, then
+appends a revision. Earlier attempts remain visible to experience analysis. Verifier exceptions are
+persisted as failed attempts; audit preserves execution semantics, while enforce/recovery fail.
 
-## 5. Gateway startup contract
+## 8. Evidence and retention
 
-`ForgeAdapter.validate_capabilities()` requires:
+Evidence paths are workspace-relative and written atomically. Images are validated for media type,
+decoded size, sequence, timestamps, phase, source, and SHA-256. The evidence bundle records capture
+quality and errors rather than presenting best-effort collection as authoritative.
 
-```json
-{
-  "api_version": "paos-forge-gateway-mvp-plus.v1",
-  "supports": {
-    "sessions": true,
-    "command_id": true,
-    "runtime_context": true,
-    "serial_actions_only": true
-  },
-  "actions": {
-    "<action_type>": {
-      "policy_id": "...",
-      "command": "...",
-      "result_semantics": "command_completed",
-      "completion": {},
-      "required_parameters": [],
-      "input_mapping": {}
-    }
-  }
-}
-```
+Retention can remove entity bytes according to policy, but it must preserve the task record,
+execution references, bundle metadata, and tombstone information required for audit.
 
-Action metadata informs Planner selection and the Execution Record. It never chooses a verifier branch.
+## 9. Skill Runtime contracts
 
-## 6. Adapter execution protocol
+A `skill.yaml` manifest must use `manifest_version: 2`, a directory-safe name/version, a relative
+Skill document, an HTTP(S) `gateway_url`, non-empty required Tools, at least one profile, and strict
+known fields. Registry-resolved nodes require artifact identity, version, platform, architecture,
+and SHA-256 digest.
 
-The ordering for a fresh task is mandatory:
+Archive validation rejects absolute/traversing paths, links, duplicate/colliding paths, oversized
+files, expansion-limit violations, missing inventory entries, and digest mismatches. Skill and Node
+installers stage content, validate it, then atomically replace the target with rollback support.
 
-1. Validate action capability.
-2. Start image/state collectors for non-`off` work.
-3. Await required sources and atomically persist the before snapshot.
-4. Let Orchestrator persist `dispatching` and dispatch intent.
-5. POST `/agent/sessions`.
-6. Validate session, command, and action identity in the create response.
-7. Poll `/agent/sessions/{session_id}`.
-8. Accept only `succeeded | failed | cancelled`; request cancellation on timeout.
-9. After observing terminal state, await higher image sequences and write the after snapshot.
-10. Write immutable Execution Record and Evidence Bundle.
+RuntimeManager:
 
-Gateway payload:
+1. resolves the installed Skill and profile;
+2. materializes the locked environment without mutating installed nodes;
+3. checks Dora, dataflow, required files, and environment;
+4. refuses to adopt an unmanaged Gateway already using the address;
+5. starts the named Dora flow;
+6. waits for flow, `GET /tools`, and all required Tool contexts;
+7. persists running/failed/stopped state and lifecycle logs.
 
-```json
-{
-  "session_id": "forge_<generated>",
-  "command_id": "command_<generated>",
-  "action_type": "...",
-  "instruction": "...",
-  "source": "paos-agent",
-  "inputs": {}
-}
-```
+A normal stop is rejected while non-terminal invocations remain tracked. Force stop is an explicit
+operator action and does not change invocation truth.
 
-Terminal acceptance requires all of:
+## 10. Registry and availability
 
-```text
-session.session_id == requested session_id
-command.command_id == requested command_id
-command.session_id == requested session_id
-command.request_id == requested command_id
-session.action_type == requested action_type
-command.action_type/policy_id/command == advertised capability identity
-session.status == command.status in succeeded|failed|cancelled
-```
+Registry and static-index artifacts require expected size and SHA-256 before entering the cache.
+Resumed downloads are verified again before installation. No Registry URL means no Registry
+download. `PAOS_RESOURCE_REGISTRY_URL` overrides `resourceRegistry.url`.
 
-## 7. Observation and evidence
+`discover_active_runtime` reconciles persisted state, Dora flow, Gateway health, and required Tool
+contexts. Its availability provider flows through SkillsLoader, ExperienceCoordinator, and
+SkillActivationManager. Skill discovery order is workspace, installed, built-in.
 
-The collector retains only the highest legal sequence for each required image source. Duplicate or out-of-order frames do not replace the latest frame. It reconnects after disconnection and keeps a bounded recent-error list.
+## 11. Experience and evolution integration
 
-Accepted entities are:
+All Agent tool calls remain recorded. Optional opaque fields attach AgentTask, revision,
+invocation, and attempt references without breaking older persisted models. The outcome source
+maps each revision verdict to its last execution record so a recovered task preserves both failed
+and successful semantic attempts.
 
-- `image/jpeg` / `image/jpg`;
-- `image/png`;
-- `image/webp`;
-- JSON robot state.
+Generated Lessons and Skill updates remain subject to redaction, scope, support thresholds,
+abstraction checks, managed-block replacement, atomic writes, reload validation, and rollback.
+Evolution failures remain fail-open.
 
-Beyond Base64 and decoded size limits, image magic bytes are verified. Artifact filenames include a safe source label, source digest, and sequence to avoid collisions after source sanitization. Every URI is workspace-relative and rejects `..`.
+## 12. Extension workflows
 
-Before model invocation, `VerificationRequestBuilder` revalidates:
+To add a robot capability:
 
-- bundle/session/command identity;
-- completeness and minimum association;
-- capture-window ordering;
-- required kinds and sources in both phases;
-- retained entity existence, byte size, and SHA-256;
-- image media type against bytes;
-- unique evidence IDs.
+1. implement or package the ToolEndpoint operation;
+2. publish a Query or Action ToolSpec with exact schemas and binding;
+3. define operation `max_concurrency` in Gateway;
+4. add the locked node and profile references to a manifest-v2 Bundle;
+5. test context, invocation, pending, terminal, cancellation, and unknown outcomes;
+6. add workflow guidance to a Skill without embedding task-specific coordinates or secrets.
 
-## 8. Verification Service
+Do not create a second PAOS execution protocol, direct Agent-to-Dora calls, or a cross-Tool lease.
+A new Agent tool is justified only when the generic task and Tool API tools cannot express the
+capability.
 
-`ForgeTaskVerifier` starts an independent Python child process. It listens on configured host/port, authenticates with a per-process `X-PAOS-Admin-Token`, and exposes:
-
-```text
-GET  /healthz
-POST /v1/verify-task
-```
-
-The request version is `forge_verification_request_v1`. Startup readiness is bounded; model calls are limited by `timeoutS` and `maxVerifierCallsPerRun`.
-
-The prompt contains only:
-
-- task goal, success criteria, and constraints;
-- immutable Execution Record;
-- Evidence Bundle and entities;
-- root-lineage history;
-- LESSONS;
-- valid evidence IDs.
-
-Malformed service output is normalized to `inconclusive`, then checked again by public models and the exact-criteria validator. `audit` records the error; `enforce` and `recovery` fail closed.
-
-## 9. Recovery
-
-The verifier may recommend `replan_required` but cannot output action types, policy parameters, or Gateway inputs. Orchestrator creates a `RecoveryRequest` and sends an `InboundMessage(channel="system")` to the original Agent session.
-
-When Planner calls `create_replanned_forge_session`:
-
-- parent is still `awaiting_replan`;
-- deadline is not expired;
-- replan budget remains;
-- child inherits verification contract, root lineage, origin routing, and source;
-- Planner supplies new task description, action type, and inputs;
-- PAOS generates fresh session and command IDs;
-- parent terminal transition and child creation commit atomically;
-- duplicate calls return the existing child.
-
-## 10. Extension workflows
-
-### 10.1 Add a Gateway action
-
-Action implementation and registration happen in Forge Gateway/Runtime, not PAOS:
-
-1. Publish stable action identity in Gateway capabilities.
-2. Declare `required_parameters`, `input_mapping`, `result_semantics`, and `completion`.
-3. Return complete, consistent session/command identities from create and get.
-4. Keep terminal states within the supported contract.
-5. Add only generic contract/fake-Gateway tests in PAOS—never an action-specific verifier flag.
-
-### 10.2 Add an evidence source
-
-Publish a stable `id`, monotonically increasing `seq`, legal `content_type`, and Base64 data on Gateway `/ws/images`. An optional `timestamp` must be real source time. Reference that source from PAOS target configuration or the task evidence policy.
-
-A new evidence kind must extend public contracts, collection/writing, request resolution, retention, and end-to-end tests together. Do not hide private artifact paths in action manifests.
-
-### 10.3 Add an Agent tool
-
-Only add a tool when the seven generic Forge tools cannot represent the capability. A new tool must not accept caller-supplied session/command IDs, POST directly to Gateway, or bypass Store/Orchestrator.
-
-## 11. Errors and observability
-
-Stable error prefixes support operational triage:
-
-| Category | Examples |
-|:---------|:---------|
-| Gateway contract | `FORGE_GATEWAY_API_UNSUPPORTED`, `FORGE_GATEWAY_CAPABILITY_MISSING` |
-| Action/correlation | `FORGE_ACTION_UNSUPPORTED`, `FORGE_EXECUTION_STATE_LOST` |
-| Evidence | `FORGE_EVIDENCE_CONFIGURATION_REQUIRED`, `FORGE_EVIDENCE_UNAVAILABLE`, `VERIFICATION_EVIDENCE_UNAVAILABLE` |
-| Verification | `VERIFICATION_INVALID_VERDICT`, `VERIFICATION_CALL_BUDGET_EXHAUSTED`, `VERIFICATION_SERVICE_UNAVAILABLE` |
-| Recovery | `VERIFICATION_REPLAN_LIMIT_REACHED`, `VERIFICATION_REPLAN_TIMEOUT` |
-| Execution | `GATEWAY_EXECUTION_TIMEOUT`, `GATEWAY_SESSION_FAILED`, `FORGE_SESSION_CANCELLED` |
-
-The SQLite event log is the orchestration audit source. Raw Gateway create/last/cancel responses remain in the session record. Public artifacts provide cross-process readable facts.
-
-## 12. Testing
+## 13. Test gates
 
 ```bash
-python -m pip install -e ".[dev]"
-pytest
 ruff check PhyAgentOS tests
 python -m compileall -q PhyAgentOS tests
+pytest -q
 ```
 
-Tests should cover:
-
-- model versions, required fields, illegal states/verdicts/URIs/digests;
-- Store concurrency, one active lineage, transitions, atomic replan;
-- Gateway API/support/action/identity/terminal/cancel/reset;
-- multiple sources, ordering, duplicates, stale frames, disconnects, invalid media, oversize artifacts;
-- all four modes, missing evidence, service errors, retention, and review immutability;
-- restart before POST, 404 after intent, late capture, interrupted verification, recovery deduplication;
-- tool registration, system-event routing, and Forge-disabled behavior;
-- repository guard against the removed execution architecture.
-
-Optional black-box tests connect only through `FORGE_GATEWAY_URL` and never modify Gateway source or configuration.
+Tests should cover response contracts, pending/cancel/timeout/unknown semantics, one active task,
+unbound calls, revision recovery, evidence, episode attribution, archive attacks, transactional
+rollback, Registry verification, Runtime health, and mocked Query→Action workflows. Real MuJoCo
+tests are conditional on matching artifacts and Dora availability.
 
 ## Next reading
 
+- [Forge Tool API Integration Contract](../forge/README.md)
 - [Integration Development Guide](../user_development_guide/README_en.md)
-- [Communication Architecture](../user_development_guide/COMMUNICATION_en.md)
-- [Forge Integration Contract](../forge/README.md)
-- [Configuration Reference](04-forge-configuration-reference.md)
+- [Agent Experience and Skill Evolution](05-agent-experience-and-skill-evolution.md)

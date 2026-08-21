@@ -1,191 +1,181 @@
 # PhyAgentOS Operations Manual
 
-> Version: 0.2.0 · [中文](README.md)
+[中文](README.md) · [Documentation index](../README.md)
 
-This manual is for deployment, demonstrations, and operations. It focuses on running the Forge execution–evidence–verification–recovery loop reliably. See the [User Manual](../en/02-user-manual.md) for installation and task authoring, and the [Configuration Reference](../en/04-forge-configuration-reference.md) for exact parameters.
+> Version: 0.2.2
 
 ## 1. Runtime model
 
 ```text
-User/Channel → AgentLoop → Forge tools → ForgeSessionOrchestrator
-                                            │
-                       ┌────────────────────┼───────────────────┐
-                       ▼                    ▼                   ▼
-                 Forge Gateway       SQLite event log     Verifier process
-                       │                    │                   │
-                       └──────────── execution + evidence ──────┘
+User/Channel → AgentLoop → Forge task and Tool API tools
+                                  │
+                     bound or unbound Tool call
+                                  ▼
+                         ForgeToolClient
+                                  ▼
+Gateway /tools → ToolInvocation → ToolEndpoint → Dora → robot/simulator
+
+bound calls → AgentTask SQLite → evidence → verification → experience/evolution
 ```
 
-Use `paos agent` for interactive or one-message work and `paos gateway` for long-running channels, Cron, and Heartbeat. Both use the same Orchestrator semantics when `forge.enabled=true`.
+Gateway owns execution. PAOS owns user-task aggregation and semantic verdicts. Skill Runtime owns
+the explicit lifecycle of installed Bundle profiles; it does not replace Gateway execution truth.
 
 ## 2. Pre-deployment checks
 
 ### PAOS host
 
-- Python 3.11/3.12 environment and dependencies are available.
-- `~/.PhyAgentOS/config.json` permissions are controlled and credentials are not in Git.
-- Workspace is writable and sized for evidence.
-- `agents.verification.servicePort` is free.
-- Host time is reliable for cross-component audit.
-- A long-running process supervisor and log collection are available.
+- Python 3.11 or 3.12 and the intended v0.2.2 environment are installed.
+- `paos status` resolves the expected config, workspace, model, and provider.
+- Workspace, PAOS data paths, and artifact paths have sufficient permissions and disk space.
+- Verification provider credentials are available when non-`off` tasks are allowed.
+
+### Skill Runtime
+
+- Registry/index metadata includes artifact size and SHA-256; locked node digests resolve.
+- Required binaries are executable, required assets exist, and required environment variables are set.
+- Dora is installed and on `PATH`.
+- The profile Gateway address is not occupied by an unmanaged process.
 
 ### Forge Gateway
 
-- `baseUrl` is reachable from the PAOS host.
-- `/agent/runtime/capabilities` reports exact API version and required supports.
-- `/agent/runtime/status` and `/agent/runtime/context` work.
-- Planned actions appear in capabilities.
-- `/ws/images` publishes required sources with increasing sequences.
-- `/ws/state` is available when robot state is required.
-- Gateway, Forge Runtime, Dora, and robot/simulator safety checks are complete according to their own documentation.
+- `GET /tools` returns a successful object envelope.
+- Required ToolSpecs and `/tools/{tool_id}/context` are present and ready.
+- Endpoint operation `max_concurrency` matches the robot's safe concurrency.
+- The move-arm profile has `agent.enabled: false`.
 
-### Verification
+### Persistence
 
-- `serviceEnabled` is true for non-`off` work.
-- Verifier model supports images and strict JSON.
-- `evidenceRetention` satisfies privacy, audit, and disk policy.
-- Replan budget and deadline fit site-response requirements.
+- `.paos/agent_tasks`, `.paos/evolution`, Agent conversation history, and Skill Runtime state are on durable storage.
+- Backup and retention procedures do not delete evolution data when rotating robot evidence.
 
 ## 3. Startup and health
 
-Start Forge first, then PAOS:
+For a managed Skill profile:
 
 ```bash
-paos status
-paos agent --config /path/to/config.json --workspace /path/to/workspace
+paos skill inspect move-arm-by-ee
+paos skill start move-arm-by-ee --profile mujoco
+paos skill status move-arm-by-ee
+paos agent
+# or: paos gateway
 ```
 
-Long-running service:
+Healthy Runtime status requires persisted `running`, a live named Dora flow, Gateway `/tools`, and
+ready context for every manifest `required_tool`. Use `paos skill logs <name>` for lifecycle and
+Dora launch logs.
 
-```bash
-paos gateway --config /path/to/config.json --workspace /path/to/workspace --verbose
-```
-
-After startup ask the Agent for a read-only check:
-
-```text
-Call forge_get_context. Report Gateway API version, supports, actions, status, readiness, and image sources. Do not reset or execute an action.
-```
-
-Orchestrator accepts work only after capability validation. Verification Service startup failure is cached as an explicit error; non-`off` work is refused before execution when the verifier is unavailable.
+For an externally managed Gateway, start it independently and verify Tool context through the
+Agent with `forge_tool_context`; `paos status` checks local configuration only.
 
 ## 4. Task monitoring
 
-Record the returned `session_id` and `command_id`. Use `forge_get_session` through the Agent and inspect:
+Record these identities separately:
 
-| Field | Operational meaning |
-|:------|:--------------------|
-| `status` | Current PAOS state or final task result |
-| `dispatch_attempted_at` | Whether the “never automatically resend” boundary was crossed |
-| `gateway_last_response` | Last known Gateway session/command response |
-| `execution.status` | Gateway execution fact |
-| `verification.status/verdict` | Verification phase and semantic decision |
-| `recovery_request.deadline` | Latest time for Planner child creation |
-| `error_code/error_message` | Failure layer and detail |
+| Identity | Owner | Use |
+|:---------|:------|:----|
+| `task_id` | PAOS | User-visible aggregate and verification |
+| `revision_id` | PAOS | Append-only planning generation |
+| Query `record_id` | PAOS | One bound synchronous Query |
+| `invocation_id` | Gateway | One asynchronous Action lifecycle |
+| `attempt_id` | Gateway | One execution attempt |
 
-Do not rely on Gateway `succeeded` alone. In `enforce` or `recovery`, task success requires PAOS `status=succeeded` and a `success` verdict.
+Use `forge_task_get(task_id)` for aggregate state and Tool records. Use
+`forge_tool_action_status(invocation_id)` and `forge_tool_action_result(invocation_id)` for execution
+truth. A result endpoint may return HTTP 202 while pending.
 
-## 5. Cancellation and reset
+Expected task states:
 
-Request cancellation through the Agent:
+| State | Operator meaning |
+|:------|:-----------------|
+| `executing` | Planning or bound Tool calls continue. |
+| `cancelling` | Cancellation was requested; physical stop is not yet proven. |
+| `awaiting_replan` | Verification permits a bounded new PlanRevision before its deadline. |
+| `succeeded` / `failed` / `cancelled` | PAOS aggregate is terminal. Inspect invocation facts separately when needed. |
 
-```text
-Use forge_cancel_session to cancel <session_id> and provide an operational reason.
+## 5. Cancellation and stop
+
+For one Action, call `forge_tool_cancel_action(invocation_id)`, then continue status/result
+reconciliation. For all Actions bound to a task, call `forge_task_cancel(task_id, reason)`, reconcile
+each invocation, inspect physical state when effects are uncertain, then finalize the task.
+
+Never report `requested`, `accepted`, a timeout, or `unknown` as proof of physical stop. Do not
+retry the motion until effect reconciliation is complete.
+
+Stop a managed Runtime only after its tracked invocations are terminal:
+
+```bash
+paos skill stop move-arm-by-ee
 ```
 
-After dispatch, PAOS requests Gateway cancellation and stores the response. Cancellation is not a hardware emergency stop; retain independent E-stop, operator override, and safe-shutdown procedures.
-
-Reset only when no active lineage exists:
-
-```text
-First query the session and confirm it is terminal, then call forge_reset. Never reset during execution.
-```
-
-Orchestrator rejects reset while work is active.
+`--force` is reserved for an operator who has independently assessed the physical system. It stops
+the managed Dora flow but does not rewrite Gateway invocation results.
 
 ## 6. Graceful shutdown
 
-1. Stop accepting new work.
-2. Query the non-terminal lineage.
-3. Wait for completion, or explicitly cancel and verify physical state.
-4. Send SIGINT/SIGTERM to PAOS.
-5. PAOS again attempts Gateway cancellation for active work and stores the response.
-6. Stop downstream services according to Forge and robot documentation.
+1. Stop admitting new user tasks.
+2. Read the active AgentTask and reconcile every Action invocation.
+3. Finalize or cancel/finalize the AgentTask.
+4. Stop PAOS channels or Agent.
+5. Stop the Skill Runtime profile.
+6. Stop shared infrastructure only if no other profile uses it.
 
-Do not kill, restart, and repeat the user's instruction without first checking SQLite and the Gateway session for dispatch intent.
+## 7. Crash restart
 
-## 7. Crash-restart handling
+After a PAOS restart, open the persisted AgentTask with its known `task_id`. Do not recreate or
+resubmit an Action from local intent. Query every persisted `invocation_id` and update the record
+from Gateway status/result. If Gateway can no longer resolve an invocation, treat the effect as
+unknown and escalate to physical-state inspection.
 
-PAOS loads non-terminal records at startup:
+`paos skill status <name>` reconciles Runtime state against Dora and Gateway health. It can move a
+persisted starting/running state to failed when the flow or Tool contexts are unavailable; restart
+only after diagnosing the previous flow.
 
-| Crash point | Automatic behavior | Operator action |
-|:------------|:-------------------|:----------------|
-| Before dispatch | Continue capture or dispatch | Observe |
-| After dispatch intent | GET original session; never POST | Confirm Gateway identity |
-| Gateway returns 404 | `FORGE_EXECUTION_STATE_LOST` | Inspect physical state and Gateway logs; never copy old command ID |
-| Finalizing | Attempt after capture and contract writing | Inspect source and sequence |
-| Verifying | Mark old attempt abandoned and retry | Inspect provider/service |
-| Awaiting replan | May redeliver same recovery event | Check Planner child and deadline |
+## 8. Backup and disk management
 
-If physical state is unknown, stop automated work and require operator confirmation instead of probing with another task.
-
-## 8. Artifacts and disk
+With PAOS stopped, back up the database together with WAL/SHM files and the referenced trees:
 
 ```text
-<workspace>/.paos/forge/orchestrator.sqlite3
-<workspace>/.paos/forge/orchestrator.sqlite3-wal
-<workspace>/.paos/forge/orchestrator.sqlite3-shm
-<workspace>/artifacts/forge/<session_id>/
+<workspace>/.paos/agent_tasks/tasks.sqlite3*
+<workspace>/.paos/evolution/experience.sqlite3*
+<workspace>/.paos/evolution/revisions/
+<workspace>/artifacts/agent_tasks/
+<workspace>/skills/
 ```
 
-Backup guidance:
-
-- Safest: stop PAOS, then back up SQLite and the complete `artifacts/forge/` tree.
-- For live copies, use a SQLite-aware backup; never copy only the main database while ignoring WAL.
-- Database and artifacts should represent the same point in time.
-- Never edit `record_json` or event rows manually.
-- Monitor Bundle, Execution, and event-log growth even with retention configured.
-
-`maxArtifactBytes` is a per-entity limit, not a per-session or workspace quota.
+Also retain installed Bundle/Node manifests, Runtime state, and lifecycle logs according to the
+deployment's PAOS data-path policy. Evidence retention may prune entity files after verification;
+it must not remove task records, invocation references, or evolution history.
 
 ## 9. Failure layers
 
-### A. Startup contract
-
-`FORGE_GATEWAY_API_UNSUPPORTED` or `FORGE_GATEWAY_CAPABILITY_MISSING`: stop accepting work and correct Gateway version/supports without downgrade.
-
-### B. Execution identity
-
-Identity mismatch or `FORGE_EXECUTION_STATE_LOST`: treat as a duplicate-action risk and require inspection before replanning.
-
-### C. Evidence
-
-`FORGE_EVIDENCE_CONFIGURATION_REQUIRED` or `FORGE_EVIDENCE_UNAVAILABLE`: inspect source IDs, WebSockets, sequences, media types, entity limits, and capture timeouts.
-
-### D. Verification
-
-`VERIFICATION_EVIDENCE_UNAVAILABLE`, `VERIFICATION_INVALID_VERDICT`, or `VERIFICATION_SERVICE_UNAVAILABLE`: inspect artifact integrity, retention, model, provider, port, and timeout. Do not switch a semantically enforced task to `off` merely to hide the failure.
-
-### E. Recovery
-
-`VERIFICATION_REPLAN_LIMIT_REACHED` or `VERIFICATION_REPLAN_TIMEOUT`: automatic continuation is over. Review lessons, unmet criteria, and physical state before the user creates a new task.
+| Layer | Typical symptom | First action |
+|:------|:----------------|:-------------|
+| Registry/install | Digest, size, manifest, or lock failure | Correct the signed metadata or artifact; do not bypass validation. |
+| Runtime | Dora flow or Gateway health unavailable | Inspect `paos skill status` and `logs`. |
+| Tool context | Tool missing, unbound, or not ready | Inspect ToolSpec, Endpoint, frame, and required profile. |
+| Admission | HTTP/contract failure | Preserve any returned invocation ID; determine whether Gateway accepted work. |
+| Execution | pending, failed, cancelled, or unknown | Reconcile using the same invocation ID and inspect physical state when uncertain. |
+| Evidence | before/after source missing | Inspect source readiness and bundle errors; keep ToolResult authoritative. |
+| Verification | invalid/inconclusive/service error | Inspect task contract, evidence, provider, and mode semantics. |
+| Evolution | reflection or promotion blocked | Inspect evolution events; execution remains unaffected. |
 
 ## 10. Operational acceptance checklist
 
-- [ ] Gateway API/version/supports validation passes.
-- [ ] Action capabilities and required inputs are visible.
-- [ ] Required before sources arrive before POST.
-- [ ] Session/command/request/action identities all match.
-- [ ] Terminal state comes from session GET, not fixed wait or stability inference.
-- [ ] After source sequence is higher than before and received after terminal observation.
-- [ ] Execution Record and Evidence Bundle are durable.
-- [ ] Non-`off` work has a goal and criteria and receives a verdict or explicit failure.
-- [ ] User-facing outcome separates execution status from verification verdict.
-- [ ] Recovery child has fresh IDs and traceable parent/root lineage.
+- [ ] Package and runtime version report 0.2.2.
+- [ ] General Agent tools and dynamic MCP tools remain registered.
+- [ ] Required Skill Bundle and all node artifacts verify.
+- [ ] Managed Runtime reaches ready and all Tool contexts are healthy.
+- [ ] Bound and unbound Query/Action calls use the same Gateway Tool API.
+- [ ] Action admission, pending, terminal, cancel, timeout, and unknown behavior are exercised.
+- [ ] One-active-AgentTask enforcement and PlanRevision recovery are exercised.
+- [ ] Evidence and task-level verification complete for a bound workflow.
+- [ ] Experience records AgentTask, Skill activation, verification, and invocation references.
+- [ ] Backups include AgentTask and evolution persistence.
+- [ ] Real MuJoCo acceptance is recorded only when matching assets, nodes, and Dora are available.
 
 ## Next reading
 
 - [User Manual](../en/02-user-manual.md)
-- [Configuration Reference](../en/04-forge-configuration-reference.md)
 - [Communication Architecture](../user_development_guide/COMMUNICATION_en.md)
-- [Forge Integration Contract](../forge/README.md)
+- [Forge Tool API Contract](../forge/README.md)
