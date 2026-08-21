@@ -21,7 +21,7 @@ class SkillActivation(ExperienceModel):
     activation_id: str
     skill_name: str = Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
     role: Literal["primary", "supporting"] = "primary"
-    source: Literal["workspace", "builtin"]
+    source: Literal["workspace", "installed", "builtin"]
     content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     activated_at: datetime = Field(default_factory=utc_now)
 
@@ -33,6 +33,10 @@ class WorkflowTraceItem(ExperienceModel):
 
 class LineageOutcome(ExperienceModel):
     session_ref: str
+    task_ref: str | None = None
+    revision_ref: str | None = None
+    invocation_ref: str | None = None
+    attempt_ref: str | None = None
     action_semantics: str = Field(min_length=1)
     input_keys: list[str] = Field(default_factory=list)
     execution_status: str | None = None
@@ -59,6 +63,8 @@ class TaskOutcomeEnvelope(ExperienceModel):
     )
     lineage: list[LineageOutcome] = Field(default_factory=list)
     record_refs: list[str] = Field(default_factory=list)
+    agent_task_ref: str | None = None
+    tool_invocation_refs: list[str] = Field(default_factory=list)
     completed_at: datetime = Field(default_factory=utc_now)
 
     @property
@@ -90,6 +96,8 @@ class TaskEpisode(ExperienceModel):
     skill_activations: list[SkillActivation] = Field(default_factory=list)
     workflow_trace: list[WorkflowTraceItem] = Field(default_factory=list)
     outcome: TaskOutcomeEnvelope
+    agent_task_ref: str | None = None
+    tool_invocation_refs: list[str] = Field(default_factory=list)
     processing_status: Literal[
         "pending", "processed", "skipped", "failed"
     ] = "pending"

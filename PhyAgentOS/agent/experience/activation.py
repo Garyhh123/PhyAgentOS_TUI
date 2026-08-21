@@ -8,7 +8,7 @@ import re
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 from PhyAgentOS.agent.experience.contracts import (
@@ -39,9 +39,13 @@ class SkillActivationManager:
         workspace: str | Path,
         store: ExperienceStore,
         max_lessons_per_skill: int = 8,
+        runtime_availability_provider: Callable[[str], bool] | None = None,
     ) -> None:
         self.workspace = Path(workspace).expanduser().resolve()
-        self.skills = SkillsLoader(self.workspace)
+        self.skills = SkillsLoader(
+            self.workspace,
+            runtime_availability_provider=runtime_availability_provider,
+        )
         self.store = store
         self.max_lessons_per_skill = max(1, int(max_lessons_per_skill))
         self._contexts: dict[str, TurnExperienceContext] = {}

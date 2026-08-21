@@ -1,14 +1,14 @@
 # Agent 经验与 Skill 自进化
 
-> 文档版本：0.2.1。本文描述已实现的 Agent 校验、经验、Lesson 与 Skill 演化链；Forge 执行和 recovery 契约保持不变。
+> 文档版本：0.2.2。本文描述基于 AgentTask record 的 Agent 校验、经验、Lesson 与 Skill 演化链。
 
 ## 1. 目标与边界
 
-PhyAgentOS 在任务/工作流粒度学习，而不是从某一次孤立 tool call 直接学习。一个已经终结并具有语义验证结果的 Forge root lineage 可以形成一个 `TaskEpisode`，后台反思再用它支持可复用 Skill 工作流或作用域 Lesson。
+PhyAgentOS 在任务/工作流粒度学习，而不是从某一次孤立 tool call 直接学习。一个已经终结并具有语义验证结果的 AgentTask 及其全部 PlanRevision 可以形成一个 `TaskEpisode`，后台反思再用它支持可复用 Skill 工作流或作用域 Lesson。
 
 ```text
 Skill 激活
-  → Forge root lineage
+  → AgentTask + PlanRevisions + ToolInvocations
   → 任务语义结果
   → 去敏 TaskEpisode
   → 后台异步反思
@@ -16,7 +16,7 @@ Skill 激活
       └─ 工作流相关失败   → FailureObservation → LessonCluster
 ```
 
-该链路不修改 `ForgeTaskRequest`、Forge tools、Orchestrator 状态、Gateway payload、证据采集、recovery 顺序或下层执行。初始化、持久化、模型调用、校验或写入失败时，evolution fail-open，原任务结果保持不变。
+该链路不修改 AgentTask 状态、Forge Tool calls、Gateway payload、证据采集、recovery 顺序或下层执行。初始化、持久化、模型调用、校验或写入失败时，evolution fail-open，原任务结果保持不变。
 
 首个 outcome provider 是 Forge。`TaskOutcomeSource` 协议允许后续 Runtime 产生相同 `TaskOutcomeEnvelope`，而无需修改 Lesson 或 Skill 演化逻辑。
 
@@ -31,7 +31,7 @@ activate_skill(name, role="primary" | "supporting")
 激活规则：
 
 - `name` 必须是精确注册的 hyphen-case Skill 名称，不能传路径；
-- 同名时 workspace Skill 优先于 built-in Skill；
+- 同名时 workspace Skill 优先于 installed 与 built-in Skill，installed Skill 优先于 built-in；
 - unavailable Skill 不能激活；
 - 每个 turn 最多一个 primary，可有多个 supporting Skill；
 - 同一 Skill 不能在 turn 内切换 role；
@@ -41,21 +41,21 @@ activate_skill(name, role="primary" | "supporting")
 
 返回值包含完整 Skill 文档、activation ID、来源、内容 digest 和适用的 active Lesson。Digest 将归因固定到当前 turn 实际使用的 revision；新晋升 revision 从后续 turn 的 summary 开始可见。
 
-AgentLoop 记录有序工具名和参数字段名，不记录参数值。`forge_execute_task` 接受 root session 后，将当前 activation 与 trace snapshot 绑定到该 root。没有匹配 Skill 的任务可继续执行，产生 unbound 经验而不是事后猜测绑定。
+AgentLoop 记录有序工具名和参数字段名，不记录参数值。`forge_task_create` 创建 AgentTask 时，将当前 activation 与 trace snapshot 绑定到该任务；后续绑定 Query/Action records 与 Gateway invocation references 随执行加入。没有匹配 Skill 的任务可继续执行，产生 unbound 经验而不是事后猜测绑定。
 
-Binding 同时冻结每个已激活 Skill 当时返回的适用 active Lesson。自动验证、所有 recovery child 和后续 review 都按 root ID 解析 Lesson 上下文，因此即使经验账本后来变化，也使用同一组有界内容。这些 Lesson 只是非权威工作流建议：可以提示检查点，但不能确定 criterion 状态、替代执行事实或证据，也不能作为 evidence reference。没有激活 Skill 的任务传入空 Lesson 集合。
+Binding 同时冻结每个已激活 Skill 当时返回的适用 active Lesson。自动验证、后续 PlanRevision 和 review 都按 task ID 解析 Lesson 上下文，因此即使经验账本后来变化，也使用同一组有界内容。这些 Lesson 只是非权威工作流建议：可以提示检查点，但不能确定 criterion 状态、替代执行事实或证据，也不能作为 evidence reference。没有激活 Skill 的任务传入空 Lesson 集合。
 
 ## 3. Outcome 与 Episode 分类
 
-`ForgeTaskOutcomeSource` 读取已持久化 root lineage，生成：
+`AgentTaskOutcomeSource` 读取已持久化 AgentTask，生成：
 
 - 去敏后的 goal 与 criteria；
 - 最终 semantic verdict 和逐 criterion 状态；
-- 每次 attempt 的 action semantics、input 字段名、execution status、verdict 与去敏 reason；
-- 不透明 evidence fingerprint 和不可变 Forge record reference；
+- 每个 PlanRevision 的 Query/Action semantics、input 字段名、execution status、verdict 与去敏 reason；
+- 不透明 task、revision、invocation、attempt 与 evidence fingerprint；
 - primary/supporting activations 与去敏 workflow trace。
 
-学习内容不复制原始工具输出、input 值、evidence locator、endpoint、凭据、绝对路径或 command ID。Lineage session ID 只保留为内部 record reference，不能进入生成的 Lesson 或 Skill。
+学习内容不复制原始工具输出、input 值、evidence locator、endpoint、凭据、绝对路径或可执行 Gateway ID。Task、revision、invocation 与 attempt identity 只保留为内部不透明 reference，不能进入生成的 Lesson 或 Skill。
 
 Outcome 策略：
 
@@ -63,12 +63,12 @@ Outcome 策略：
 |:-----|:---------|
 | 最终 `success`，所有 criterion `satisfied` | 可支持可复用 Skill candidate |
 | 最终 `failure` 或 `replan_required` | 可产生工作流相关 failure observation |
-| 失败/replan attempt 后最终成功 | `mixed`：可同时支持 recovery 工作流和失败 observation |
+| 失败/replan revision 后最终成功 | `mixed`：可同时支持 recovery 工作流和失败 observation |
 | `inconclusive`、非法 verdict、Verifier/服务错误 | 只诊断，不产生可晋升经验 |
 | `verification=off` | 不进行语义学习 |
 | 人工 review | 不生成新的 episode 或支持计数 |
 
-数据库对 root task 设置唯一约束，因此 recovery child、重复终结 system event、进程 replay 和 review attempt 始终属于同一个 episode 与同一个独立支持单位。
+数据库对 AgentTask 设置唯一约束，因此 PlanRevision、重复 completion event、进程 replay 和 review attempt 始终属于同一个 episode 与同一个独立支持单位。
 
 ## 4. 后台反思
 
@@ -104,11 +104,11 @@ Cluster 状态：
 
 | 状态 | 含义 |
 |:-----|:-----|
-| `collecting` | 独立 root 少于 `minLessonEpisodes`，或反证后重新打开 |
+| `collecting` | 独立 AgentTask 少于 `minLessonEpisodes`，或反证后重新打开 |
 | `blocked` | 合成、抽象或内容校验失败 |
 | `activated` | 已存在通过校验的 `ScopedLesson` |
 
-支持计数在 `(cluster_id, root_task_id)` 上唯一。默认 `minLessonEpisodes=3` 时，前两次相关失败保持 collecting，第三个不同 root 才调度合成。
+支持计数在 `(cluster_id, root_task_id)` 上唯一，其中稳定 root reference 标识 AgentTask。默认 `minLessonEpisodes=3` 时，前两次相关失败保持 collecting，第三个不同 task 才调度合成。
 
 合成模型只接收 cluster 中的规范化 observations。Lesson proposal 必须包含：
 
@@ -147,7 +147,7 @@ Active `ScopedLesson` 记录：
 
 晋升规则：
 
-- 每个 root episode 最多支持一次；
+- 每个 AgentTask episode 最多支持一次；
 - 默认 `minSuccessfulEpisodes=3`，需要三个独立成功；
 - update 必须指向已激活 primary Skill；
 - 已有 primary Skill 的任务不能创建替代 Skill；
@@ -178,7 +178,7 @@ Built-in Skill 永不原地修改：基线先归档，再复制为 workspace ove
 └── references/LESSONS.md
 ```
 
-`experience.sqlite3` 是事实源，采用 SQLite WAL，保存 binding、episode、reflection job、observation、cluster、root 唯一支持、cluster job、scoped Lesson、candidate、event 和 migration metadata。
+`experience.sqlite3` 是事实源，采用 SQLite WAL，保存 binding、episode、reflection job、observation、cluster、AgentTask 唯一支持、cluster job、scoped Lesson、candidate、event 和 migration metadata。
 
 `references/LESSONS.md` 为人工审阅原子生成，分开展示 active/历史 Lesson 与 collecting/blocked cluster，并显示独立支持与校验状态。人工修改该投影不会改变事实源。
 
@@ -192,11 +192,11 @@ Built-in Skill 永不原地修改：基线先归档，再复制为 workspace ove
 
 1. 实现 `TaskOutcomeSource.build(task_ref)`；
 2. 返回包含 semantic verdict、criteria、lineage 与不透明引用的 `task_outcome_envelope_v1`；
-3. 保持 root 级幂等与去敏；
+3. 保持 AgentTask 级幂等与去敏；
 4. 通过 `ExperienceCoordinator` 调度 completion；
 5. 不把 provider 私有执行字段放入 Lesson 或 Skill 契约。
 
-该边界是未来 `Forge_Skill_Tool_Runtime` 的预留接入点，不需要修改 Lesson 聚类或 Skill 晋升逻辑。
+该边界允许其他可信任务 provider 复用 Lesson 聚类与 Skill 晋升，而无需修改 Forge Tool API。
 
 ## 后续阅读
 

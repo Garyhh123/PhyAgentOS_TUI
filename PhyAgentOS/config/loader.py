@@ -72,4 +72,7 @@ def _migrate_config(data: dict) -> dict:
     exec_cfg = tools.get("exec", {})
     if "restrictToWorkspace" in exec_cfg and "restrictToWorkspace" not in tools:
         tools["restrictToWorkspace"] = exec_cfg.pop("restrictToWorkspace")
+    forge = data.get("forge", {})
+    if forge.get("apiVersion") == "paos-forge-gateway-mvp-plus.v1":
+        forge["apiVersion"] = "forge-tool-api.v1"
     return data

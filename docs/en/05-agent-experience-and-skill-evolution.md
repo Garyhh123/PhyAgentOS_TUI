@@ -1,14 +1,14 @@
 # Agent Experience and Skill Evolution
 
-> Documentation version: 0.2.1. This manual describes the implemented Agent-side validation, experience, Lesson, and Skill-evolution path. Forge execution and recovery contracts remain unchanged.
+> Documentation version: 0.2.2. This manual describes the implemented Agent-side validation, experience, Lesson, and Skill-evolution path over AgentTask records.
 
 ## 1. Purpose and boundary
 
-PhyAgentOS learns at task/workflow granularity rather than from an isolated tool call. A completed, semantically verified Forge root lineage may become one `TaskEpisode`. Background reflection can then support a reusable Skill workflow or a scoped Lesson.
+PhyAgentOS learns at task/workflow granularity rather than from an isolated tool call. A completed, semantically verified AgentTask with all of its PlanRevisions may become one `TaskEpisode`. Background reflection can then support a reusable Skill workflow or a scoped Lesson.
 
 ```text
 Skill activation
-  → Forge root lineage
+  → AgentTask + PlanRevisions + ToolInvocations
   → semantic task outcome
   → redacted TaskEpisode
   → asynchronous reflection
@@ -16,7 +16,7 @@ Skill activation
       └─ workflow-related failure     → FailureObservation → LessonCluster
 ```
 
-This path does not modify `ForgeTaskRequest`, Forge tools, Orchestrator states, Gateway payloads, evidence collection, recovery ordering, or lower-level execution. If initialization, persistence, a model call, validation, or a write fails, evolution fails open and the original task outcome is preserved.
+This path does not modify AgentTask state, Forge Tool calls, Gateway payloads, evidence collection, recovery ordering, or lower-level execution. If initialization, persistence, a model call, validation, or a write fails, evolution fails open and the original task outcome is preserved.
 
 The initial outcome provider is Forge. The `TaskOutcomeSource` protocol allows a later runtime to produce the same `TaskOutcomeEnvelope` without changing Lesson or Skill evolution.
 
@@ -31,7 +31,7 @@ activate_skill(name, role="primary" | "supporting")
 Activation rules:
 
 - `name` must be an exact registered hyphen-case Skill name; paths are rejected;
-- workspace Skills override built-in Skills with the same name;
+- workspace Skills override installed and built-in Skills with the same name; installed Skills override built-ins;
 - unavailable Skills cannot be activated;
 - a turn may have one primary Skill and multiple supporting Skills;
 - the same Skill cannot change role within the turn;
@@ -41,21 +41,21 @@ Activation rules:
 
 The result contains the complete Skill document, activation ID, source, content digest, and applicable active Lessons. The digest fixes attribution to the revision used by the current turn; a promoted revision becomes visible through the summary on a later turn.
 
-AgentLoop records the ordered tool names and argument field names, not argument values. When `forge_execute_task` accepts a root session, the current activation and trace snapshot is bound to that root. A task with no matching Skill may continue and produces unbound experience rather than a guessed binding.
+AgentLoop records the ordered tool names and argument field names, not argument values. When `forge_task_create` creates an AgentTask, the current activation and trace snapshot is bound to that task. Bound Query/Action records and Gateway invocation references are attached as execution proceeds. A task with no matching Skill may continue and produces unbound experience rather than a guessed binding.
 
-The binding also freezes the applicable active Lessons that were returned by each activated Skill. Automatic verification, every recovery child, and later review resolve Lesson context through the root ID, so they see the same bounded set even if the Lesson ledger changes afterward. These Lessons are non-authoritative workflow advisories: they may suggest a check, but they cannot establish a criterion status, replace execution facts or evidence, or be cited as evidence references. A task without an activated Skill supplies an empty Lesson set.
+The binding also freezes the applicable active Lessons returned by each activated Skill. Automatic verification, every later PlanRevision, and review resolve Lesson context through the task ID, so they see the same bounded set even if the Lesson ledger changes afterward. These Lessons are non-authoritative workflow advisories: they may suggest a check, but they cannot establish a criterion status, replace execution facts or evidence, or be cited as evidence references. A task without an activated Skill supplies an empty Lesson set.
 
 ## 3. Outcome and episode classification
 
-`ForgeTaskOutcomeSource` reads the persisted root lineage and produces:
+`AgentTaskOutcomeSource` reads the persisted AgentTask and produces:
 
 - redacted goal and criteria;
 - final semantic verdict and per-criterion statuses;
-- each attempt's action semantics, input field names, execution status, verdict, and redacted reason;
-- opaque evidence fingerprints and immutable Forge record references;
+- each PlanRevision's Query/Action semantics, input field names, execution status, verdict, and redacted reason;
+- opaque task, revision, invocation, attempt, and evidence fingerprints;
 - primary/supporting activations and the redacted workflow trace.
 
-It does not copy raw tool output, input values, evidence locators, endpoints, credentials, absolute paths, or command IDs into learned content. Lineage session IDs remain internal record references and cannot appear in generated Lessons or Skills.
+It does not copy raw tool output, input values, evidence locators, endpoints, credentials, absolute paths, or executable Gateway IDs into learned content. Task, revision, invocation, and attempt identities remain opaque internal references and cannot appear in generated Lessons or Skills.
 
 The outcome policy is:
 
@@ -63,12 +63,12 @@ The outcome policy is:
 |:--------|:--------------------|
 | Final `success`, every criterion `satisfied` | May support a reusable Skill candidate |
 | Final `failure` or `replan_required` | May produce workflow-related failure observations |
-| Replanned/failed attempt followed by final success | `mixed`: may support both recovery workflow and failure observations |
+| Failed/replanned revision followed by final success | `mixed`: may support both recovery workflow and failure observations |
 | `inconclusive`, invalid verdict, verifier/service error | Diagnostic only; no promotable experience |
 | `verification=off` | No semantic learning |
 | Manual review | Does not create another episode or support count |
 
-The database has a unique root-task constraint. Recovery children, duplicate terminal system events, process replay, and review attempts therefore remain one episode and one unit of independent support.
+The database has a unique AgentTask constraint. PlanRevisions, duplicate completion events, process replay, and review attempts therefore remain one episode and one unit of independent support.
 
 ## 4. Background reflection
 
@@ -104,11 +104,11 @@ Each cluster has one of these states:
 
 | State | Meaning |
 |:------|:--------|
-| `collecting` | Fewer than `minLessonEpisodes` independent roots, or reopened after counterevidence |
+| `collecting` | Fewer than `minLessonEpisodes` independent AgentTasks, or reopened after counterevidence |
 | `blocked` | Synthesis or abstraction/content validation failed |
 | `activated` | A validated `ScopedLesson` exists |
 
-Support is unique on `(cluster_id, root_task_id)`. With the default `minLessonEpisodes=3`, the first two related failures remain collecting. The third distinct root schedules synthesis.
+Support is unique on `(cluster_id, root_task_id)`, where the stable root reference identifies an AgentTask. With the default `minLessonEpisodes=3`, the first two related failures remain collecting. The third distinct task schedules synthesis.
 
 Synthesis receives only normalized observations from the cluster. A Lesson proposal must include:
 
@@ -147,7 +147,7 @@ A semantically successful or successfully recovered reusable episode may create 
 
 Promotion rules:
 
-- each root episode contributes at most once;
+- each AgentTask episode contributes at most once;
 - the default `minSuccessfulEpisodes=3` requires three independent successes;
 - an update must target the activated primary Skill;
 - a task with a primary Skill cannot create a replacement Skill;
@@ -178,7 +178,7 @@ Built-in Skills are never modified in place. Their baseline is archived, copied 
 └── references/LESSONS.md
 ```
 
-`experience.sqlite3` is the source of truth and uses SQLite WAL. It stores bindings, episodes, reflection jobs, observations, clusters, unique root support, cluster jobs, scoped Lessons, candidates, events, and migration metadata.
+`experience.sqlite3` is the source of truth and uses SQLite WAL. It stores bindings, episodes, reflection jobs, observations, clusters, unique AgentTask support, cluster jobs, scoped Lessons, candidates, events, and migration metadata.
 
 `references/LESSONS.md` is generated atomically for review. It separates active/historical Lessons from collecting/blocked clusters and reports independent support and validation state. Manual edits to this projection are not authoritative.
 
@@ -192,11 +192,11 @@ To add another trusted task outcome provider:
 
 1. implement `TaskOutcomeSource.build(task_ref)`;
 2. return `task_outcome_envelope_v1` with semantic verdict, criteria, lineage, and opaque references;
-3. preserve root-level idempotency and redaction;
+3. preserve AgentTask-level idempotency and redaction;
 4. schedule completion through `ExperienceCoordinator`;
 5. do not place provider-private execution fields into Lesson or Skill contracts.
 
-This boundary is the intended integration point for a future `Forge_Skill_Tool_Runtime`; it does not require changes to Lesson clustering or Skill promotion.
+This boundary also allows other trusted task providers to reuse Lesson clustering and Skill promotion without changing the Forge Tool API.
 
 ## Next reading
 

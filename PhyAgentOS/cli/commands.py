@@ -333,7 +333,7 @@ def _make_evolution_provider(config: Config, default_provider):
 
 def _make_forge_verifier(config: Config, provider):
     """Create the Forge task verifier and its serializable child provider config."""
-    if not config.forge.enabled or not config.agents.verification.service_enabled:
+    if not config.agents.verification.service_enabled:
         return None
     from PhyAgentOS.agent.session_verifier import ForgeTaskVerifier
 
@@ -376,20 +376,42 @@ def _make_forge_verifier(config: Config, provider):
     )
 
 
-def _make_forge_orchestrator(config: Config, provider, bus):
-    if not config.forge.enabled:
-        return None
-    from PhyAgentOS.forge.orchestrator import ForgeSessionOrchestrator
+def _make_forge_components(config: Config, provider):
+    """Build one Tool API client/task aggregate, preferring an active Skill runtime."""
+    from PhyAgentOS.forge.task import AgentTaskCoordinator
+    from PhyAgentOS.forge.tool_client import ForgeToolClient
+    from PhyAgentOS.skill_runtime.integration import discover_active_runtime
 
-    return ForgeSessionOrchestrator(
+    active_runtime = discover_active_runtime()
+    if active_runtime is None and not config.forge.enabled:
+        return None, None, None, None
+    if active_runtime is not None:
+        client = active_runtime.client
+        invocation_ids = active_runtime.invocation_ids
+        forge_config = config.forge.model_copy(
+            update={"enabled": True, "base_url": active_runtime.gateway_url}
+        )
+    else:
+        client = ForgeToolClient(
+            config.forge.base_url, timeout_s=config.forge.request_timeout_s
+        )
+        invocation_ids = set()
+        forge_config = config.forge
+
+    active_skill_name = active_runtime.skill_name if active_runtime is not None else None
+
+    def runtime_available(name: str) -> bool:
+        return active_skill_name is not None and name == active_skill_name
+
+    coordinator = AgentTaskCoordinator(
         workspace=config.workspace_path,
-        config=config.forge,
+        config=forge_config,
+        client=client,
         verifier=_make_forge_verifier(config, provider),
-        bus=bus,
         max_replans=config.agents.verification.max_replans_per_episode,
         replan_timeout_s=config.agents.verification.replan_timeout_s,
-        legacy_lessons_enabled=not config.agents.evolution.enabled,
     )
+    return client, invocation_ids, coordinator, runtime_available
 
 
 def _load_command_config(config: str | None = None, workspace: str | None = None) -> Config:
@@ -465,7 +487,12 @@ def gateway(
     bus = MessageBus()
     provider = _make_provider(config)
     evolution_provider, evolution_model = _make_evolution_provider(config, provider)
-    forge_orchestrator = _make_forge_orchestrator(config, provider, bus)
+    (
+        forge_tool_client,
+        forge_tool_invocation_ids,
+        forge_task_coordinator,
+        runtime_availability_provider,
+    ) = _make_forge_components(config, provider)
     session_manager = SessionManager(config.workspace_path)
 
     # Create cron service first (callback set after agent creation)
@@ -489,7 +516,10 @@ def gateway(
         mcp_servers=config.tools.mcp_servers,
         channels_config=config.channels,
         embodiment_registry=registry,
-        forge_orchestrator=forge_orchestrator,
+        forge_tool_client=forge_tool_client,
+        forge_tool_invocation_ids=forge_tool_invocation_ids,
+        forge_task_coordinator=forge_task_coordinator,
+        runtime_availability_provider=runtime_availability_provider,
         evolution_config=config.agents.evolution,
         evolution_provider=evolution_provider,
         evolution_model=evolution_model,
@@ -605,14 +635,10 @@ def gateway(
         try:
             await cron.start()
             await heartbeat.start()
-            if forge_orchestrator is not None:
-                await forge_orchestrator.start()
             services = [
                 agent.run(),
                 channels.start_all(),
             ]
-            if forge_orchestrator is not None:
-                services.append(forge_orchestrator.run())
             await asyncio.gather(*services)
         except KeyboardInterrupt:
             console.print("\nShutting down...")
@@ -621,8 +647,6 @@ def gateway(
             heartbeat.stop()
             cron.stop()
             agent.stop()
-            if forge_orchestrator is not None:
-                await forge_orchestrator.stop()
             await channels.stop_all()
 
     asyncio.run(run())
@@ -664,7 +688,12 @@ def agent(
     bus = MessageBus()
     provider = _make_provider(config)
     evolution_provider, evolution_model = _make_evolution_provider(config, provider)
-    forge_orchestrator = _make_forge_orchestrator(config, provider, bus)
+    (
+        forge_tool_client,
+        forge_tool_invocation_ids,
+        forge_task_coordinator,
+        runtime_availability_provider,
+    ) = _make_forge_components(config, provider)
 
     # Create cron service for tool usage (no callback needed for CLI unless running)
     cron_store_path = get_cron_dir() / "jobs.json"
@@ -690,7 +719,10 @@ def agent(
         mcp_servers=config.tools.mcp_servers,
         channels_config=config.channels,
         embodiment_registry=registry,
-        forge_orchestrator=forge_orchestrator,
+        forge_tool_client=forge_tool_client,
+        forge_tool_invocation_ids=forge_tool_invocation_ids,
+        forge_task_coordinator=forge_task_coordinator,
+        runtime_availability_provider=runtime_availability_provider,
         evolution_config=config.agents.evolution,
         evolution_provider=evolution_provider,
         evolution_model=evolution_model,
@@ -715,45 +747,12 @@ def agent(
     if message:
         # Single message mode — direct call, no bus needed
         async def run_once():
-            agent_task = None
-            orchestrator_task = None
             try:
-                if forge_orchestrator is not None:
-                    await forge_orchestrator.start()
-                    orchestrator_task = asyncio.create_task(forge_orchestrator.run())
                 with _thinking_ctx():
                     response = await agent_loop.process_direct(message, session_id, on_progress=_cli_progress)
                 _print_agent_response(response, render_markdown=markdown)
-                if forge_orchestrator is not None and forge_orchestrator.store.nonterminal():
-                    agent_task = asyncio.create_task(agent_loop.run())
-                    while forge_orchestrator.store.nonterminal():
-                        try:
-                            outbound = await asyncio.wait_for(
-                                bus.consume_outbound(), timeout=0.25
-                            )
-                            if outbound.content:
-                                _print_agent_response(
-                                    outbound.content, render_markdown=markdown
-                                )
-                        except asyncio.TimeoutError:
-                            pass
-                    try:
-                        outbound = await asyncio.wait_for(bus.consume_outbound(), timeout=5.0)
-                        if outbound.content:
-                            _print_agent_response(outbound.content, render_markdown=markdown)
-                    except asyncio.TimeoutError:
-                        pass
             finally:
                 agent_loop.stop()
-                if forge_orchestrator is not None:
-                    await forge_orchestrator.stop()
-                for task in (agent_task, orchestrator_task):
-                    if task is not None:
-                        task.cancel()
-                await asyncio.gather(
-                    *[task for task in (agent_task, orchestrator_task) if task is not None],
-                    return_exceptions=True,
-                )
                 await agent_loop.close_mcp()
 
         asyncio.run(run_once())
@@ -785,14 +784,7 @@ def agent(
             signal.signal(signal.SIGPIPE, signal.SIG_IGN)
 
         async def run_interactive():
-            if forge_orchestrator is not None:
-                await forge_orchestrator.start()
             bus_task = asyncio.create_task(agent_loop.run())
-            orchestrator_task = (
-                asyncio.create_task(forge_orchestrator.run())
-                if forge_orchestrator is not None
-                else None
-            )
             turn_done = asyncio.Event()
             turn_done.set()
             turn_response: list[str] = []
@@ -863,24 +855,421 @@ def agent(
                         break
             finally:
                 agent_loop.stop()
-                if forge_orchestrator is not None:
-                    await forge_orchestrator.stop()
                 outbound_task.cancel()
-                for task in (orchestrator_task,):
-                    if task is not None:
-                        task.cancel()
                 await asyncio.gather(
-                    *[
-                        task
-                        for task in (bus_task, outbound_task, orchestrator_task)
-                        if task is not None
-                    ],
+                    bus_task,
+                    outbound_task,
                     return_exceptions=True,
                 )
                 await agent_loop.close_mcp()
 
         asyncio.run(run_interactive())
 
+
+# ============================================================================
+# Skill Runtime Commands
+# ============================================================================
+
+
+skill_app = typer.Typer(help="Manage installed Skill runtimes")
+app.add_typer(skill_app, name="skill")
+
+
+def _skill_runtime_error(error: Exception) -> None:
+    console.print(f"[red]Error: {error}[/red]")
+    raise typer.Exit(1)
+
+
+@skill_app.command("search")
+def skill_search(
+    query: str = typer.Argument("", help="Skill name or search text"),
+    index: str | None = typer.Option(
+        None,
+        "--index",
+        help="Schema-v3 static package index path or URL",
+    ),
+):
+    """Search Skills in a static index or the configured Resource Registry."""
+    from PhyAgentOS.skill_runtime.registry import RegistryClient, StaticPackageIndex
+
+    try:
+        source = StaticPackageIndex(index) if index else RegistryClient()
+        with source:
+            items = source.search_skills(query)
+    except Exception as error:
+        _skill_runtime_error(error)
+        return
+    table = Table(title="Registry Skills")
+    table.add_column("Skill", style="cyan")
+    table.add_column("Version")
+    table.add_column("Description")
+    for item in items:
+        table.add_row(
+            str(item.get("name", "")),
+            str(item.get("version", "")),
+            str(item.get("description", "")),
+        )
+    console.print(table)
+
+
+def _install_skill_from_source(
+    name: str,
+    version: str | None,
+    index: str | None,
+) -> None:
+    import tempfile
+
+    from PhyAgentOS.skill_runtime.installer import NodeInstaller, SkillInstaller
+    from PhyAgentOS.skill_runtime.registry import (
+        DownloadCache,
+        RegistryClient,
+        StaticPackageIndex,
+    )
+    from PhyAgentOS.skill_runtime.state import RuntimeStateStore
+
+    static = index is not None
+    cache = DownloadCache()
+    try:
+        source = StaticPackageIndex(index) if index else RegistryClient()
+        with source:
+            artifact = source.skill(name, version)
+            archive = cache.download(artifact)
+            with tempfile.TemporaryDirectory(prefix="paos-skill-preview-") as directory:
+                preview_root = Path(directory)
+                preview = SkillInstaller(
+                    preview_root / "skills",
+                    state_store=RuntimeStateStore(preview_root / "run"),
+                ).install(
+                    archive,
+                    expected_sha256=artifact.sha256,
+                    verify_archive_manifest=not static,
+                )
+                node_installer = NodeInstaller()
+                for node_id, lock in sorted(preview.artifacts.nodes.items()):
+                    try:
+                        installed = node_installer.load(node_id, lock.artifact_id)
+                        if lock.digest is None or installed.digest == lock.digest:
+                            continue
+                    except Exception:
+                        pass
+                    node_artifact = source.node(lock.artifact_id)
+                    node_archive = cache.download(node_artifact)
+                    if static:
+                        metadata = source.node_metadata(lock.artifact_id)
+                        actual = {
+                            "node_id": metadata.get("node_id"),
+                            "version": str(metadata.get("version", "")),
+                            "platform": str(metadata.get("platform", "")).lower(),
+                            "arch": str(metadata.get("arch", "")).lower(),
+                        }
+                        expected = {
+                            "node_id": node_id,
+                            "version": lock.version,
+                            "platform": lock.platform,
+                            "arch": lock.arch,
+                        }
+                        if actual != expected:
+                            raise RuntimeError(
+                                f"static node metadata does not satisfy Skill lock: {lock.artifact_id}"
+                            )
+                        inventory = metadata.get("inventory")
+                        entrypoints = metadata.get("entrypoints")
+                        if not isinstance(inventory, list) or not isinstance(entrypoints, dict):
+                            raise RuntimeError(
+                                f"static node metadata is incomplete: {lock.artifact_id}"
+                            )
+                        files = tuple(
+                            str(item["path"])
+                            for item in inventory
+                            if isinstance(item, dict) and isinstance(item.get("path"), str)
+                        )
+                        node_installer.install_indexed(
+                            node_archive,
+                            node_id=node_id,
+                            artifact_id=lock.artifact_id,
+                            version=lock.version,
+                            platform=lock.platform,
+                            arch=lock.arch,
+                            entrypoints={
+                                str(key): str(value) for key, value in entrypoints.items()
+                            },
+                            files=files,
+                            expected_digest=lock.digest,
+                        )
+                    else:
+                        if node_artifact.node_digest is None:
+                            raise RuntimeError(
+                                f"Registry node {lock.artifact_id!r} is missing node_digest"
+                            )
+                        node_installer.install(
+                            node_archive,
+                            expected_sha256=node_artifact.sha256,
+                            expected_digest=node_artifact.node_digest,
+                        )
+            manifest = SkillInstaller().install(
+                archive,
+                expected_sha256=artifact.sha256,
+                verify_archive_manifest=not static,
+            )
+    finally:
+        cache.close()
+    console.print(
+        f"[green]✓[/green] Installed Skill [cyan]{manifest.name}[/cyan] {manifest.version}"
+    )
+
+
+@skill_app.command("install")
+def skill_install(
+    name: str = typer.Argument(..., help="Registry Skill name"),
+    version: str | None = typer.Option(None, "--version", "-v", help="Exact version"),
+    index: str | None = typer.Option(
+        None,
+        "--index",
+        help="Schema-v3 static package index path or URL",
+    ),
+):
+    """Install a Skill from a static index or Resource Registry."""
+    try:
+        _install_skill_from_source(name, version, index)
+    except Exception as error:
+        _skill_runtime_error(error)
+
+
+@skill_app.command("update")
+def skill_update(
+    name: str = typer.Argument(..., help="Installed Skill name"),
+    version: str | None = typer.Option(None, "--version", "-v", help="Target version"),
+    index: str | None = typer.Option(
+        None,
+        "--index",
+        help="Schema-v3 static package index path or URL",
+    ),
+):
+    """Update an installed, stopped Skill while retaining a backup."""
+    try:
+        from PhyAgentOS.skill_runtime.catalog import SkillCatalog
+
+        SkillCatalog().get(name)
+        _install_skill_from_source(name, version, index)
+    except Exception as error:
+        _skill_runtime_error(error)
+
+
+@skill_app.command("remove")
+def skill_remove(name: str = typer.Argument(..., help="Installed Skill name")):
+    """Remove a Skill unless it is running or has active invocations."""
+    from PhyAgentOS.skill_runtime.installer import SkillInstaller
+
+    try:
+        SkillInstaller().remove(name)
+    except Exception as error:
+        _skill_runtime_error(error)
+        return
+    console.print(f"[green]✓[/green] Removed Skill [cyan]{name}[/cyan]")
+
+
+@skill_app.command("list")
+def skill_list():
+    """List locally installed Skill bundles."""
+    from PhyAgentOS.skill_runtime.catalog import SkillCatalog
+    from PhyAgentOS.skill_runtime.state import RuntimeStateStore
+
+    catalog = SkillCatalog()
+    states = RuntimeStateStore()
+    table = Table(title="Installed Skills")
+    table.add_column("Skill", style="cyan")
+    table.add_column("Version")
+    table.add_column("Profiles")
+    table.add_column("Runtime")
+    try:
+        manifests = catalog.list()
+    except Exception as error:
+        _skill_runtime_error(error)
+        return
+    for manifest in manifests:
+        state = states.load(manifest.name)
+        table.add_row(
+            manifest.name,
+            manifest.version,
+            ", ".join(sorted(manifest.profiles)),
+            state.status if state is not None else "not started",
+        )
+    for name, error in catalog.errors().items():
+        table.add_row(name, "-", "-", f"[red]invalid: {error}[/red]")
+    console.print(table)
+
+
+@skill_app.command("inspect")
+def skill_inspect(skill_name: str = typer.Argument(..., help="Installed Skill name")):
+    """Inspect a Skill manifest and its last runtime state."""
+    from PhyAgentOS.skill_runtime.catalog import SkillCatalog
+    from PhyAgentOS.skill_runtime.state import RuntimeStateStore
+
+    try:
+        manifest = SkillCatalog().get(skill_name)
+        state = RuntimeStateStore().load(skill_name)
+    except Exception as error:
+        _skill_runtime_error(error)
+        return
+    console.print(f"[bold cyan]{manifest.name}[/bold cyan] {manifest.version}")
+    console.print(manifest.description)
+    console.print(f"Document: {manifest.skill_document.as_posix()}")
+    console.print(f"Gateway: {manifest.gateway_url}")
+    console.print(f"Tools: {', '.join(manifest.required_tools)}")
+    profile_table = Table(title="Runtime Profiles")
+    profile_table.add_column("Profile")
+    profile_table.add_column("Dataflow")
+    profile_table.add_column("Binaries")
+    profile_table.add_column("Assets")
+    for name, profile in sorted(manifest.profiles.items()):
+        profile_table.add_row(
+            name,
+            profile.dataflow.as_posix(),
+            str(len(profile.required_binaries)),
+            str(len(profile.required_assets)),
+        )
+    console.print(profile_table)
+    console.print(f"Runtime: {state.status if state is not None else 'not started'}")
+
+
+@skill_app.command("start")
+def skill_start(
+    skill_name: str = typer.Argument(..., help="Installed Skill name"),
+    profile: str = typer.Option(..., "--profile", "-p", help="Runtime profile"),
+):
+    """Start an installed Skill's named Dora dataflow."""
+    from PhyAgentOS.skill_runtime.manager import RuntimeManager
+
+    try:
+        state = RuntimeManager().start(skill_name, profile)
+    except Exception as error:
+        _skill_runtime_error(error)
+        return
+    console.print(
+        f"[green]✓[/green] Skill [cyan]{state.skill_name}[/cyan] is running "
+        f"(profile={state.profile}, flow={state.flow_name})"
+    )
+
+
+@skill_app.command("status")
+def skill_status(skill_name: str = typer.Argument(..., help="Installed Skill name")):
+    """Reconcile persisted state with Dora and Gateway health."""
+    from PhyAgentOS.skill_runtime.manager import RuntimeManager
+
+    try:
+        report = RuntimeManager().status(skill_name)
+    except Exception as error:
+        _skill_runtime_error(error)
+        return
+    if report.state is None:
+        console.print(f"Skill [cyan]{skill_name}[/cyan]: not started")
+        return
+    state = report.state
+    console.print(f"Skill: {state.skill_name}")
+    console.print(f"State: {state.status}")
+    console.print(f"Profile: {state.profile}")
+    console.print(f"Dora flow: {state.flow_name} ({'running' if report.flow_running else 'down'})")
+    console.print(f"Gateway GET /tools: {'ready' if report.gateway_ready else 'unavailable'}")
+    for tool_id, ready in report.tool_contexts.items():
+        console.print(f"Tool context {tool_id}: {'ready' if ready else 'not ready'}")
+    if state.last_error:
+        console.print(f"[red]Last error: {state.last_error}[/red]")
+
+
+@skill_app.command("logs")
+def skill_logs(
+    skill_name: str = typer.Argument(..., help="Installed Skill name"),
+    lines: int = typer.Option(200, "--lines", "-n", min=1, help="Lifecycle log lines"),
+):
+    """Show recent Skill runtime lifecycle logs."""
+    from PhyAgentOS.skill_runtime.manager import RuntimeManager
+
+    try:
+        content = RuntimeManager().read_logs(skill_name, lines=lines)
+    except Exception as error:
+        _skill_runtime_error(error)
+        return
+    if content:
+        console.print(content, end="")
+    else:
+        console.print("[dim]No lifecycle logs recorded.[/dim]")
+
+
+@skill_app.command("stop")
+def skill_stop(
+    skill_name: str = typer.Argument(..., help="Installed Skill name"),
+    force: bool = typer.Option(False, "--force", help="Force-stop despite active invocations"),
+):
+    """Stop a managed Skill dataflow without shutting down shared Dora services."""
+    from PhyAgentOS.skill_runtime.manager import RuntimeManager
+
+    try:
+        state = RuntimeManager().stop(skill_name, force=force)
+    except Exception as error:
+        _skill_runtime_error(error)
+        return
+    console.print(
+        f"[green]✓[/green] Skill [cyan]{state.skill_name}[/cyan] is {state.status}"
+    )
+
+
+# ============================================================================
+# Forge Node Installation Commands
+# ============================================================================
+
+
+forge_node_app = typer.Typer(help="Install and verify independently versioned Forge nodes")
+app.add_typer(forge_node_app, name="forge-node")
+
+
+@forge_node_app.command("install")
+def forge_node_install(
+    artifact_id: str = typer.Argument(..., help="Registry node artifact ID"),
+):
+    """Download and atomically install one immutable Forge node version."""
+    from PhyAgentOS.skill_runtime.installer import NodeInstaller
+    from PhyAgentOS.skill_runtime.registry import DownloadCache, RegistryClient
+
+    cache = DownloadCache()
+    try:
+        with RegistryClient() as registry:
+            artifact = registry.node(artifact_id)
+        if artifact.node_digest is None:
+            raise RuntimeError("Registry response is missing node_digest")
+        archive = cache.download(artifact)
+        manifest = NodeInstaller().install(
+            archive,
+            expected_sha256=artifact.sha256,
+            expected_digest=artifact.node_digest,
+        )
+    except Exception as error:
+        _skill_runtime_error(error)
+        return
+    finally:
+        cache.close()
+    console.print(
+        f"[green]✓[/green] Installed Forge node "
+        f"[cyan]{manifest.node_id}[/cyan] {manifest.version} ({manifest.artifact_id})"
+    )
+
+
+@forge_node_app.command("verify")
+def forge_node_verify(
+    node_id: str = typer.Argument(...),
+    artifact_id: str = typer.Argument(...),
+):
+    """Verify one installed node manifest, host lock, and all file digests."""
+    from PhyAgentOS.skill_runtime.installer import NodeInstaller
+
+    try:
+        manifest = NodeInstaller().load(node_id, artifact_id)
+    except Exception as error:
+        _skill_runtime_error(error)
+        return
+    console.print(
+        f"[green]✓[/green] Forge node [cyan]{manifest.node_id}[/cyan] "
+        f"{manifest.artifact_id} verified"
+    )
 
 # ============================================================================
 # Channel Commands

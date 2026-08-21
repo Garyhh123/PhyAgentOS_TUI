@@ -7,7 +7,7 @@ import hashlib
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from loguru import logger
 
@@ -22,7 +22,10 @@ from PhyAgentOS.agent.experience.contracts import (
 )
 from PhyAgentOS.agent.experience.evolution import SkillEvolutionError, SkillEvolutionManager
 from PhyAgentOS.agent.experience.redaction import redact_text
-from PhyAgentOS.agent.experience.source import ForgeTaskOutcomeSource
+from PhyAgentOS.agent.experience.source import (
+    AgentTaskOutcomeSource,
+    ForgeTaskOutcomeSource,
+)
 from PhyAgentOS.agent.experience.store import ExperienceStore
 
 
@@ -33,6 +36,8 @@ class ExperienceCoordinator:
         workspace: str | Path,
         analyzer: ExperienceAnalyzer,
         forge_orchestrator=None,
+        task_coordinator=None,
+        runtime_availability_provider: Callable[[str], bool] | None = None,
         min_successful_episodes: int = 3,
         min_lesson_episodes: int = 3,
         max_lessons_per_skill: int = 8,
@@ -44,6 +49,7 @@ class ExperienceCoordinator:
             workspace=self.workspace,
             store=self.store,
             max_lessons_per_skill=max_lessons_per_skill,
+            runtime_availability_provider=runtime_availability_provider,
         )
         self.analyzer = analyzer
         self.evolution = SkillEvolutionManager(
@@ -52,11 +58,12 @@ class ExperienceCoordinator:
             min_successful_episodes=min_successful_episodes,
             min_lesson_episodes=min_lesson_episodes,
         )
-        self.outcome_source = (
-            ForgeTaskOutcomeSource(forge_orchestrator)
-            if forge_orchestrator is not None
-            else None
-        )
+        if task_coordinator is not None:
+            self.outcome_source = AgentTaskOutcomeSource(task_coordinator)
+        elif forge_orchestrator is not None:
+            self.outcome_source = ForgeTaskOutcomeSource(forge_orchestrator)
+        else:
+            self.outcome_source = None
         self.max_calls = max(0, int(max_calls))
         self.calls = 0
         self._tasks: dict[str, asyncio.Task] = {}
@@ -158,6 +165,8 @@ class ExperienceCoordinator:
                 skill_activations=activations,
                 workflow_trace=trace,
                 outcome=outcome,
+                agent_task_ref=outcome.agent_task_ref,
+                tool_invocation_refs=outcome.tool_invocation_refs,
                 processing_status="pending",
             )
             created = self.store.create_episode(episode, enqueue=True)

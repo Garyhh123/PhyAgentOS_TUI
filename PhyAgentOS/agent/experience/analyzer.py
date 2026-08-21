@@ -33,7 +33,7 @@ Rules:
 - A Skill candidate is allowed only for a semantically successful or successfully recovered task.
 - Generalize values into preconditions and placeholders. Never copy credentials, endpoints,
   session/command IDs, live Action Manifest entries, fixed Gateway action_type values, or raw inputs.
-- A workflow Skill must discover live robot actions through forge_get_context and execute only via
+- A workflow Skill must discover live robot capabilities through forge_tool_context and execute only via
   registered Forge tools. Never propose bypassing Forge, evidence collection, or verification.
 - For every failed/replanned workflow pattern, emit a failure_observation with LessonEligibility.
   Only workflow defects are related/workflow_related. Task impossibility, verifier/evidence limits,

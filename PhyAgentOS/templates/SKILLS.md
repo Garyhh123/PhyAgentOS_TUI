@@ -34,9 +34,10 @@ The metadata key may be `PhyAgentOS` or `openclaw`; both are accepted.
 
 ## Built-in Skills
 
-- Forge execution is exposed through built-in Agent tools rather than a skill registry.
-- A robot-specific skill may teach planning conventions, but it must discover live actions
-  through `forge_get_context` and execute through `forge_execute_task`.
+- Forge execution uses the Gateway Tool API tools `forge_tool_*` only.
+- Use `forge_task_*` when Tool calls must be aggregated and semantically verified as one task.
+- A robot-specific Skill must discover live ToolSpec/context and must not construct Gateway HTTP
+  requests or use the retired `/agent/sessions` execution path.
 
 ## Authoring Rules
 

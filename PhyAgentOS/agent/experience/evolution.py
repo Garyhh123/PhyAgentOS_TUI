@@ -651,7 +651,7 @@ class SkillEvolutionManager:
         text += section("Recovery", proposal.recovery_guidance)
         text += section("Applicability Boundaries", proposal.applicability_boundaries)
         text += (
-            "\nDiscover live robot capabilities with `forge_get_context` and execute only through "
+            "\nDiscover live robot capabilities with `forge_tool_context` and execute only through "
             "registered Forge tools. Treat Gateway completion as an execution fact and use the "
             "task verification verdict for success.\n\n"
         )

@@ -1,383 +1,187 @@
-# Forge 接入契约
+# Forge Tool API 接入契约
 
-> PhyAgentOS 0.2.1 · Forge Gateway 1.0.0 · API `paos-forge-gateway-mvp-plus.v1` · [English](README.md)
+[English](README.md) · [文档索引](../README.md)
 
-本文是 PhyAgentOS 唯一机器人执行链的技术契约。Gateway、Forge Runtime、Dora dataflow、策略与硬件集成位于 PAOS 外部，不由 PAOS 修改。
+> 适用于 PhyAgentOS 0.2.2。
 
-## 1. 设计边界
+## 1. 执行边界
 
 ```text
-Agent goal + criteria
-        │
-        ▼
-ForgeTaskRequest
-        │
-        ▼
-ForgeSessionOrchestrator ───── 持久化 / 重启 / 恢复
-        │
-        ▼
-ForgeAdapter ── HTTP/WS ── Forge Gateway ── Forge Runtime / Dora
-        │
-        ├── immutable ExecutionRecord
-        └── EvidenceBundle
-                   │
-                   ▼
-             ForgeTaskVerifier
-                   │
-                   ▼
-          VerificationVerdict
-                   │
-             optional RecoveryRequest
+绑定 AgentTask 的调用 / 无任务调用
+        → ForgeToolClient
+        → Gateway /tools → ToolInvocation → ToolEndpoint
+        → Dora 与机器人节点
 ```
 
-Adapter 不判断任务成功；Verifier 不生成机器人命令；只有正常 Planner 可以把 Recovery Request 转换为一个重新规划的 action。
+PAOS 支持 Query 与 Action。AgentTask 聚合用户目标，但 Gateway 仍是物理执行所有者。绑定与
+无任务调用使用相同 routes。所选 Endpoint operation 执行 `max_concurrency`；PAOS 不增加跨
+Tool Resource/Control lease。
 
-## 2. 支持拓扑
+## 2. Tool 发现与 context
 
-- 一个 PAOS 进程配置一个 Gateway endpoint。
-- Gateway 声明动作串行；一个 root lineage 在 verification/recovery 终结前占用 PAOS 执行槽。
-- 一个 PAOS/Forge session 对应一个高层 Gateway action。
-- 更长任务由 Planner 拆成多个 action 或 recovery child。
-- Gateway 1.0.0 的 evidence association 只支持 `best_effort`。
-- 不提供旧 Runtime/Target/SkillRuntime/Watchdog/SessionRunner/file queue 兼容性。
+```text
+GET /tools
+GET /tools/{tool_id}
+GET /tools/{tool_id}/context
+```
 
-## 3. 启动契约
+ToolSpec 声明稳定 identity、implementation/Endpoint binding、operation、`query|action`
+semantics、严格 input/output schema、readiness 与 robot frame profile。调用前实时读取 context，
+调用方不能猜测 frame、unit、readiness 或 binding。
 
-`ForgeSessionOrchestrator.start()` 调用 `GET /agent/runtime/capabilities`。解析后的 `data` 必须包含：
+## 3. Query 契约
 
-```json
+`forge_tool_query` 读取配置 ToolSpec，确认 `semantics=query`，再调用：
+
+```text
+POST /tools/{endpoint_id}/{operation}:invoke
+Content-Type: application/json
+
 {
-  "api_version": "paos-forge-gateway-mvp-plus.v1",
-  "supports": {
-    "sessions": true,
-    "command_id": true,
-    "runtime_context": true,
-    "serial_actions_only": true
-  },
-  "actions": {}
+  "arguments": {},
+  "caller_id": "optional",
+  "timeout_ms": 10000
 }
 ```
 
-`actions` 把 action type 映射到 capability object。PAOS 使用的通用字段包括：
+成功响应为 HTTP 200 和 `{ "ok": true, "data": { ... } }`。绑定 Query 在 active
+PlanRevision 下创建终态 PAOS ToolExecutionRecord；无任务 Query 返回相同 Gateway data，但不
+进行任务归因。
 
-```json
-{
-  "description": "Human-readable capability",
-  "required_parameters": [],
-  "input_mapping": {},
-  "policy_id": "stable-policy-identity",
-  "command": "stable-command-identity",
-  "result_semantics": "command_completed",
-  "completion": {}
-}
-```
+## 4. Action 契约
 
-Capability 摘要会注入 Agent 上下文。每个提交的 `action_type` 必须在缓存的 map 中。`result_semantics` 与 `completion` 写入 Execution Record，但不选择 verifier 实现。
-
-## 4. 公共契约
-
-### 4.1 `ForgeTaskRequest`
+Admission：
 
 ```text
-version = forge_task_request_v1
-task_description
-action_type
-inputs
-verification: TaskVerificationContract
-execution_timeout_s
-source = paos-agent
+POST /tools/{tool_id}:invoke
+→ HTTP 202
+→ data.invocation_id + data.attempt_id
 ```
 
-任务和 action 文本非空，inputs 是有限 JSON。模型故意不包含 session/command ID。
-
-### 4.2 `TaskVerificationContract`
+Reconciliation：
 
 ```text
-version = task_verification_contract_v1
-mode = off | audit | enforce | recovery
-goal
-success_criteria[]
-constraints[]
-evidence_policy {
-  profile
-  required_kinds[]
-  required_sources[]
-  minimum_association = best_effort | authoritative
-}
+GET  /invocations/{invocation_id}
+GET  /invocations/{invocation_id}/result
+POST /invocations/{invocation_id}/cancel
 ```
 
-非 `off` 必须提供 goal 和至少一项 criterion。Gateway 1.0.0 无法满足 `authoritative`，因此这种请求在 dispatch 前失败。
+Result HTTP 202 表示 pending。Cancel HTTP 200/202 表示取消请求已处理或接受，不证明停止。
+Timeout 表示远端状态未知。显式 `unknown` 终态会以失败关闭 PAOS 记账，但物理效果仍不确定，
+不能触发盲目重试。
 
-### 4.3 `ExecutionRecord`
+任何已接纳 invocation identity 都必须保留。若接纳后本地追踪失败，PAOS 返回权威 Gateway
+response 并附加本地 warning，便于运维核对。
 
-`paos_execution_record_v1` 是 frozen model，记录规范化 Gateway 事实：session/command/API/instance/action/policy identity、status、通用 result semantics/completion、timeline、outputs 与 execution error。Verifier 不得替换它。
+## 5. Agent tools
 
-### 4.4 `EvidenceBundle`
+| Tool | 契约 |
+|:-----|:-----|
+| `forge_tool_context` | 读取 ToolSpec 与实时 context。 |
+| `forge_tool_query` | 调用同步 Query，可选 `task_id`。 |
+| `forge_tool_start_action` | 接纳异步 Action，可选 `task_id`。 |
+| `forge_tool_action_status` | 读取 invocation phase/status。 |
+| `forge_tool_action_result` | 读取 pending 或终态 result。 |
+| `forge_tool_cancel_action` | 请求取消，不宣称停止。 |
+| `forge_task_create` | 创建唯一活动 AgentTask 与 revision 1。 |
+| `forge_task_get` | 读取 task、revisions、Tool records、evidence 与 verdict。 |
+| `forge_task_begin_revision` | 在允许 recovery verdict 后追加 revision。 |
+| `forge_task_finalize` | 后置采集并执行聚合任务验证。 |
+| `forge_task_cancel` | 为全部非终态绑定 Action 请求取消。 |
 
-`forge_evidence_bundle_v1` 记录 session/command identity、capture window、artifacts 与 quality。每个 artifact 有唯一 ID、phase、kind、source、sequence、timestamps、media type、size、SHA-256、安全 URI 与 retention tombstone 字段。
+Forge 启用或存在健康活动 Skill Runtime 时注册这些 tools。现有通用 Agent tools 与动态 MCP
+tools 独立保持注册。
 
-### 4.5 `VerificationVerdict`
+## 6. Identity 与关联
 
-`verification_verdict_v1`：
+| Identity | 所有者 | 含义 |
+|:---------|:-------|:-----|
+| `task_id` | PAOS | 稳定任务聚合 |
+| `revision_id` | PAOS | 不可变规划世代 |
+| `record_id` | PAOS | 绑定 Query result 或 Action reference |
+| `invocation_id` | Gateway | 异步 Action 生命周期 |
+| `attempt_id` | Gateway | 执行 attempt |
+
+关联必须显式保存；这些 ID 不是别名，也不能相互派生。
+
+## 7. AgentTask 模型
+
+全局最多一个非终态 AgentTask；无任务调用不占槽位。创建与更新使用 SQLite WAL 和 immediate
+transaction。Task 包含只追加 PlanRevision；每个 revision 包含 Tool records、semantic verdict
+和 verification attempts。
 
 ```text
-verdict = success | failure | replan_required | inconclusive
-criteria[] = criterion + satisfied|unsatisfied|unknown + evidence_refs
-evidence_refs[]
-reason
-lesson
-recovery_context? = unmet_criteria + preserved_constraints + guidance
+executing
+  ├─ finalize → succeeded | failed
+  ├─ recovery verdict → awaiting_replan → begin_revision → executing
+  └─ cancel → cancelling → reconcile → finalize → cancelled | failed
 ```
 
-输出必须 exactly-once 覆盖每条输入 criterion，并且只引用已解析 Bundle 中的 artifact ID。
+Tool record 终结后，后续 observation 不改写执行事实。Recovery revision 保持相同 task ID，
+并受 replan count 与 deadline 限制。
 
-### 4.6 `RecoveryRequest`
+## 8. Evidence 与 verification
 
-`recovery_request_v1` 不可执行，只包含 parent ID、unmet criteria、preserved constraints、动作无关 guidance、evidence refs 与 deadline。
+PAOS 在第一次绑定 Action 前和所有绑定 Action 达到记账终态后进行 best-effort 采集。Evidence
+artifact 包含 source、phase、sequence、timestamp、media metadata、size、SHA-256 与工作区相对
+reference。采集错误会显式记录。
 
-## 5. Identity 与 mutation 顺序
+`forge_task_finalize` 聚合全部绑定 Tool facts，并应用任务契约：
 
-PAOS 在持久化前生成 path-safe 随机身份：
+- `off`：执行派生结果；
+- `audit`：记录 semantic verdict，保留执行派生结果；
+- `enforce`：semantic verdict 决定成功并 fail closed；
+- `recovery`：enforce 语义加有预算 `replan_required`。
 
-```text
-session_id = forge_<16 hex>
-command_id = command_<16 hex>
-root_session_id = root 的 session_id
-```
+Forge ToolResult 与 events 对执行负责；PAOS verifier 只判断用户任务是否完成。
 
-新 action 的顺序：
+## 9. Experience 与 evolution
 
-1. 事务保存 `ForgeSessionRecord(status=accepted)`。
-2. 非 `off` 启动 observation collector。
-3. 持久化 before entities 和 snapshot manifest。
-4. 持久化 `dispatch_attempted_at` 与 `dispatching` event。
-5. 只 POST `/agent/sessions` 一次。
-6. 校验 response identity。
-7. 只轮询所请求的 session。
+终态 AgentTask 转换为唯一去敏 episode，可引用显式 Skill activation、PlanRevision verdict、
+ToolInvocation/attempt fingerprint 和 evidence，但不会把原始 output、凭据、endpoint 或物理参数
+写入学习内容。
 
-dispatch intent 边界明确优先“不要重复未知物理动作”，而不是自动 at-least-once delivery。
+新增 reference 为可选字段，因此旧 experience 格式保持可读。Evolution fail-open，不改变
+Gateway facts、AgentTask terminal state 或 verification attempt。
 
-## 6. Gateway Agent API
+## 10. Skill Runtime
 
-| Method | Path | 契约 |
-|:-------|:-----|:-----|
-| GET | `/agent/runtime/capabilities` | 版本、supports、actions、instance identity |
-| GET | `/agent/runtime/status` | `forge_get_context` 的实时状态 |
-| GET | `/agent/runtime/context` | readiness/context 与可选 source 发现 |
-| POST | `/agent/runtime/reset` | 仅无活动 lineage 时显式 reset |
-| POST | `/agent/sessions` | 使用 PAOS ID、action、instruction、source、inputs 创建 session |
-| GET | `/agent/sessions/{session_id}` | 唯一 Gateway execution terminal 来源 |
-| POST | `/agent/sessions/{session_id}/cancel` | 带 reason 的 best-effort cancel |
+Skill Runtime 安装并管理 manifest v2 Bundle。安装要求安全 contained path、有界解包、SHA-256
+文件清单、严格 manifest、不可变 Node lock、staging、原子替换与 rollback。Registry/静态 index
+下载必须有 artifact size 与 digest，并且只在显式配置时发生。
 
-Client 接受 top-level object 或 `data` 中的 object。HTTP 错误、非 object JSON 与 `ok=false` 都会失败。
+RuntimeManager 启动命名 Dora profile，检查 required binaries/assets/environment，等待 Gateway
+`/tools` 与 manifest 全部 required Tool context，并持久化 status/log。健康活动 Runtime 提供
+Skill availability，其 manifest `gateway_url` 覆盖 `forge.baseUrl`。
 
-## 7. Response 关联
+存在被追踪非终态 invocation 时，正常 stop 会被拒绝。Force stop 是显式运维决策，不改变执行
+事实。
 
-每个 create/get response 必须满足：
+## 11. move-arm-by-ee profile
 
-```text
-session.session_id == requested session_id
-command.command_id == requested command_id
-command.session_id == requested session_id
-command.request_id == requested command_id
-session.action_type == requested action_type
-command.action_type == requested action type
-command.policy_id == capability.policy_id（声明时）
-command.command == capability.command（声明时）
-```
+内置 `move-arm-by-ee` v0.2 Skill 提供：
 
-接受 terminal 还要求：
+- `motion.resolve_relative_pose` Query；
+- `motion.move_pose` Action；
+- `gripper.set_opening` Action；
+- MuJoCo Dora dataflow 与独立锁定 Node artifacts；
+- Gateway Tool API 启用并设置 `agent.enabled: false`。
 
-```text
-session.status == command.status
-status in succeeded | failed | cancelled
-```
+工作流读取 context、解析相对目标、把绝对 pose 传给移动 Action、核对 invocation，并完成任务级
+verification。真实 MuJoCo 执行需要匹配的 Bundle assets 与锁定 Runtime artifacts。
 
-PAOS 不从 command output、policy 语义、图像静稳、机器人静稳、固定时间或 WebSocket 消息推断终态。
+## 12. Conformance
 
-## 8. Observation 契约
+接入需要覆盖 Tool discovery/context、Query response、Action admission、pending/terminal result、
+cancel、timeout/unknown、endpoint concurrency、AgentTask binding/revisions、evidence、聚合
+verification、experience attribution、Bundle security、事务安装、Runtime health 与 availability
+传播。
 
-### 8.1 Images
-
-Gateway `/ws/images` 发布：
-
-```json
-{
-  "type": "image",
-  "id": "front",
-  "seq": 42,
-  "timestamp": 1785744000.123,
-  "content_type": "image/jpeg",
-  "data": "<base64>"
-}
-```
-
-PAOS 校验 source、非负 sequence、有限可选 timestamp、允许的 image media type、Base64、decoded size 和 magic bytes。Gateway timestamp 写为 `captured_at`，本机接收时间写为 `received_at`。
-
-### 8.2 State
-
-Gateway `/ws/state` 发布 JSON object，PAOS 强制 entity size。v1 没有统一 source timestamp，因此 state artifact 使用 `captured_at=null`，只保留本机 `received_at`。
-
-### 8.3 Freshness
-
-每个 required image source 满足：
-
-```text
-before 在 session POST 前接收
-after.sequence > before.sequence
-after.received_at >= terminal_observed_at
-```
-
-如果 task 要求 state，after snapshot 中的 state 也必须在终态观察后接收。
-
-Collector 只保留每 source 最新合法帧，忽略更低/重复 sequence，失败后重连，并有界保存近期错误。
-
-## 9. Evidence 写入与解析
-
-Artifact 原子写入：
-
-```text
-<workspace>/artifacts/forge/<session_id>/
-├── execution_record.json
-├── before_snapshot.json
-├── after_snapshot.json
-├── evidence_bundle.json
-├── verification_result.json
-└── evidence/
-```
-
-Writer 拒绝 path escape 与 source 安全化后的命名冲突。Snapshot 读取和 Verification Request 构造会再次校验 path、entity 存在、byte size、SHA-256、image media type、Bundle identity、capture window 顺序、completeness、required kinds/sources 与 minimum association。
-
-Bundle quality 区分：
-
-- `complete`；
-- `association_quality`；
-- `capture_authority=paos_forge_adapter`；
-- missing requirements；
-- stale artifacts；
-- collection/validation errors。
-
-Evidence 问题是数据质量，不是执行终态推断。
-
-## 10. 生命周期
-
-```text
-accepted → capturing_before → dispatching → running → finalizing
-         ├─ off ───────────────────────────→ succeeded|failed|timed_out|cancelled
-         └─ non-off → awaiting_verification → verifying
-                                                ├→ succeeded|failed
-                                                └→ awaiting_replan → replanned|failed
-```
-
-`replanned`、`succeeded`、`failed`、`timed_out`、`cancelled` 是 PAOS 终态。Parent `replanned` 与 child `accepted` 原子提交。
-
-## 11. Verification 语义
-
-| Mode | 执行/证据行为 | 终结规则 |
-|:-----|:--------------|:---------|
-| `off` | 不生成 verification bundle、不调用 verifier | 映射 execution status |
-| `audit` | 尽可能采集/验证，记录错误 | 保持 execution 派生终态，永不 recovery |
-| `enforce` | 要求完整证据与合法 verifier | 只有 `success` 成功，其余 fail closed |
-| `recovery` | 同样严格验证 | 只有合法 `replan_required` 进入 recovery |
-
-Verifier prompt 只包含 goal、criteria、constraints、immutable execution、evidence、lineage history、Agent 策略选择的 Lesson 上下文与合法 evidence refs。启用 evolution 时，该上下文是 root task 显式 Skill activation 冻结的 active scoped 集合；不读取根目录 `LESSONS.md`，未绑定 Skill 的任务收到空集合。Lesson 是不可信、非权威的工作流建议，不能确定 criterion 状态、替代证据或作为 evidence reference。Verifier 不得按 action type 分支，也不得输出可执行 action。其原始 `lesson` 输出本身不是 active Agent Lesson。
-
-## 12. Verification Service
-
-PAOS 用 serializable provider spec 启动子进程，并执行有界 readiness：
-
-```text
-GET  /healthz
-POST /v1/verify-task
-X-PAOS-Admin-Token: <per-process token>
-```
-
-模型调用受 timeout 与 per-process budget 限制。输出经过规范化后，再校验模型 shape、verdict consistency、exact criteria 与 known evidence refs。
-
-## 13. Recovery 语义
-
-收到合法 recovery verdict 后，Orchestrator：
-
-1. 收集 unmet/unknown criteria；
-2. 保留原始与 verifier 提供的 constraints；
-3. 去重 evidence refs；
-4. 创建带 deadline 的 Recovery Request；
-5. 向原 Agent session 发送 system message；
-6. 等待正常 Planner 调用 `create_replanned_forge_session`。
-
-Child 创建要求 parent 正在等待、deadline 未到且 budget 剩余。Child 继承 verification contract 与 routing，但使用新的 action description、action type、inputs、session ID 和 command ID。同一 parent 重复创建返回已有 child。
-
-## 14. 重启规则
-
-| 持久化状态 | 恢复规则 |
-|:-----------|:---------|
-| 无 dispatch attempt | 继续正常 action 链路 |
-| 有 dispatch attempt | 只 GET 原 session，绝不 POST |
-| Gateway session 匹配 | 继续 poll/finalize/verify |
-| Gateway 404 | 失败为 `FORGE_EXECUTION_STATE_LOST` |
-| 已有 Execution Record | 仅 identity 匹配时复用 |
-| `verifying` | 追加 abandoned attempt，回到 awaiting verification |
-| `awaiting_replan` | 重投 recovery context；原子 child 创建去重 |
-
-PAOS 正常退出会请求取消每个活动 Gateway session 并保存结果。
-
-## 15. Evidence retention 与复核
-
-| Policy | 删除规则 |
-|:-------|:---------|
-| `all` | 保留全部实体 |
-| `failed` | 最终 PAOS 状态为 `succeeded` 时删除实体 |
-| `none` | 验证后删除实体 |
-
-删除后 Bundle 保留 tombstone：URI、source、time、sequence、size、digest、`retained=false` 和 `deleted_at`。Execution Record 保持不变。
-
-`verify_forge_session` 对终态 session 显式复核，要求证据 retained，追加 attempt，并可更新最新 verification view。它不修改任务终态或 Execution Record。
-
-## 16. 失败行为
-
-| 失败 | 必须行为 |
-|:-----|:---------|
-| API/supports 不支持 | 拒绝启动 |
-| action 不支持 | 在 persistence/dispatch 前拒绝 |
-| 请求 authoritative evidence | dispatch 前拒绝 |
-| audit 缺 before evidence | 可继续 dispatch；记录 incomplete bundle/error |
-| enforce/recovery 缺 before | POST 前失败 |
-| execution timeout | 请求 cancel；保留 last response/evidence/cancel response |
-| 验证时 evidence 缺失/非法 | audit 记录；enforce/recovery fail closed |
-| verdict 非法/service 失败 | audit 记录；enforce/recovery fail closed |
-| replan budget/deadline 耗尽 | parent failed；只有关闭 Agent evolution 时才追加旧版 Lesson |
-| dispatch 后 Gateway session 丢失 | 失败且不重复 action |
-
-## 17. Agent 经验边界
-
-Root lineage 的最终 child 终结后，普通 completion system event 同时给 AgentLoop 一个不可变 Forge session reference。启用 evolution 时，`ForgeTaskOutcomeSource` 读取持久化 lineage，并在后台为该 root 最多创建一个去敏任务 episode。
-
-经验链可以使用 semantic verdict 与 failed/replanned attempts，但不修改 Forge record、不增加 Gateway 请求、不延迟 completion event，也不把 verifier guidance 转换为可执行 action。`off`、`inconclusive`、非法/错误与 review-only 结果不生成可晋升经验。Lesson 相关性、聚类、抽象与 Skill 晋升属于本 Gateway 契约之外的 Agent 侧职责。
-
-## 18. Conformance 测试
-
-兼容接入应覆盖：
-
-- capability version/support/action；
-- create/get/cancel/reset response envelope；
-- session/command/request/action/policy/command identity；
-- Gateway terminal 与 timeout；
-- 多 source、重连、乱序、重复、陈旧帧、非法 Base64/media/size；
-- before-before-POST 与 after-after-terminal；
-- 四种 mode、非法输出、service timeout、retention、review；
-- Store 并发、合法 transition、单活动 lineage、原子 replan；
-- dispatch 前后重启、session 丢失、late evidence、verification 中断；
-- 仅 Forge enabled 时暴露 tools，system event 路由正确。
-- 启用 Agent evolution 或其 fail-open 时，终结 root-lineage notification 保持不变。
-
-可选黑盒测试通过 `FORGE_GATEWAY_URL` 连接，不修改 Gateway 源码或配置。
+Mock Gateway 测试可完成代码与契约验收；硬件/MuJoCo 验收单独记录确切 artifact digests 与环境。
 
 ## 相关文档
 
 - [框架介绍](../zh/01-framework-introduction.md)
-- [用户手册](../zh/02-user-manual.md)
-- [开发者手册](../zh/03-developer-manual.md)
 - [配置参考](../zh/04-forge-configuration-reference.md)
-- [Agent 经验与 Skill 自进化](../zh/05-agent-experience-and-skill-evolution.md)
 - [集成开发指南](../user_development_guide/README.md)
-- [通信架构](../user_development_guide/COMMUNICATION.md)
+- [运行手册](../user_manual/README.md)

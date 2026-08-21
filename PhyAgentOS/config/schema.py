@@ -287,13 +287,11 @@ class ForgeEvidenceConfig(Base):
 
 
 class ForgeConfig(Base):
-    """The only supported robot execution integration."""
+    """The only supported robot execution integration: Forge Tool API."""
 
     enabled: bool = False
     base_url: str = "http://127.0.0.1:9001"
-    api_version: Literal["paos-forge-gateway-mvp-plus.v1"] = (
-        "paos-forge-gateway-mvp-plus.v1"
-    )
+    api_version: Literal["forge-tool-api.v1"] = "forge-tool-api.v1"
     request_timeout_s: float = Field(default=10.0, gt=0)
     poll_interval_s: float = Field(default=0.5, ge=0.1, le=5.0)
     execution_timeout_s: float = Field(default=300.0, gt=0)
@@ -305,6 +303,20 @@ class ForgeConfig(Base):
         normalized = value.strip().rstrip("/")
         if not normalized.startswith(("http://", "https://")):
             raise ValueError("forge.baseUrl must be an HTTP(S) URL")
+        return normalized
+
+
+class ResourceRegistryConfig(Base):
+    """Public artifact registry used for Skill and Forge Runtime downloads."""
+
+    url: str = ""
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, value: str) -> str:
+        normalized = value.strip().rstrip("/")
+        if normalized and not normalized.startswith(("http://", "https://")):
+            raise ValueError("resourceRegistry.url must be an HTTP(S) URL")
         return normalized
 
 
@@ -474,6 +486,7 @@ class Config(BaseSettings):
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     embodiments: EmbodimentsConfig = Field(default_factory=EmbodimentsConfig)
     forge: ForgeConfig = Field(default_factory=ForgeConfig)
+    resource_registry: ResourceRegistryConfig = Field(default_factory=ResourceRegistryConfig)
 
     @model_validator(mode="before")
     @classmethod

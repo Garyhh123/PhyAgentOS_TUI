@@ -34,4 +34,4 @@ The skill format and metadata structure follow OpenClaw's conventions to maintai
 | `tmux` | Remote-control tmux sessions |
 | `clawhub` | Search and install skills from ClawHub registry |
 | `skill-creator` | Create new skills |
-| `pipergo2-demo` | Plan and verify PiperGo2 actions through Forge tools |
+| `move-arm-by-ee` | Resolve relative end-effector motion and control the gripper through Forge Tools |
