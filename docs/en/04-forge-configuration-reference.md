@@ -1,6 +1,6 @@
 # Forge Configuration Reference
 
-> Applies to PhyAgentOS 0.2.2 and the unified Forge Gateway Tool API.
+> Applies to PhyAgentOS 0.2.3 and the unified Forge Gateway Tool API.
 
 ## 1. Location and naming
 
@@ -12,27 +12,31 @@ Pydantic models accept camelCase and snake_case; onboarding writes camelCase. A 
 legacy `runtime` configuration is unsupported; remove it and configure `forge`
 ```
 
+Legacy Forge execution selectors (`enabled`, `baseUrl`, and `apiVersion`, including snake_case
+forms) are also rejected. Runtime selection and the Gateway URL come from an installed Skill
+manifest and an explicitly started profile.
+
 ## 2. `forge`
 
 | JSON field | Type | Default | Constraint and meaning |
 |:-----------|:-----|:--------|:-----------------------|
-| `enabled` | boolean | `false` | When false, no configured Tool API client or AgentTask tools are registered. An explicitly active Skill Runtime still enables them. |
-| `baseUrl` | string | `http://127.0.0.1:9001` | Fallback Gateway Tool API URL. An active Skill manifest's `gateway_url` takes precedence. |
-| `apiVersion` | literal | `forge-tool-api.v1` | The only PAOS Tool API integration version. |
 | `requestTimeoutS` | number | `10.0` | HTTP request timeout, greater than zero. |
-| `pollIntervalS` | number | `0.5` | Recommended Action status/result reconciliation interval in `[0.1, 5.0]` seconds. |
-| `executionTimeoutS` | number | `300.0` | Default Agent-side task deadline guidance. It does not prove that a timed-out Action stopped. |
+| `pollIntervalS` | number | `0.5` | Recommended Action/Session reconciliation interval in `[0.1, 5.0]` seconds. |
+| `executionTimeoutS` | number | `300.0` | Default Agent-side task deadline guidance. It does not prove that a timed-out execution stopped. |
 | `evidence` | object | below | AgentTask best-effort before/after capture settings. |
 
-PAOS invokes only `/tools` and `/invocations`. It does not call `/agent/sessions` or
-`/policy/command`; Query and Action concurrency is decided by the selected endpoint operation's
-`max_concurrency`.
+PAOS invokes Query, Action, and Session only through `/tools` and `/invocations`. It does not call
+legacy `/agent/sessions` or `/policy/command` routes. Concurrency is decided by the selected
+endpoint operation's `max_concurrency`.
 
 ## 2.1 `resourceRegistry`
 
 | JSON field | Type | Default | Constraint and meaning |
 |:-----------|:-----|:--------|:-----------------------|
-| `url` | string | `""` | Optional HTTP(S) Resource Registry. `PAOS_RESOURCE_REGISTRY_URL` overrides it. Empty means no implicit download. |
+| `url` | string | `https://paos-resource-manager.dev.x-era.com` | HTTP(S) Resource Registry. `PAOS_RESOURCE_REGISTRY_URL` overrides it; an empty value permits only local bundles or an explicit static index. |
+
+The Registry is queried only by explicit `paos skill search/install/update` or `paos forge-node
+install` commands. Starting PAOS never downloads a Skill.
 
 ## 3. `forge.evidence`
 
@@ -97,22 +101,27 @@ agents.evolution.provider
   → provider inferred from the selected model
 ```
 
-`enabled=false` removes `activate_skill`, restores root `LESSONS.md` to normal Agent and verifier context, and allows the verifier's legacy Lesson append behavior. It does not modify or delete the experience database, Skill sidecars, or revision archive.
+`enabled=false` disables episode reflection and promotion. `activate_skill` remains available as the
+explicit workflow-loading and Forge binding gate. Existing experience data and Skill sidecars are
+not modified or deleted.
 
 ## 6. AgentTask and Tool API tools
 
 `forge_task_create` accepts `task_description` and the verification contract below. It returns a
-PAOS `task_id` and an initial immutable PlanRevision. Pass this `task_id` optionally to
-`forge_tool_query` and `forge_tool_start_action`; calls without it use the same Gateway Tool API
-but do not occupy the global AgentTask slot or contribute to task verification.
+PAOS `task_id`, an initial immutable PlanRevision, and a frozen primary Skill binding. Task creation
+requires the current turn's primary `activate_skill` ID and revalidates its Runtime candidate.
+`forge_tool_query` may run without a task for diagnostics; Action and task-owned Session calls
+require the `task_id` and contribute to task verification.
 
 Task lifecycle tools are `forge_task_create`, `forge_task_get`, `forge_task_begin_revision`,
 `forge_task_finalize`, and `forge_task_cancel`. Tool transport tools are `forge_tool_context`,
 `forge_tool_query`, `forge_tool_start_action`, `forge_tool_action_status`,
-`forge_tool_action_result`, and `forge_tool_cancel_action`.
+`forge_tool_action_result`, `forge_tool_cancel_action`, `forge_tool_start_session`,
+`forge_tool_session_status`, `forge_tool_session_result`, and `forge_tool_stop_session`.
 
-`task_id`, `revision_id`, Query record ID, Gateway `invocation_id`, and Gateway `attempt_id` are
-distinct identities. Only one AgentTask may be non-terminal globally. A recovery revision keeps
+`binding_id`, `task_id`, `revision_id`, execution record ID, PAOS `caller_id`, Gateway
+`invocation_id`, and Gateway `attempt_id` are distinct identities. Only one AgentTask may be
+non-terminal globally. A recovery revision keeps
 the same task ID and is limited by `maxReplansPerEpisode` and `replanTimeoutS`.
 
 ## 7. `TaskVerificationContract`
@@ -148,8 +157,10 @@ the same task ID and is limited by `maxReplansPerEpisode` and `replanTimeoutS`.
 ## 8.1 Skill Runtime controls
 
 Skill Runtime paths are managed by PAOS data-path helpers rather than additional config fields.
-Use `paos skill search/install/update/remove/list/inspect/start/status/logs/stop` for Bundle and
-Runtime lifecycle and `paos forge-node install/verify` for independently locked nodes. Starting a
+Use `paos skill search/install/update/remove/list/inspect/start/status/switch/logs/stop` for Bundle and
+Runtime lifecycle and `paos forge-node install/verify <skill-name> <node-id>` for independently
+locked nodes. Pass `--archive <path>` to install a separately obtained Node without Registry
+access. Starting a
 profile validates required binaries, assets, environment variables, Dora, Gateway `/tools`, and
 all manifest `required_tools`. An active Runtime's manifest `gateway_url` is the Tool API URL used
 by the Agent.
@@ -173,8 +184,8 @@ Instance fields: `robotId` and `workspace` are required; `enabled=true`; `profil
 ```json
 {
   "forge": {
-    "enabled": true,
-    "baseUrl": "http://127.0.0.1:9001"
+    "requestTimeoutS": 10,
+    "executionTimeoutS": 300
   },
   "agents": {
     "verification": {
@@ -187,7 +198,8 @@ Instance fields: `robotId` and `workspace` are required; `enabled=true`; `profil
 }
 ```
 
-This configuration permits only tasks with `verification.mode=off`.
+This configuration permits only tasks with `verification.mode=off`; an installed Skill Runtime
+must still be started explicitly.
 
 ### 10.2 Long-running verified use
 
@@ -219,9 +231,6 @@ This configuration permits only tasks with `verification.mode=off`.
     }
   },
   "forge": {
-    "enabled": true,
-    "baseUrl": "http://127.0.0.1:9001",
-    "apiVersion": "forge-tool-api.v1",
     "requestTimeoutS": 10,
     "pollIntervalS": 0.5,
     "executionTimeoutS": 300,
@@ -233,6 +242,9 @@ This configuration permits only tasks with `verification.mode=off`.
       "maxArtifactBytes": 8388608,
       "associationQuality": "best_effort"
     }
+  },
+  "resourceRegistry": {
+    "url": "https://paos-resource-manager.dev.x-era.com"
   }
 }
 ```

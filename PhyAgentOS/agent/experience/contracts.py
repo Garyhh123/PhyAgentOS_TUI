@@ -17,12 +17,14 @@ class ExperienceModel(BaseModel):
 
 
 class SkillActivation(ExperienceModel):
-    version: Literal["skill_activation_v1"] = "skill_activation_v1"
+    version: Literal["skill_activation_v2"] = "skill_activation_v2"
     activation_id: str
     skill_name: str = Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
     role: Literal["primary", "supporting"] = "primary"
     source: Literal["workspace", "installed", "builtin"]
     content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    skill_version: str | None = None
+    binding_candidate_id: str | None = None
     activated_at: datetime = Field(default_factory=utc_now)
 
 
@@ -94,6 +96,11 @@ class TaskEpisode(ExperienceModel):
     goal: str
     success_criteria: list[str] = Field(default_factory=list)
     skill_activations: list[SkillActivation] = Field(default_factory=list)
+    primary_skill_binding_id: str | None = None
+    primary_skill_version: str | None = None
+    skill_document_sha256: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$"
+    )
     workflow_trace: list[WorkflowTraceItem] = Field(default_factory=list)
     outcome: TaskOutcomeEnvelope
     agent_task_ref: str | None = None
@@ -190,6 +197,7 @@ class FailureObservation(ExperienceModel):
     episode_id: str
     root_task_id: str
     skill_name: str | None = None
+    skill_version_spec: str | None = None
     workflow_key: str = Field(min_length=1, max_length=160)
     cluster_id: str
     pattern_key: str = Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -215,6 +223,7 @@ class LessonCluster(ExperienceModel):
     version: Literal["lesson_cluster_v1"] = "lesson_cluster_v1"
     cluster_id: str
     skill_name: str | None = None
+    skill_version_spec: str | None = None
     workflow_key: str = Field(min_length=1, max_length=160)
     pattern_key: str = Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
     canonical_pattern: str = Field(min_length=1, max_length=600)
@@ -286,6 +295,7 @@ class ScopedLesson(ExperienceModel):
     version: Literal["scoped_lesson_v1"] = "scoped_lesson_v1"
     lesson_id: str
     skill_name: str | None = None
+    skill_version_spec: str | None = None
     workflow_key: str
     applies_when: list[str]
     does_not_apply_when: list[str]

@@ -38,6 +38,7 @@ class ExperienceCoordinator:
         forge_orchestrator=None,
         task_coordinator=None,
         runtime_availability_provider: Callable[[str], bool] | None = None,
+        binding_resolver=None,
         min_successful_episodes: int = 3,
         min_lesson_episodes: int = 3,
         max_lessons_per_skill: int = 8,
@@ -50,6 +51,7 @@ class ExperienceCoordinator:
             store=self.store,
             max_lessons_per_skill=max_lessons_per_skill,
             runtime_availability_provider=runtime_availability_provider,
+            binding_resolver=binding_resolver,
         )
         self.analyzer = analyzer
         self.evolution = SkillEvolutionManager(
@@ -100,9 +102,18 @@ class ExperienceCoordinator:
     def record_tool(self, session_key: str, name: str, arguments: Any) -> None:
         self.activation.record_tool(session_key, name, arguments)
 
-    def bind_forge_task(self, root_task_id: str, *, session_key: str) -> None:
+    def bind_forge_task(
+        self,
+        root_task_id: str,
+        *,
+        session_key: str,
+        forge_binding: Any | None = None,
+    ) -> None:
         try:
-            self.store.save_binding(root_task_id, self.activation.snapshot(session_key))
+            snapshot = self.activation.snapshot(session_key)
+            if forge_binding is not None:
+                snapshot["forge_skill_binding"] = forge_binding.model_dump(mode="json")
+            self.store.save_binding(root_task_id, snapshot)
         except Exception as exc:
             logger.warning(
                 "Experience binding failed open for {}: error_type={}",
@@ -163,6 +174,21 @@ class ExperienceCoordinator:
                 goal=outcome.goal,
                 success_criteria=outcome.success_criteria,
                 skill_activations=activations,
+                primary_skill_binding_id=(
+                    binding.get("forge_skill_binding", {}).get("binding_id")
+                    if isinstance(binding.get("forge_skill_binding"), dict)
+                    else None
+                ),
+                primary_skill_version=(
+                    binding.get("forge_skill_binding", {}).get("skill_version")
+                    if isinstance(binding.get("forge_skill_binding"), dict)
+                    else None
+                ),
+                skill_document_sha256=(
+                    binding.get("forge_skill_binding", {}).get("skill_document_sha256")
+                    if isinstance(binding.get("forge_skill_binding"), dict)
+                    else None
+                ),
                 workflow_trace=trace,
                 outcome=outcome,
                 agent_task_ref=outcome.agent_task_ref,

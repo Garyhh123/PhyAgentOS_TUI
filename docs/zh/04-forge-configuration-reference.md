@@ -1,6 +1,6 @@
 # Forge 配置参考
 
-> 适用于 PhyAgentOS 0.2.2 与统一的 Forge Gateway Tool API。
+> 适用于 PhyAgentOS 0.2.3 与统一的 Forge Gateway Tool API。
 
 ## 1. 配置位置与命名
 
@@ -12,26 +12,29 @@ Pydantic 模型接受 camelCase 和 snake_case；`paos onboard` 保存为 camelC
 legacy `runtime` configuration is unsupported; remove it and configure `forge`
 ```
 
+旧 Forge 执行选择字段 `enabled`、`baseUrl`、`apiVersion`（含 snake_case 形式）也会被拒绝。
+Runtime 选择与 Gateway URL 来自已安装 Skill manifest 和显式启动的 profile。
+
 ## 2. `forge`
 
 | JSON 字段 | 类型 | 默认值 | 约束与含义 |
 |:----------|:-----|:-------|:-----------|
-| `enabled` | boolean | `false` | 为 false 时不按静态配置注册 Tool API client 与 AgentTask tools；显式激活的 Skill Runtime 仍会启用它们。 |
-| `baseUrl` | string | `http://127.0.0.1:9001` | Gateway Tool API 后备 URL；活动 Skill manifest 的 `gateway_url` 优先。 |
-| `apiVersion` | literal | `forge-tool-api.v1` | PAOS 唯一 Tool API 集成版本。 |
 | `requestTimeoutS` | number | `10.0` | HTTP 请求 timeout，必须大于 0。 |
-| `pollIntervalS` | number | `0.5` | Action status/result 建议对账间隔，范围 `[0.1, 5.0]` 秒。 |
-| `executionTimeoutS` | number | `300.0` | Agent 侧任务 deadline 指引；timeout 不能证明 Action 已停止。 |
+| `pollIntervalS` | number | `0.5` | Action/Session status/result 建议对账间隔，范围 `[0.1, 5.0]` 秒。 |
+| `executionTimeoutS` | number | `300.0` | Agent 侧任务 deadline 指引；timeout 不能证明远端执行已停止。 |
 | `evidence` | object | 见下表 | AgentTask 的 best-effort 前后证据采集设置。 |
 
-PAOS 只调用 `/tools` 与 `/invocations`，不会调用 `/agent/sessions` 或 `/policy/command`。
-Query/Action 并发由所选 Endpoint operation 的 `max_concurrency` 裁决。
+PAOS 只通过 `/tools` 与 `/invocations` 调用 Query、Action 和 Session，不调用旧式
+`/agent/sessions` 或 `/policy/command`。并发由所选 Endpoint operation 的 `max_concurrency` 裁决。
 
 ## 2.1 `resourceRegistry`
 
 | JSON 字段 | 类型 | 默认值 | 约束与含义 |
 |:----------|:-----|:-------|:-----------|
-| `url` | string | `""` | 可选 HTTP(S) Resource Registry；`PAOS_RESOURCE_REGISTRY_URL` 优先。空值表示不隐式下载。 |
+| `url` | string | `https://paos-resource-manager.dev.x-era.com` | HTTP(S) Resource Registry；`PAOS_RESOURCE_REGISTRY_URL` 优先。空值只允许本地 Bundle 或显式静态 index。 |
+
+只有显式执行 `paos skill search/install/update` 或 `paos forge-node install` 才会访问 Registry；
+启动 PAOS 不会下载 Skill。
 
 ## 3. `forge.evidence`
 
@@ -96,20 +99,24 @@ agents.evolution.provider
   → 按选定 model 推断 provider
 ```
 
-`enabled=false` 会移除 `activate_skill`，恢复根目录 `LESSONS.md` 的普通 Agent/Verifier 上下文和 Verifier 旧版 Lesson 追加行为，但不会修改或删除已有经验数据库、Skill sidecar 或 revision archive。
+`enabled=false` 会关闭 episode 反思与晋升。`activate_skill` 仍作为显式加载工作流及 Forge binding
+的入口；已有经验数据与 Skill sidecar 不会被修改或删除。
 
 ## 6. AgentTask 与 Tool API tools
 
 `forge_task_create` 接收 `task_description` 和下述验证契约，返回 PAOS `task_id` 与首个不可变
-PlanRevision。`forge_tool_query`、`forge_tool_start_action` 可选传入该 `task_id`；不传时仍走同一
-Gateway Tool API，但不占全局 AgentTask 槽位，也不计入任务验证。
+PlanRevision 和冻结的 primary Skill binding。创建 task 必须传入本轮 primary `activate_skill`
+ID，并重新校验其 Runtime candidate。`forge_tool_query` 可不带 task 作诊断；Action 与 task-owned
+Session 必须带 `task_id`，并计入任务验证。
 
 任务生命周期工具为 `forge_task_create`、`forge_task_get`、`forge_task_begin_revision`、
 `forge_task_finalize`、`forge_task_cancel`。Tool 传输工具为 `forge_tool_context`、
 `forge_tool_query`、`forge_tool_start_action`、`forge_tool_action_status`、
-`forge_tool_action_result`、`forge_tool_cancel_action`。
+`forge_tool_action_result`、`forge_tool_cancel_action`、`forge_tool_start_session`、
+`forge_tool_session_status`、`forge_tool_session_result`、`forge_tool_stop_session`。
 
-`task_id`、`revision_id`、Query record ID、Gateway `invocation_id` 与 `attempt_id` 严格区分。
+`binding_id`、`task_id`、`revision_id`、execution record ID、PAOS `caller_id`、Gateway
+`invocation_id` 与 `attempt_id` 严格区分。
 全局只允许一个非终态 AgentTask；恢复时在同一 task 上追加 revision，并受
 `maxReplansPerEpisode` 与 `replanTimeoutS` 限制。
 
@@ -146,8 +153,9 @@ Gateway Tool API，但不占全局 AgentTask 槽位，也不计入任务验证�
 ## 8.1 Skill Runtime 控制
 
 Skill Runtime 路径由 PAOS 数据路径 helper 管理，不增加额外配置字段。使用
-`paos skill search/install/update/remove/list/inspect/start/status/logs/stop` 管理 Bundle 与
-Runtime 生命周期，使用 `paos forge-node install/verify` 管理独立锁定 Node。启动 profile 时
+`paos skill search/install/update/remove/list/inspect/start/status/switch/logs/stop` 管理 Bundle 与
+Runtime 生命周期，使用 `paos forge-node install/verify <skill-name> <node-id>` 管理独立锁定
+Node；通过 `--archive <path>` 可安装独立获取的 Node 而不访问 Registry。启动 profile 时
 校验 required binaries、assets、环境变量、Dora、Gateway `/tools` 和 manifest 中全部
 `required_tools`。活动 Runtime manifest 的 `gateway_url` 是 Agent 使用的 Tool API URL。
 
@@ -170,8 +178,8 @@ Instance 字段：`robotId`、`workspace` 必填；`enabled=true`；`profileName
 ```json
 {
   "forge": {
-    "enabled": true,
-    "baseUrl": "http://127.0.0.1:9001"
+    "requestTimeoutS": 10,
+    "executionTimeoutS": 300
   },
   "agents": {
     "verification": {
@@ -184,7 +192,7 @@ Instance 字段：`robotId`、`workspace` 必填；`enabled=true`；`profileName
 }
 ```
 
-此配置只允许 `verification.mode=off` 的任务。
+此配置只允许 `verification.mode=off` 的任务；仍需显式启动已安装 Skill Runtime。
 
 ### 10.2 长期运行的验证配置
 
@@ -216,9 +224,6 @@ Instance 字段：`robotId`、`workspace` 必填；`enabled=true`；`profileName
     }
   },
   "forge": {
-    "enabled": true,
-    "baseUrl": "http://127.0.0.1:9001",
-    "apiVersion": "forge-tool-api.v1",
     "requestTimeoutS": 10,
     "pollIntervalS": 0.5,
     "executionTimeoutS": 300,
@@ -230,6 +235,9 @@ Instance 字段：`robotId`、`workspace` 必填；`enabled=true`；`profileName
       "maxArtifactBytes": 8388608,
       "associationQuality": "best_effort"
     }
+  },
+  "resourceRegistry": {
+    "url": "https://paos-resource-manager.dev.x-era.com"
   }
 }
 ```

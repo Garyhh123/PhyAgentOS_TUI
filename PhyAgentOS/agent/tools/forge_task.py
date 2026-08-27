@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 from typing import Any
 
@@ -41,20 +42,28 @@ class ForgeTaskCreateTool(Tool):
             "type": "object",
             "properties": {
                 "task_description": {"type": "string", "minLength": 1},
+                "activation_id": {
+                    "type": "string",
+                    "pattern": "^activation_[a-z0-9]+$",
+                    "description": "Primary activate_skill result from this session turn",
+                },
                 "verification": _verification_schema(),
             },
-            "required": ["task_description", "verification"],
+            "required": ["task_description", "activation_id", "verification"],
             "additionalProperties": False,
         }
 
     async def execute(
-        self, task_description: str, verification: dict[str, Any]
+        self, task_description: str, activation_id: str, verification: dict[str, Any]
     ) -> str:
         task = self.coordinator.create_task(
             task_description=task_description,
+            activation_id=activation_id,
             verification=TaskVerificationContract.model_validate(verification),
             origin_session_key=self.session_key,
         )
+        if inspect.isawaitable(task):
+            task = await task
         return _json({"ok": True, "data": task})
 
 

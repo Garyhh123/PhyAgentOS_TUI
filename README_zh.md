@@ -13,7 +13,7 @@
   </p>
   <p>
     <img src="https://img.shields.io/badge/Python-≥3.11-3776AB?logo=python&logoColor=white" alt="Python">
-    <img src="https://img.shields.io/badge/Version-v0.2.2-47A882" alt="Version">
+    <img src="https://img.shields.io/badge/Version-v0.2.3-47A882" alt="Version">
     <img src="https://img.shields.io/badge/License-MIT-3DA639" alt="License">
     <a href="https://arxiv.org/pdf/2607.16636">
       <img src="https://img.shields.io/badge/技术报告-arXiv-b31b1b?logo=arxiv&logoColor=white" alt="技术报告">
@@ -38,6 +38,7 @@ PhyAgentOS 是一个面向具身任务的 Agent 框架。Agent 规划高层动�
 
 | 版本 | 日期 | 更新内容 |
 |:-----|:-----|:---------|
+| ![v0.2.3](https://img.shields.io/badge/v0.2.3-47A882) | 2026-08-27 | Forge Skill 可独立安装和管理，经显式激活冻结到 AgentTask，并通过受治理的 Query、Action、Session Tool API 生命周期执行，支持恢复和按版本限定的经验。 |
 | ![v0.2.2](https://img.shields.io/badge/v0.2.2-47A882) | 2026-08-21 | 将 Forge 执行统一到 Query/Action Tool API，并增加 AgentTask 聚合、可校验 Skill Runtime、Resource Registry 接入和 move-arm-by-ee Skill，同时保留 Agent 验证与演化能力。 |
 | ![v0.2.1](https://img.shields.io/badge/v0.2.1-47A882) | 2026-08-14 | 增加经验证的任务经验、显式工作流 Skill 激活、受控 Skill 自进化、聚类式作用域 Lesson，以及用于语义验证的 Skill 作用域建议上下文。 |
 | ![v0.2.0](https://img.shields.io/badge/v0.2.0-47A882) | 2026-08-03 | 引入 Forge 执行架构，全面对接 Forge Gateway 1.0.0；新增不可变 Execution/Evidence 公共契约、系统级语义验证、Planner 主导的恢复、崩溃安全 SQLite 编排，并彻底移除旧 Runtime 执行链。 |
@@ -95,8 +96,8 @@ PhyAgentOS 是一个面向具身任务的 Agent 框架。Agent 规划高层动�
 
 | 领域 | 当前能力 |
 |:-----|:---------|
-| Forge 契约 | 所有 Query/Action 经 `/tools` 与 `/invocations` 进入同一 Tool API。 |
-| 异步编排 | Query 同步返回；Action admission 返回 invocation ID，随后必须查询 status/result 直到终态。 |
+| Forge 契约 | Query、Action 与 Session 经 `/tools`、`/invocations` 进入同一 Tool API。 |
+| 异步编排 | Query 同步返回；Action 与 Session admission 返回 invocation ID，并通过 `/invocations` 核对状态。 |
 | 身份校验 | Agent `task_id`、`revision_id`、Query record ID、Gateway `invocation_id` 与 `attempt_id` 始终分离。 |
 | 证据 | 通过 `/ws/images`、`/ws/state` 异步采集；使用有界最新帧缓存、媒体校验、SHA-256 和 source sequence 边界。 |
 | 验证 | 支持 `off`、`audit`、`enforce`、`recovery`，并生成逐 criteria 的结构化 verdict。 |
@@ -163,9 +164,6 @@ paos onboard
     }
   },
   "forge": {
-    "enabled": true,
-    "baseUrl": "http://127.0.0.1:9001",
-    "apiVersion": "forge-tool-api.v1",
     "requestTimeoutS": 10,
     "pollIntervalS": 0.5,
     "executionTimeoutS": 300,
@@ -179,16 +177,18 @@ paos onboard
     }
   },
   "resourceRegistry": {
-    "url": ""
+    "url": "https://paos-resource-manager.dev.x-era.com"
   }
 }
 ```
 
-`front` 只是示例。制品已在本地安装时可以将 `resourceRegistry.url` 留空；PAOS 不会在未配置时隐式下载。活动 Skill Runtime manifest 的 `gateway_url` 优先于 `forge.baseUrl`。
+`front` 只是示例。`resourceRegistry.url` 用于选择通用制品仓库；全部制品都从本地 Bundle
+或显式静态 index 安装时可留空。PAOS 只连接到已显式启动且健康的 Skill Runtime manifest
+所声明的 Gateway URL；启动 Agent 不会隐式启动或下载某个具体 Skill。
 
 ### 4. 启动 Agent
 
-先启动 Forge Gateway，再选择一种 PAOS 入口：
+先启动所需的已安装 Skill Runtime，再选择一种 PAOS 入口：
 
 ```bash
 # 交互式 CLI
@@ -242,31 +242,42 @@ paos gateway
 | `forge_tool_query` | 调用同步 Query，可选绑定 AgentTask。 |
 | `forge_tool_start_action` | 接受异步 Action 并保留 Gateway invocation identity。 |
 | `forge_tool_action_status/result/cancel_action` | 查询或请求取消，不能把 cancel accepted 当作物理停止。 |
+| `forge_tool_start_session` | 按绑定策略启动 task-owned、shared 或 runtime-owned Session。 |
+| `forge_tool_session_status/result/stop_session` | 核对 Session，并且只允许生命周期所有者停止它。 |
 
-这些工具在 `forge.enabled=true` 或存在健康活动 Skill Runtime 时注册。
+诊断用 context 工具始终可用。任务与变更类工具要求存在一个健康且显式活动的 Skill Runtime，
+并使用本轮 primary `activate_skill` 结果冻结出的不可变 Skill binding。
 
-## Skill Runtime 与 move-arm-by-ee
+## Forge Skill Runtime
 
 已安装 Skill 通过显式命令管理。Registry 下载必须配置 `resourceRegistry.url`、
 `PAOS_RESOURCE_REGISTRY_URL` 或传入静态 index；Bundle manifest、归档清单和锁定 Node 制品
 校验完成前不会替换本地版本。
 
 ```bash
-paos skill search move-arm-by-ee
-paos skill install move-arm-by-ee --version 0.2.0
-paos skill inspect move-arm-by-ee
-paos skill start move-arm-by-ee --profile mujoco
-paos skill status move-arm-by-ee
-paos skill logs move-arm-by-ee
-paos skill stop move-arm-by-ee
+paos skill search
+paos skill install <skill-name> --version <version>
+# 也可以安装独立获取的本地 Bundle
+paos skill install /path/to/<skill-name>-<version>.tar.gz --local
+paos skill inspect <skill-name>
+paos skill start <skill-name> --profile <profile>
+paos skill status <skill-name>
+# 没有非终态 AgentTask 时，切换到另一个已安装 Runtime
+paos skill switch <other-skill-name> --profile <profile>
+paos skill logs <skill-name>
+paos skill stop <skill-name>
 
-paos forge-node install <artifact-id>
-paos forge-node verify <node-id> <artifact-id>
+# 也可以安装独立获取的本地 Node 归档
+paos forge-node install <skill-name> <node-id> --archive /path/to/<node>.tar.gz
+paos forge-node verify <skill-name> <node-id>
 ```
 
-内置 `move-arm-by-ee` 工作流使用 `motion.resolve_relative_pose` 解析相对末端目标，通过
-`motion.move_pose` 执行移动，并用 `gripper.set_opening` 控制夹爪。Gateway profile 关闭
-Agent API；运行 MuJoCo profile 还需要匹配的 Bundle assets 与锁定 Node 制品。
+每个 Forge Skill Bundle 声明工作流文档、所需 Tool ID、命名 Runtime profile，以及精确的
+平台/架构 Node lock。每个锁定归档具有精确 SHA-256，并且只包含一个指定文件名的根目录
+可执行文件；安装时另行记录并校验解包后的 binary hash。
+`python scripts/package_skill.py <bundle-dir> --output-dir <directory>` 可生成确定性发布 Bundle。
+PhyAgentOS 源码与发布包不内置具体 Forge Skill、Forge node、模型或仿真资源；
+部署者只需独立获取实际需要的 Skill 并显式安装。
 
 ## 任务经验与 Skill 自进化
 
@@ -329,7 +340,7 @@ PhyAgentOS/
 | [Agent 经验与 Skill 自进化](docs/zh/05-agent-experience-and-skill-evolution.md) | 用户、开发者 | Skill 激活、Episode、Lesson 聚类、晋升、持久化与安全门控 |
 | [运行手册](docs/user_manual/README.md) | 运维人员 | 启动、监控、重启、取消与故障处理 |
 | [集成开发指南](docs/user_development_guide/README.md) | 生态开发者 | 不引入 action-specific verifier 的 Gateway action 接入方式 |
-| [Forge Tool API 接入契约](docs/forge/README_zh.md) | Gateway/PAOS 开发者 | Query/Action Tool API、AgentTask、Skill Runtime、证据、验证与恢复 |
+| [Forge Tool API 接入契约](docs/forge/README_zh.md) | Gateway/PAOS 开发者 | Query/Action/Session Tool API、不可变 Skill binding、AgentTask、Runtime、验证与恢复 |
 
 ## 开发验证
 

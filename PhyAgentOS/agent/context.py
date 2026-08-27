@@ -58,11 +58,11 @@ class ContextBuilder:
         if memory:
             parts.append(f"# Memory\n\n{memory}")
 
-        active_skills = list(
-            dict.fromkeys(
-                self.skills.get_always_skills() + self.skills.get_active_skills()
+        active_skills = list(dict.fromkeys(self.skills.get_always_skills()))
+        if not self.evolution_enabled:
+            active_skills = list(
+                dict.fromkeys(active_skills + self.skills.get_active_skills())
             )
-        )
         if active_skills:
             active_content = self.skills.load_skills_for_context(active_skills)
             if active_content:
@@ -80,7 +80,7 @@ class ContextBuilder:
             parts.append(f"""# Skills
 
 The following skills extend your capabilities. {activation_instruction}
-Skills with available="false" need dependencies installed first - you can try installing them with apt/brew.
+Skills with available="false" cannot be activated until their declared dependencies and Runtime are ready.
 
 {skills_summary}""")
 
@@ -108,9 +108,13 @@ Skills with available="false" need dependencies installed first - you can try in
         forge_policy = ""
         if self.forge_context_provider is not None:
             forge_policy = (
-                "- Robot execution is available only through the registered Forge tools. "
-                "Never invent Gateway actions or write an execution queue. Use "
-                "forge_tool_context when live Tool state is needed.\n\n"
+                "- Physical execution is available only through registered Forge tools.\n"
+                "- Activate the matching Skill before task-bound execution.\n"
+                "- Create an AgentTask before starting any Action.\n"
+                "- Never invent tool IDs, Gateway URLs, caller IDs, or readiness.\n"
+                "- Query live context before the first invocation and after readiness changes.\n"
+                "- Gateway success is an execution fact; finalize the AgentTask for user-level "
+                "success.\n\n"
                 "## Forge Execution\n"
                 + self.forge_context_provider()
             )

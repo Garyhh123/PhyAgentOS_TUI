@@ -1,6 +1,8 @@
 # PhyAgentOS Skills
 
 This directory contains built-in skills that extend PhyAgentOS's capabilities.
+Forge Skills are installed and managed separately. Concrete Forge Skill bundles, executable nodes,
+models, and simulation assets are not included in this source distribution.
 
 ## Skill Format
 
@@ -34,4 +36,3 @@ The skill format and metadata structure follow OpenClaw's conventions to maintai
 | `tmux` | Remote-control tmux sessions |
 | `clawhub` | Search and install skills from ClawHub registry |
 | `skill-creator` | Create new skills |
-| `move-arm-by-ee` | Resolve relative end-effector motion and control the gripper through Forge Tools |

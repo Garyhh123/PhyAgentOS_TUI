@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 from PhyAgentOS.agent.experience.activation import SkillActivationManager
@@ -48,9 +49,12 @@ class ActivateSkillTool(Tool):
         }
 
     async def execute(self, name: str, role: str = "primary") -> str:
-        activation, content, lessons = self.manager.activate(
+        result = self.manager.activate(
             session_key=self.session_key,
             name=name,
             role=role,
         )
+        if inspect.isawaitable(result):
+            result = await result
+        activation, content, lessons = result
         return self.manager.dump_activation_result(activation, content, lessons)

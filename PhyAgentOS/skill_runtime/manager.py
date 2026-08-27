@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -127,6 +128,14 @@ class RuntimeManager:
             launched = True
             self._start_flow(flow_name, manifest, profile, binary_root)
             self._wait_until_ready(manifest, flow_name)
+            snapshot = self._gateway_snapshot(manifest) or {}
+            data = snapshot.get("data") if isinstance(snapshot.get("data"), dict) else {}
+            identity = data.get("gateway_identity") or data.get("gateway_id")
+            if not isinstance(identity, str) or not identity:
+                identity = "gateway_" + hashlib.sha256(
+                    json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
+                ).hexdigest()[:20]
+            starting = replace(starting, gateway_identity=identity)
             running = starting.with_status("running")
             self.state_store.save(running)
             self._log(skill_name, "runtime ready")
@@ -158,7 +167,9 @@ class RuntimeManager:
         if live_ready and state.status in {"starting", "running", "failed"}:
             reconciled = state.with_status("running")
         elif state.status == "stopping" and not flow_running:
-            reconciled = state.with_status("stopped", active_invocations=())
+            reconciled = state.with_status(
+                "stopped", active_invocations=(), active_sessions=(), active_task_bindings=()
+            )
         elif state.status in {"starting", "running"} and not live_ready:
             reasons = []
             if not flow_running:
@@ -174,18 +185,49 @@ class RuntimeManager:
         return RuntimeStatusReport(reconciled, flow_running, gateway_ready, contexts)
 
     def stop(self, skill_name: str, *, force: bool = False) -> RuntimeState:
-        self.catalog.get(skill_name)
+        manifest = self.catalog.get(skill_name)
         state = self.state_store.load(skill_name)
         if state is None:
             raise RuntimeManagerError(f"Skill {skill_name!r} has no runtime state")
         if state.status == "stopped" and not self._flow_running(state.flow_name):
             return state
-        if state.active_invocations and not force:
+        active_refs = (
+            list(state.active_invocations)
+            + list(state.active_sessions)
+            + list(state.active_task_bindings)
+        )
+        if active_refs and not force:
             raise RuntimeManagerError(
-                "Runtime has non-terminal Tool invocation(s); reconcile or cancel them "
+                "Runtime has non-terminal invocation/session/task binding(s); reconcile them "
                 "before stopping, or pass --force"
             )
-        stopping = state.with_status("stopping")
+        audit_events = state.audit_events
+        if force and active_refs:
+            control_attempts = [
+                self._request_gateway_control(
+                    f"{manifest.gateway_url}/invocations/"
+                    f"{quote(invocation_id, safe='')}/cancel",
+                    reference=invocation_id,
+                    operation="cancel",
+                )
+                for invocation_id in state.active_invocations
+            ]
+            control_attempts.extend(
+                self._request_gateway_control(
+                    f"{manifest.gateway_url}/invocations/"
+                    f"{quote(session_id, safe='')}/stop",
+                    reference=session_id,
+                    operation="stop",
+                )
+                for session_id in state.active_sessions
+            )
+            audit_events = (*audit_events, {
+                "at": utc_now(),
+                "event": "force_stop_with_active_references",
+                "references": sorted(active_refs),
+                "control_attempts": control_attempts,
+            })
+        stopping = state.with_status("stopping", audit_events=audit_events)
         self.state_store.save(stopping)
         self._log(skill_name, f"stopping flow={state.flow_name} force={force}")
         try:
@@ -198,7 +240,9 @@ class RuntimeManager:
             if isinstance(exc, RuntimeManagerError):
                 raise
             raise RuntimeManagerError(message) from exc
-        stopped = stopping.with_status("stopped", active_invocations=())
+        stopped = stopping.with_status(
+            "stopped", active_invocations=(), active_sessions=(), active_task_bindings=()
+        )
         self.state_store.save(stopped)
         self._log(skill_name, "runtime stopped")
         return stopped
@@ -437,6 +481,47 @@ class RuntimeManager:
         if not isinstance(value, dict):
             raise RuntimeManagerError("Gateway health response must be a JSON object")
         return value
+
+    @staticmethod
+    def _request_gateway_control(
+        url: str,
+        *,
+        reference: str,
+        operation: str,
+    ) -> dict[str, Any]:
+        """Best-effort force-stop control without treating acceptance as termination."""
+        request = Request(
+            url,
+            data=b"{}",
+            method="POST",
+            headers={"Accept": "application/json", "Content-Type": "application/json"},
+        )
+        try:
+            with urlopen(request, timeout=2.0) as response:
+                outcome = "accepted" if response.status in {200, 202} else "rejected"
+                return {
+                    "reference": reference,
+                    "operation": operation,
+                    "outcome": outcome,
+                    "http_status": response.status,
+                    "terminal_proven": False,
+                }
+        except HTTPError as exc:
+            return {
+                "reference": reference,
+                "operation": operation,
+                "outcome": "rejected",
+                "http_status": exc.code,
+                "terminal_proven": False,
+            }
+        except (URLError, TimeoutError, OSError) as exc:
+            return {
+                "reference": reference,
+                "operation": operation,
+                "outcome": "unknown",
+                "error_type": type(exc).__name__,
+                "terminal_proven": False,
+            }
 
     @staticmethod
     def _run(

@@ -2,15 +2,15 @@
 
 [中文](../zh/03-developer-manual.md) · [Documentation index](../README.md)
 
-> Documentation version: 0.2.2.
+> Documentation version: 0.2.3.
 
 ## 1. Development invariants
 
 1. Robot execution has one physical path: `ForgeToolClient → Gateway Tool API → ToolEndpoint`.
 2. AgentTask aggregates planning, evidence, and verdicts; it never executes the robot.
-3. `task_id`, `revision_id`, Query record ID, `invocation_id`, and `attempt_id` are distinct.
+3. `binding_id`, `task_id`, `revision_id`, record ID, `caller_id`, `invocation_id`, and `attempt_id` are distinct.
 4. Forge ToolResult and invocation events are authoritative execution facts.
-5. Action admission, cancellation acceptance, timeout, and `unknown` do not prove physical stop.
+5. Action/Session admission, cancel/stop acceptance, timeout, and `unknown` do not prove physical stop.
 6. General Agent tools, verification, experience, evolution, and dynamic MCP remain independent.
 7. Runtime artifacts are installed only after bounded archive and digest verification.
 
@@ -19,10 +19,10 @@
 | Module | Responsibility |
 |:-------|:---------------|
 | `agent/loop.py` | Existing Agent loop, general tools, dynamic MCP, Forge tool registration, context, and lifecycle |
-| `agent/tools/forge_tool_api.py` | Six Agent wrappers over Query/Action Tool API |
+| `agent/tools/forge_tool_api.py` | Governed Query/Action/Session Tool API Agent wrappers |
 | `agent/tools/forge_task.py` | Five AgentTask lifecycle tools |
 | `forge/tool_client.py` | Strict asynchronous HTTP client and response validation |
-| `forge/task.py` | AgentTask models, SQLite store, Tool binding, evidence capture, verification, and recovery |
+| `forge/binding.py`, `forge/task.py` | Immutable Runtime/ToolSpec binding, AgentTask models/store, evidence, verification, and recovery |
 | `forge/observation.py`, `forge/evidence.py` | Best-effort image/state collection and artifact writing |
 | `skill_runtime/` | Manifest, catalog, safe archive, installer, Registry, state, Runtime manager, and availability |
 | `agent/experience/` | Activation, episodes, assessment, Lessons, Skill candidates, and evolution |
@@ -43,17 +43,18 @@ Errors preserve HTTP status, error code, retryability, and any returned invocati
 | Action status | `GET /invocations/{invocation_id}` → 200 |
 | Action result | `GET /invocations/{invocation_id}/result` → 200 or pending 202 |
 | Request cancel | `POST /invocations/{invocation_id}/cancel` → 200 or accepted 202 |
+| Admit Session | `POST /tools/{tool_id}:invoke` → 202 |
+| Stop Session | `POST /invocations/{invocation_id}/stop` → 200 or accepted 202 |
 
-Path components are percent-encoded. Invocation input is `{arguments, caller_id?, timeout_ms?}`.
-An Action admission must contain non-empty `invocation_id` and `attempt_id`. If PAOS local tracking
-fails after Gateway acceptance, the authoritative response is retained with a `paos_warnings`
-entry rather than replaced by a false transport failure.
+Path components are percent-encoded. PAOS supplies `caller_id` and persists it with the intent
+before Action/Session admission. Admission must contain a non-empty `invocation_id`; Action also
+requires `attempt_id`. A timeout leaves an unknown record and recovery never repeats the POST.
 
 ## 4. Agent-facing tools
 
 Task lifecycle:
 
-- `forge_task_create(task_description, verification)`;
+- `forge_task_create(task_description, verification, activation_id)`;
 - `forge_task_get(task_id)`;
 - `forge_task_begin_revision(task_id, reason)`;
 - `forge_task_finalize(task_id)`;
@@ -62,14 +63,17 @@ Task lifecycle:
 Tool transport:
 
 - `forge_tool_context(tool_id)`;
-- `forge_tool_query(tool_id, arguments, task_id?, caller_id?, timeout_ms?)`;
-- `forge_tool_start_action(tool_id, arguments, task_id?, caller_id?, timeout_ms?)`;
-- `forge_tool_action_status(invocation_id)`;
-- `forge_tool_action_result(invocation_id)`;
-- `forge_tool_cancel_action(invocation_id)`.
+- `forge_tool_query(tool_id, arguments, task_id?, timeout_ms?)`;
+- `forge_tool_start_action(task_id, tool_id, arguments, timeout_ms?)`;
+- `forge_tool_action_status(task_id, invocation_id)`;
+- `forge_tool_action_result(task_id, invocation_id)`;
+- `forge_tool_cancel_action(task_id, invocation_id)`;
+- `forge_tool_start_session(task_id, tool_id, arguments, ownership)`;
+- `forge_tool_session_status/result/stop_session(task_id, invocation_id)`.
 
-Bound and unbound calls invoke the same HTTP methods. Bound calls additionally create or update a
-ToolExecutionRecord in the active revision. Tool wrappers must never invent a Gateway result.
+Diagnostic Query and bound calls invoke the same HTTP methods. Every mutating or task-attributed
+wrapper validates ownership and the frozen Tool binding before network access. Tool wrappers must
+never invent a Gateway identity or result.
 
 ## 5. AgentTask contracts and transactions
 
@@ -87,12 +91,12 @@ accounting but is a failure, not evidence of stop.
 
 ## 6. Bound execution lifecycle
 
-1. Create an AgentTask and revision 1.
-2. On the first bound Action, perform best-effort before-capture.
-3. Invoke Query or admit Action through ForgeToolClient.
-4. Persist Query response or Action invocation/attempt references.
-5. Update Action record only from authoritative status/result responses.
-6. After every bound Action is terminal, perform after-capture on finalize.
+1. Activate the primary Skill and freeze its Runtime/ToolSpec candidate into AgentTask revision 1.
+2. On the first bound physical execution, perform best-effort before-capture.
+3. Invoke Query or admit Action/Session through ForgeToolClient.
+4. Persist caller intent before admission and then retain Gateway invocation/attempt references.
+5. Update asynchronous records only from authoritative status/result responses.
+6. After every task-owned execution is terminal, perform after-capture on finalize.
 7. Aggregate Tool records, evidence, and the task contract for verification.
 8. Persist task and revision verdicts; schedule one terminal experience episode.
 
@@ -125,7 +129,7 @@ execution references, bundle metadata, and tombstone information required for au
 A `skill.yaml` manifest must use `manifest_version: 2`, a directory-safe name/version, a relative
 Skill document, an HTTP(S) `gateway_url`, non-empty required Tools, at least one profile, and strict
 known fields. Registry-resolved nodes require artifact identity, version, platform, architecture,
-and SHA-256 digest.
+archive type, one root executable entrypoint, and SHA-256.
 
 Archive validation rejects absolute/traversing paths, links, duplicate/colliding paths, oversized
 files, expansion-limit violations, missing inventory entries, and digest mismatches. Skill and Node
@@ -141,14 +145,14 @@ RuntimeManager:
 6. waits for flow, `GET /tools`, and all required Tool contexts;
 7. persists running/failed/stopped state and lifecycle logs.
 
-A normal stop is rejected while non-terminal invocations remain tracked. Force stop is an explicit
-operator action and does not change invocation truth.
+A normal stop is rejected while non-terminal invocations, Sessions, or task bindings remain
+tracked. Force stop records an audit event and does not change invocation truth.
 
 ## 10. Registry and availability
 
 Registry and static-index artifacts require expected size and SHA-256 before entering the cache.
-Resumed downloads are verified again before installation. No Registry URL means no Registry
-download. `PAOS_RESOURCE_REGISTRY_URL` overrides `resourceRegistry.url`.
+Resumed downloads are verified again before installation. An empty Registry URL permits only local
+bundles or an explicit static index. `PAOS_RESOURCE_REGISTRY_URL` overrides `resourceRegistry.url`.
 
 `discover_active_runtime` reconciles persisted state, Dora flow, Gateway health, and required Tool
 contexts. Its availability provider flows through SkillsLoader, ExperienceCoordinator, and
@@ -156,8 +160,8 @@ SkillActivationManager. Skill discovery order is workspace, installed, built-in.
 
 ## 11. Experience and evolution integration
 
-All Agent tool calls remain recorded. Optional opaque fields attach AgentTask, revision,
-invocation, and attempt references without breaking older persisted models. The outcome source
+All Agent tool calls remain recorded. Frozen binding/version fields attach AgentTask, revision,
+invocation, and attempt references. The outcome source
 maps each revision verdict to its last execution record so a recovered task preserves both failed
 and successful semantic attempts.
 
@@ -170,10 +174,10 @@ Evolution failures remain fail-open.
 To add a robot capability:
 
 1. implement or package the ToolEndpoint operation;
-2. publish a Query or Action ToolSpec with exact schemas and binding;
+2. publish a Query, Action, or Session ToolSpec with exact schemas and binding;
 3. define operation `max_concurrency` in Gateway;
 4. add the locked node and profile references to a manifest-v2 Bundle;
-5. test context, invocation, pending, terminal, cancellation, and unknown outcomes;
+5. test binding drift, context, invocation, pending, terminal, cancel/stop, ownership, and unknown outcomes;
 6. add workflow guidance to a Skill without embedding task-specific coordinates or secrets.
 
 Do not create a second PAOS execution protocol, direct Agent-to-Dora calls, or a cross-Tool lease.
@@ -188,10 +192,11 @@ python -m compileall -q PhyAgentOS tests
 pytest -q
 ```
 
-Tests should cover response contracts, pending/cancel/timeout/unknown semantics, one active task,
-unbound calls, revision recovery, evidence, episode attribution, archive attacks, transactional
-rollback, Registry verification, Runtime health, and mocked Query→Action workflows. Real MuJoCo
-tests are conditional on matching artifacts and Dora availability.
+Tests should cover response contracts, Session ownership, pending/cancel/stop/timeout/unknown
+semantics, one active task, diagnostic Query, immutable bindings, no-POST recovery, revision
+recovery, evidence, version-scoped episodes, archive attacks, transactional rollback, Registry
+verification, Runtime health/switching, and mocked workflows. Concrete hardware/simulator tests are
+conditional on independently installed matching artifacts and Dora availability.
 
 ## Next reading
 

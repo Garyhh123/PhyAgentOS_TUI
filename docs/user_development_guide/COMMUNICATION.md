@@ -2,7 +2,7 @@
 
 [English](COMMUNICATION_en.md) · [文档索引](../README.md)
 
-> 版本：0.2.2
+> 版本：0.2.3
 
 ## 1. 通信边界
 
@@ -10,7 +10,7 @@ PhyAgentOS 分离六类边界：
 
 1. 用户/渠道 ↔ AgentLoop 消息；
 2. Agent tools ↔ AgentTaskCoordinator；
-3. ForgeToolClient ↔ Gateway Query/Action Tool API；
+3. ForgeToolClient ↔ Gateway Query/Action/Session Tool API；
 4. observation collector ↔ Gateway 图像/state WebSocket；
 5. verifier ↔ 独立 Verification Service；
 6. AgentTask/experience/Runtime ↔ 各自持久化存储。
@@ -41,8 +41,9 @@ forge_task_cancel
 限制一个非终态 AgentTask，并保存只追加 PlanRevision、Tool record、evidence reference 与
 verification attempt。
 
-Tool API 调用可带 `task_id`。Wrapper 在无任务调用所使用的同一个 Gateway request 周围创建或
-更新匹配 Tool record。这是任务聚合，不是第二条物理执行面。
+诊断 Query 可不带 `task_id`；受治理 Query 以及全部 Action/Session 必须带 task。Wrapper 先
+检查不可变 Skill/Runtime/ToolSpec binding，再围绕同一 Gateway request 创建或更新匹配 Tool
+record。这是任务聚合，不是第二条物理执行面。
 
 ## 4. Gateway HTTP 边界
 
@@ -51,14 +52,15 @@ GET  /tools
 GET  /tools/{tool_id}
 GET  /tools/{tool_id}/context
 POST /tools/{endpoint_id}/{operation}:invoke   # Query，HTTP 200
-POST /tools/{tool_id}:invoke                   # Action admission，HTTP 202
+POST /tools/{tool_id}:invoke                   # Action/Session admission，HTTP 202
 GET  /invocations/{invocation_id}
 GET  /invocations/{invocation_id}/result       # pending 时 HTTP 202
 POST /invocations/{invocation_id}/cancel
+POST /invocations/{invocation_id}/stop         # Session
 ```
 
 Query 先读取 ToolSpec，再使用其 `endpoint_id`、`operation` 和 `semantics=query` binding。
-Action 根据稳定 Tool ID 调用，响应必须包含 `invocation_id` 与 `attempt_id`。
+Action/Session 根据稳定 Tool ID 调用，两者返回 `invocation_id`，Action 还返回 `attempt_id`。
 
 成功响应必须是 `ok=true` 且 `data` 为 object 的 JSON。Error envelope 可以携带 code 与
 retryability。Transport timeout 表示远端状态未知。即使后续本地持久化或追踪失败，也必须保留
@@ -69,20 +71,22 @@ retryability。Transport timeout 表示远端状态未知。即使后续本地�
 | Identity | Namespace | 可变性 |
 |:---------|:----------|:-------|
 | `task_id` | PAOS AgentTask | 对全部 revisions 稳定 |
+| `binding_id` | PAOS Forge binding | 不可变 Skill/Runtime/ToolSpec 快照 |
 | `revision_id` | PAOS PlanRevision | 不可变、只追加规划世代 |
 | `record_id` | PAOS ToolExecutionRecord | 不可变 record identity |
-| `invocation_id` | Gateway ToolInvocation | 稳定 Action 生命周期 identity |
+| `caller_id` | PAOS ToolExecutionRecord | 异步 admission 前持久化 |
+| `invocation_id` | Gateway ToolInvocation | 稳定 Action/Session 生命周期 identity |
 | `attempt_id` | Gateway attempt | 对返回的 attempt 稳定 |
 
 组件不能从另一个 namespace 派生 identity；关联依赖显式保存的 reference。
 
 ## 6. Invocation 终态语义
 
-Gateway status/result 是唯一 Action 终态来源。Pending 保持非终态。已知终态包括 Gateway
+Gateway status/result 是唯一 Action/Session 终态来源。Pending 保持非终态。已知终态包括 Gateway
 报告的 success、failure、cancellation 或 stopped。`unknown` 对 PAOS 记账是终态，因为无法
 证明继续进展，但它不是已知物理停止，并继续参与正常 Runtime stop 门控。
 
-Cancellation `requested` 或 `accepted` 只确认控制消息投递，不会取消追踪，也不会直接把
+Cancellation/stop `requested` 或 `accepted` 只确认控制消息投递，不会取消追踪，也不会直接把
 AgentTask 设为 cancelled。PAOS 继续核对并显式 finalize task。
 
 ## 7. Evidence WebSocket 边界
@@ -91,7 +95,7 @@ PAOS 使用有界连接和采集 timeout 连接配置的图像流与可选 state
 持久化前校验图像 media、decoded size、sequence、phase、source、本机 receive time 与
 SHA-256。
 
-Collector 在第一次绑定 Action 前和全部绑定 Action 达到记账终态后采集。Evidence association
+Collector 在第一次绑定物理执行前和全部 task-owned 执行达到记账终态后采集。Evidence association
 为 best-effort；Gateway ToolResult 与 invocation events 仍是权威执行事实。
 
 ## 8. Verification 边界
@@ -120,7 +124,7 @@ replay 不增加独立支持。
 | `.paos/agent_tasks/tasks.sqlite3` | AgentTask records 与 append-only events |
 | `artifacts/agent_tasks/<task_id>/` | before/after snapshot、bundle metadata、evidence entity |
 | `.paos/evolution/experience.sqlite3` | binding、episode、Lesson、candidate、job、event |
-| Skill Runtime state path | installed Runtime state 与 tracked invocation IDs |
+| Skill Runtime state path | installed Runtime state、invocation/Session IDs、task bindings 与 audit events |
 | Skill Runtime logs path | 生命周期与 Dora launch 日志 |
 
 SQLite update 与 artifact write 在各自边界中保持事务或原子。不能因为本地 experience 处理
@@ -129,7 +133,7 @@ SQLite update 与 artifact write 在各自边界中保持事务或原子。不�
 ## 11. Skill Runtime 与 Registry 边界
 
 Registry/index client 返回 artifact metadata 与下载。Cache/installer 要求 size 与 SHA-256，
-随后校验 archive inventory 和 Node digest，再原子安装。RuntimeManager 启动命名 Dora flow
+随后校验 archive inventory 和精确单可执行文件 Node lock，再原子安装。RuntimeManager 启动命名 Dora flow
 并观察 Gateway `/tools`，不调用另一套 Gateway Agent API。
 
 活动 Runtime availability provider 向 Agent 提供 Skill visibility 与 Gateway URL，但不修改

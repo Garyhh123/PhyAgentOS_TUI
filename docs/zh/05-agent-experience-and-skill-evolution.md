@@ -1,6 +1,6 @@
 # Agent 经验与 Skill 自进化
 
-> 文档版本：0.2.2。本文描述基于 AgentTask record 的 Agent 校验、经验、Lesson 与 Skill 演化链。
+> 文档版本：0.2.3。本文描述基于 AgentTask record 的 Agent 校验、经验、Lesson 与 Skill 演化链。
 
 ## 1. 目标与边界
 
@@ -41,7 +41,7 @@ activate_skill(name, role="primary" | "supporting")
 
 返回值包含完整 Skill 文档、activation ID、来源、内容 digest 和适用的 active Lesson。Digest 将归因固定到当前 turn 实际使用的 revision；新晋升 revision 从后续 turn 的 summary 开始可见。
 
-AgentLoop 记录有序工具名和参数字段名，不记录参数值。`forge_task_create` 创建 AgentTask 时，将当前 activation 与 trace snapshot 绑定到该任务；后续绑定 Query/Action records 与 Gateway invocation references 随执行加入。没有匹配 Skill 的任务可继续执行，产生 unbound 经验而不是事后猜测绑定。
+AgentLoop 记录有序工具名和参数字段名，不记录参数值。Forge AgentTask 要求本轮 primary activation；创建时重新校验并冻结精确 Skill 版本、Runtime、manifest/工作流 hash 与所需 ToolSpec。后续绑定 Query/Action/Session records 与 Gateway invocation references 随执行加入；无任务诊断 Query 不归因到 task episode。
 
 Binding 同时冻结每个已激活 Skill 当时返回的适用 active Lesson。自动验证、后续 PlanRevision 和 review 都按 task ID 解析 Lesson 上下文，因此即使经验账本后来变化，也使用同一组有界内容。这些 Lesson 只是非权威工作流建议：可以提示检查点，但不能确定 criterion 状态、替代执行事实或证据，也不能作为 evidence reference。没有激活 Skill 的任务传入空 Lesson 集合。
 
@@ -51,7 +51,7 @@ Binding 同时冻结每个已激活 Skill 当时返回的适用 active Lesson。
 
 - 去敏后的 goal 与 criteria；
 - 最终 semantic verdict 和逐 criterion 状态；
-- 每个 PlanRevision 的 Query/Action semantics、input 字段名、execution status、verdict 与去敏 reason；
+- 每个 PlanRevision 的 Query/Action/Session semantics、input 字段名、execution status、verdict 与去敏 reason；
 - 不透明 task、revision、invocation、attempt 与 evidence fingerprint；
 - primary/supporting activations 与去敏 workflow trace。
 

@@ -9,10 +9,11 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
+from uuid import uuid4
 
 from PhyAgentOS.config.paths import get_skill_runtime_state_dir
 
-STATE_VERSION = 1
+STATE_VERSION = 2
 RuntimeStatus = Literal["starting", "running", "stopping", "stopped", "failed"]
 _STATUSES = {"starting", "running", "stopping", "stopped", "failed"}
 _FIELDS = {
@@ -22,10 +23,15 @@ _FIELDS = {
     "status",
     "flow_name",
     "gateway_url",
+    "runtime_instance_id",
+    "gateway_identity",
     "started_at",
     "updated_at",
     "last_error",
     "active_invocations",
+    "active_sessions",
+    "active_task_bindings",
+    "audit_events",
 }
 
 
@@ -46,10 +52,17 @@ class RuntimeState:
     status: RuntimeStatus
     flow_name: str
     gateway_url: str
+    runtime_instance_id: str = field(
+        default_factory=lambda: f"runtime_{uuid4().hex[:16]}"
+    )
+    gateway_identity: str | None = None
     started_at: str | None = None
     updated_at: str = field(default_factory=utc_now)
     last_error: str | None = None
     active_invocations: tuple[str, ...] = ()
+    active_sessions: tuple[str, ...] = ()
+    active_task_bindings: tuple[str, ...] = ()
+    audit_events: tuple[dict[str, Any], ...] = ()
     state_version: int = STATE_VERSION
 
     @classmethod
@@ -59,20 +72,43 @@ class RuntimeState:
         unknown = sorted(set(value) - _FIELDS)
         if unknown:
             raise StateError(f"runtime state has unknown field(s): {', '.join(unknown)}")
+        missing = sorted(_FIELDS - set(value))
+        if missing:
+            raise StateError(f"runtime state is missing field(s): {', '.join(missing)}")
         if value.get("state_version") != STATE_VERSION:
             raise StateError(f"state_version must be {STATE_VERSION}")
-        required = ("skill_name", "profile", "status", "flow_name", "gateway_url", "updated_at")
+        required = (
+            "skill_name",
+            "profile",
+            "status",
+            "flow_name",
+            "gateway_url",
+            "runtime_instance_id",
+            "updated_at",
+        )
         for name in required:
             if not isinstance(value.get(name), str) or not value[name]:
                 raise StateError(f"{name} must be a non-empty string")
         if value["status"] not in _STATUSES:
             raise StateError(f"invalid runtime status: {value['status']}")
-        invocations = value.get("active_invocations", [])
-        if not isinstance(invocations, list) or not all(
-            isinstance(item, str) and item for item in invocations
+        collections: dict[str, tuple[str, ...]] = {}
+        for field_name in (
+            "active_invocations",
+            "active_sessions",
+            "active_task_bindings",
         ):
-            raise StateError("active_invocations must be a list of non-empty strings")
-        for optional in ("started_at", "last_error"):
+            items = value.get(field_name, [])
+            if not isinstance(items, list) or not all(
+                isinstance(item, str) and item for item in items
+            ):
+                raise StateError(f"{field_name} must be a list of non-empty strings")
+            collections[field_name] = tuple(items)
+        audit_events = value.get("audit_events", [])
+        if not isinstance(audit_events, list) or not all(
+            isinstance(item, dict) for item in audit_events
+        ):
+            raise StateError("audit_events must be a list of objects")
+        for optional in ("started_at", "last_error", "gateway_identity"):
             if value.get(optional) is not None and not isinstance(value[optional], str):
                 raise StateError(f"{optional} must be a string or null")
         return cls(
@@ -81,15 +117,23 @@ class RuntimeState:
             status=value["status"],
             flow_name=value["flow_name"],
             gateway_url=value["gateway_url"],
+            runtime_instance_id=value["runtime_instance_id"],
+            gateway_identity=value.get("gateway_identity"),
             started_at=value.get("started_at"),
             updated_at=value["updated_at"],
             last_error=value.get("last_error"),
-            active_invocations=tuple(invocations),
+            active_invocations=collections["active_invocations"],
+            active_sessions=collections["active_sessions"],
+            active_task_bindings=collections["active_task_bindings"],
+            audit_events=tuple(audit_events),
         )
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
         value["active_invocations"] = list(self.active_invocations)
+        value["active_sessions"] = list(self.active_sessions)
+        value["active_task_bindings"] = list(self.active_task_bindings)
+        value["audit_events"] = list(self.audit_events)
         return value
 
     def with_status(
@@ -98,6 +142,9 @@ class RuntimeState:
         *,
         error: str | None = None,
         active_invocations: tuple[str, ...] | None = None,
+        active_sessions: tuple[str, ...] | None = None,
+        active_task_bindings: tuple[str, ...] | None = None,
+        audit_events: tuple[dict[str, Any], ...] | None = None,
     ) -> RuntimeState:
         return RuntimeState(
             skill_name=self.skill_name,
@@ -105,11 +152,22 @@ class RuntimeState:
             status=status,
             flow_name=self.flow_name,
             gateway_url=self.gateway_url,
+            runtime_instance_id=self.runtime_instance_id,
+            gateway_identity=self.gateway_identity,
             started_at=self.started_at,
             last_error=error,
             active_invocations=(
                 self.active_invocations if active_invocations is None else active_invocations
             ),
+            active_sessions=(
+                self.active_sessions if active_sessions is None else active_sessions
+            ),
+            active_task_bindings=(
+                self.active_task_bindings
+                if active_task_bindings is None
+                else active_task_bindings
+            ),
+            audit_events=self.audit_events if audit_events is None else audit_events,
         )
 
 

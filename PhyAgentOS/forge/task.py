@@ -17,9 +17,16 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from PhyAgentOS.config.schema import ForgeConfig
+from PhyAgentOS.forge.binding import (
+    BoundToolSpec,
+    ForgeSkillBinding,
+    ForgeSkillBindingError,
+    ForgeSkillBindingResolver,
+    canonical_sha256,
+)
 from PhyAgentOS.forge.evidence import ForgeEvidenceWriter
 from PhyAgentOS.forge.observation import ForgeObservationCollector
-from PhyAgentOS.forge.tool_client import ForgeToolClient
+from PhyAgentOS.forge.tool_client import ForgeToolAPIError, ForgeToolClient
 from PhyAgentOS.verification.contracts import (
     EvidenceBundle,
     TaskVerificationContract,
@@ -66,11 +73,15 @@ class ToolExecutionRecord(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    version: Literal["tool_execution_record_v1"] = "tool_execution_record_v1"
+    version: Literal["tool_execution_record_v2"] = "tool_execution_record_v2"
     record_id: str
     revision_id: str
     tool_id: str
-    semantics: Literal["query", "action"]
+    semantics: Literal["query", "action", "session"]
+    skill_binding_id: str | None = None
+    tool_spec_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    caller_id: str
+    ownership: Literal["task", "runtime", "shared"] = "task"
     arguments: dict[str, Any] = Field(default_factory=dict)
     status: Literal[
         "pending",
@@ -108,10 +119,11 @@ class PlanRevision(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    version: Literal["plan_revision_v1"] = "plan_revision_v1"
+    version: Literal["plan_revision_v2"] = "plan_revision_v2"
     revision_id: str
     number: int = Field(ge=1)
     reason: str = Field(min_length=1)
+    skill_binding_id: str | None = None
     execution_records: list[ToolExecutionRecord] = Field(default_factory=list)
     verdict: VerificationVerdict | None = None
     verification_attempts: list[VerificationAttempt] = Field(default_factory=list)
@@ -124,13 +136,16 @@ class AgentTaskRecord(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    version: Literal["agent_task_record_v1"] = "agent_task_record_v1"
+    version: Literal["agent_task_record_v2"] = "agent_task_record_v2"
     task_id: str
     task_description: str = Field(min_length=1)
     verification: TaskVerificationContract = Field(default_factory=TaskVerificationContract)
     status: AgentTaskStatus = AgentTaskStatus.EXECUTING
     revisions: list[PlanRevision]
     active_revision_id: str
+    primary_skill_binding: ForgeSkillBinding | None = None
+    supporting_skill_bindings: list[ForgeSkillBinding] = Field(default_factory=list)
+    runtime_snapshot_ref: str | None = None
     verdict: VerificationVerdict | None = None
     verification_attempts: list[VerificationAttempt] = Field(default_factory=list)
     before_snapshot_ref: str | None = None
@@ -349,6 +364,11 @@ class AgentTaskCoordinator:
         client: ForgeToolClient,
         verifier: Any | None = None,
         experience: Any | None = None,
+        binding_resolver: ForgeSkillBindingResolver | None = None,
+        activation_manager: Any | None = None,
+        runtime_invocation_ids: Any | None = None,
+        runtime_session_ids: Any | None = None,
+        runtime_task_binding_ids: Any | None = None,
         store: AgentTaskStore | None = None,
         max_replans: int = 2,
         replan_timeout_s: float = 120.0,
@@ -358,6 +378,11 @@ class AgentTaskCoordinator:
         self.client = client
         self.verifier = verifier
         self.experience = experience
+        self.binding_resolver = binding_resolver
+        self.activation_manager = activation_manager
+        self.runtime_invocation_ids = runtime_invocation_ids
+        self.runtime_session_ids = runtime_session_ids
+        self.runtime_task_binding_ids = runtime_task_binding_ids
         self.store = store or AgentTaskStore(self.workspace)
         self.max_replans = max(0, int(max_replans))
         self.replan_timeout_s = max(0.1, float(replan_timeout_s))
@@ -365,13 +390,30 @@ class AgentTaskCoordinator:
     def set_experience(self, experience: Any | None) -> None:
         self.experience = experience
 
+    def set_activation_manager(self, activation_manager: Any) -> None:
+        self.activation_manager = activation_manager
+
     def create_task(
         self,
         *,
         task_description: str,
         verification: TaskVerificationContract,
+        activation_id: str | None = None,
         origin_session_key: str | None = None,
-    ) -> AgentTaskRecord:
+    ) -> AgentTaskRecord | Any:
+        """Create synchronously only for an explicitly unbound coordinator.
+
+        Managed Forge runtimes return an awaitable because binding freeze revalidates live
+        Gateway ToolSpecs. Agent tools handle both forms; physical execution always uses the
+        bound form.
+        """
+        if self.binding_resolver is not None:
+            return self._create_task_bound(
+                task_description=task_description,
+                verification=verification,
+                activation_id=activation_id,
+                origin_session_key=origin_session_key,
+            )
         if verification.mode != "off" and self.verifier is None:
             raise AgentTaskError(
                 "non-off AgentTask verification requires the verification service"
@@ -388,7 +430,81 @@ class AgentTaskCoordinator:
         )
         self.store.create(task)
         if self.experience is not None and origin_session_key:
-            self.experience.bind_forge_task(task_id, session_key=origin_session_key)
+            self.experience.bind_forge_task(
+                task_id,
+                session_key=origin_session_key,
+            )
+        return task
+
+    async def _create_task_bound(
+        self,
+        *,
+        task_description: str,
+        verification: TaskVerificationContract,
+        activation_id: str | None = None,
+        origin_session_key: str | None = None,
+    ) -> AgentTaskRecord:
+        if verification.mode != "off" and self.verifier is None:
+            raise AgentTaskError(
+                "non-off AgentTask verification requires the verification service"
+            )
+        task_id = f"task_{uuid4().hex[:16]}"
+        revision_id = f"revision_{uuid4().hex[:16]}"
+        binding: ForgeSkillBinding | None = None
+        if self.binding_resolver is not None:
+            if self.activation_manager is None or not origin_session_key or not activation_id:
+                raise AgentTaskError(
+                    "Forge AgentTask creation requires a primary Skill activation from this turn"
+                )
+            activation = self.activation_manager.require_activation(
+                session_key=origin_session_key,
+                activation_id=activation_id,
+                role="primary",
+            )
+            candidate_id = activation.binding_candidate_id
+            if not candidate_id:
+                raise AgentTaskError("primary Skill activation has no Forge binding candidate")
+            try:
+                binding = await self.binding_resolver.freeze(candidate_id, task_id=task_id)
+            except ForgeSkillBindingError as exc:
+                raise AgentTaskError(str(exc)) from exc
+            if activation.content_sha256 != binding.skill_document_sha256:
+                raise AgentTaskError(
+                    "activated SKILL.md does not match the installed Runtime binding"
+                )
+        task = AgentTaskRecord(
+            task_id=task_id,
+            task_description=task_description.strip(),
+            verification=verification,
+            revisions=[
+                PlanRevision(
+                    revision_id=revision_id,
+                    number=1,
+                    reason="initial plan",
+                    skill_binding_id=binding.binding_id if binding is not None else None,
+                )
+            ],
+            active_revision_id=revision_id,
+            primary_skill_binding=binding,
+            runtime_snapshot_ref=(
+                f"runtime:{binding.runtime_instance_id}" if binding is not None else None
+            ),
+            origin_session_key=origin_session_key,
+        )
+        if binding is not None and self.runtime_task_binding_ids is not None:
+            self.runtime_task_binding_ids.add(binding.binding_id)
+        try:
+            self.store.create(task)
+        except Exception:
+            if binding is not None and self.runtime_task_binding_ids is not None:
+                self.runtime_task_binding_ids.discard(binding.binding_id)
+            raise
+        if self.experience is not None and origin_session_key:
+            self.experience.bind_forge_task(
+                task_id,
+                session_key=origin_session_key,
+                forge_binding=binding,
+            )
         return task
 
     def get_task(self, task_id: str) -> AgentTaskRecord:
@@ -417,6 +533,11 @@ class AgentTaskCoordinator:
                 revision_id=f"revision_{uuid4().hex[:16]}",
                 number=len(current.revisions) + 1,
                 reason=reason.strip(),
+                skill_binding_id=(
+                    current.primary_skill_binding.binding_id
+                    if current.primary_skill_binding is not None
+                    else None
+                ),
             )
             current.revisions.append(revision)
             current.active_revision_id = revision.revision_id
@@ -432,12 +553,12 @@ class AgentTaskCoordinator:
         tool_id: str,
         arguments: dict[str, Any],
         *,
-        caller_id: str | None = None,
         timeout_ms: int | None = None,
     ) -> dict[str, Any]:
-        record_id = self._append_execution(task_id, tool_id, "query", arguments)
-        task = self.store.get(task_id)
-        caller = caller_id or f"paos:{task_id}:{task.active_revision_id}"
+        tool = await self._require_binding_tool(task_id, tool_id, "query")
+        record_id, caller = self._append_execution(
+            task_id, tool_id, "query", arguments, tool=tool
+        )
         try:
             response = await self.client.invoke_query_tool(
                 tool_id, arguments, caller_id=caller, timeout_ms=timeout_ms
@@ -459,15 +580,27 @@ class AgentTaskCoordinator:
         tool_id: str,
         arguments: dict[str, Any],
         *,
-        caller_id: str | None = None,
         timeout_ms: int | None = None,
     ) -> dict[str, Any]:
         task = self._require_executable(task_id)
+        if any(
+            item.semantics == "action"
+            and item.tool_id == tool_id
+            and item.arguments == arguments
+            and item.status == "unknown"
+            for item in task.execution_records
+        ):
+            raise AgentTaskError(
+                "an identical Action has unknown remote state; reconcile it instead of resending"
+            )
+        tool = await self._require_binding_tool(task_id, tool_id, "action")
         if task.before_snapshot_ref is None:
             await self._capture_before(task_id)
-        record_id = self._append_execution(task_id, tool_id, "action", arguments)
-        task = self.store.get(task_id)
-        caller = caller_id or f"paos:{task_id}:{task.active_revision_id}"
+        record_id, caller = self._append_execution(
+            task_id, tool_id, "action", arguments, tool=tool
+        )
+        invocation_id: str | None = None
+        attempt_id: str | None = None
         try:
             response = await self.client.invoke_action(
                 tool_id, arguments, caller_id=caller, timeout_ms=timeout_ms
@@ -478,17 +611,35 @@ class AgentTaskCoordinator:
             if not isinstance(invocation_id, str) or not invocation_id:
                 raise AgentTaskError("Gateway Action response omitted invocation_id")
             if not isinstance(attempt_id, str) or not attempt_id:
-                raise AgentTaskError(
+                raise ForgeToolAPIError(
                     "Gateway Action response omitted attempt_id for invocation "
-                    f"{invocation_id}"
+                    f"{invocation_id}",
+                    payload=response,
                 )
         except Exception as exc:
+            remote_invocation_id, remote_attempt_id = _remote_identity(exc)
+            invocation_id = remote_invocation_id or invocation_id
+            attempt_id = remote_attempt_id or attempt_id
             self._finish_execution(
                 task_id,
                 record_id,
                 status="unknown",
+                invocation_id=invocation_id,
+                attempt_id=attempt_id,
                 error={"type": type(exc).__name__, "message": str(exc)},
             )
+            if invocation_id and self.runtime_invocation_ids is not None:
+                self._track_remote_identity(
+                    task_id,
+                    record_id,
+                    invocation_id,
+                    tracker=self.runtime_invocation_ids,
+                    response={
+                        "ok": False,
+                        "error": {"type": type(exc).__name__, "message": str(exc)},
+                    },
+                    kind="Action",
+                )
             raise
 
         def mutate(current: AgentTaskRecord) -> None:
@@ -501,13 +652,20 @@ class AgentTaskCoordinator:
             record.updated_at = utc_now()
 
         self.store.update(task_id, mutate, event_type="action_accepted")
-        return response
+        return self._track_remote_identity(
+            task_id,
+            record_id,
+            invocation_id,
+            tracker=self.runtime_invocation_ids,
+            response=response,
+            kind="Action",
+        )
 
-    def observe_action(self, invocation_id: str, response: dict[str, Any]) -> None:
-        found = self.store.find_invocation(invocation_id)
-        if found is None:
-            return
-        task, record = found
+    def observe_action(
+        self, task_id: str, invocation_id: str, response: dict[str, Any]
+    ) -> None:
+        task = self.store.get(task_id)
+        record = _owned_execution(task, invocation_id, semantics="action")
         if task.terminal:
             return
         status = _tool_status(response, default=record.status)
@@ -519,12 +677,31 @@ class AgentTaskCoordinator:
             target.updated_at = utc_now()
 
         self.store.update(task.task_id, mutate, event_type="action_observed")
+        if (
+            status in TERMINAL_TOOL_STATUSES - {"unknown"}
+            and self.runtime_invocation_ids is not None
+        ):
+            self.runtime_invocation_ids.discard(invocation_id)
 
-    def record_cancel_response(self, invocation_id: str, response: dict[str, Any]) -> None:
-        found = self.store.find_invocation(invocation_id)
-        if found is None:
-            return
-        task, record = found
+    def require_action_invocation(
+        self, task_id: str, invocation_id: str
+    ) -> ToolExecutionRecord:
+        return _owned_execution(
+            self.store.get(task_id), invocation_id, semantics="action"
+        )
+
+    def require_session_invocation(
+        self, task_id: str, invocation_id: str
+    ) -> ToolExecutionRecord:
+        return _owned_execution(
+            self.store.get(task_id), invocation_id, semantics="session"
+        )
+
+    def record_cancel_response(
+        self, task_id: str, invocation_id: str, response: dict[str, Any]
+    ) -> None:
+        task = self.store.get(task_id)
+        record = _owned_execution(task, invocation_id, semantics="action")
         if task.terminal:
             return
 
@@ -535,20 +712,144 @@ class AgentTaskCoordinator:
 
         self.store.update(task.task_id, mutate, event_type="action_cancel_requested")
 
+    async def start_session(
+        self,
+        task_id: str,
+        tool_id: str,
+        arguments: dict[str, Any],
+        *,
+        ownership: Literal["task", "shared"] = "task",
+    ) -> dict[str, Any]:
+        if ownership not in {"task", "shared"}:
+            raise AgentTaskError("runtime-owned Sessions may only be created by RuntimeManager")
+        tool = await self._require_binding_tool(task_id, tool_id, "session")
+        record_id, caller = self._append_execution(
+            task_id,
+            tool_id,
+            "session",
+            arguments,
+            tool=tool,
+            ownership=ownership,
+        )
+        invocation_id: str | None = None
+        attempt_id: str | None = None
+        try:
+            response = await self.client.start_session(
+                tool_id, arguments, caller_id=caller
+            )
+            data = _response_data(response)
+            invocation_id = data.get("invocation_id")
+            attempt_id = data.get("attempt_id")
+            if not isinstance(invocation_id, str) or not invocation_id:
+                raise AgentTaskError("Gateway Session response omitted invocation_id")
+            if not isinstance(attempt_id, str):
+                attempt_id = None
+        except Exception as exc:
+            remote_invocation_id, remote_attempt_id = _remote_identity(exc)
+            invocation_id = remote_invocation_id or invocation_id
+            attempt_id = remote_attempt_id or attempt_id
+            self._finish_execution(
+                task_id,
+                record_id,
+                status="unknown",
+                invocation_id=invocation_id,
+                attempt_id=attempt_id,
+                error={"type": type(exc).__name__, "message": str(exc)},
+            )
+            if invocation_id and self.runtime_session_ids is not None:
+                self._track_remote_identity(
+                    task_id,
+                    record_id,
+                    invocation_id,
+                    tracker=self.runtime_session_ids,
+                    response={
+                        "ok": False,
+                        "error": {"type": type(exc).__name__, "message": str(exc)},
+                    },
+                    kind="Session",
+                )
+            raise
+
+        def mutate(current: AgentTaskRecord) -> None:
+            record = _task_execution(current, record_id)
+            record.status = "accepted"
+            record.invocation_id = invocation_id
+            record.attempt_id = attempt_id
+            record.response = response
+            record.evidence_refs = [f"session:{invocation_id}"]
+            record.updated_at = utc_now()
+
+        self.store.update(task_id, mutate, event_type="session_accepted")
+        return self._track_remote_identity(
+            task_id,
+            record_id,
+            invocation_id,
+            tracker=self.runtime_session_ids,
+            response=response,
+            kind="Session",
+        )
+
+    def observe_session(
+        self, task_id: str, invocation_id: str, response: dict[str, Any]
+    ) -> None:
+        task = self.store.get(task_id)
+        record = _owned_execution(task, invocation_id, semantics="session")
+        status = _tool_status(response, default=record.status)
+
+        def mutate(current: AgentTaskRecord) -> None:
+            target = _task_execution(current, record.record_id)
+            target.status = status
+            target.response = response
+            target.updated_at = utc_now()
+
+        self.store.update(task_id, mutate, event_type="session_observed")
+        if (
+            status in TERMINAL_TOOL_STATUSES - {"unknown"}
+            and self.runtime_session_ids is not None
+        ):
+            self.runtime_session_ids.discard(invocation_id)
+
+    async def stop_session(self, task_id: str, invocation_id: str) -> dict[str, Any]:
+        task = self.store.get(task_id)
+        record = _owned_execution(task, invocation_id, semantics="session")
+        if record.ownership != "task":
+            raise AgentTaskError(
+                f"{record.ownership}-owned Session must be stopped by its Runtime owner"
+            )
+        response = await self.client.stop_session(invocation_id)
+
+        def mutate(current: AgentTaskRecord) -> None:
+            target = _task_execution(current, record.record_id)
+            target.response = response
+            target.updated_at = utc_now()
+
+        self.store.update(task_id, mutate, event_type="session_stop_requested")
+        return response
+
     async def cancel_task(self, task_id: str, *, reason: str) -> AgentTaskRecord:
         task = self.store.get(task_id)
         if task.terminal:
             return task
         pending = [
-            item.invocation_id
+            item
             for item in task.execution_records
-            if item.semantics == "action" and not item.terminal and item.invocation_id
+            if (
+                item.semantics == "action"
+                or (item.semantics == "session" and item.ownership == "task")
+            )
+            and not item.terminal
+            and item.invocation_id
         ]
         responses: dict[str, Any] = {}
-        for invocation_id in pending:
+        for item in pending:
+            invocation_id = item.invocation_id
             assert invocation_id is not None
             try:
-                responses[invocation_id] = await self.client.cancel_invocation(invocation_id)
+                responses[invocation_id] = (
+                    await self.client.stop_session(invocation_id)
+                    if item.semantics == "session"
+                    else await self.client.cancel_invocation(invocation_id)
+                )
             except Exception as exc:
                 responses[invocation_id] = {
                     "ok": False,
@@ -557,12 +858,14 @@ class AgentTaskCoordinator:
 
         def mutate(current: AgentTaskRecord) -> None:
             current.cancellation_requested = True
-            has_actions = any(
-                item.semantics == "action" for item in current.execution_records
+            has_owned_execution = any(
+                item.semantics == "action"
+                or (item.semantics == "session" and item.ownership == "task")
+                for item in current.execution_records
             )
             current.status = (
                 AgentTaskStatus.CANCELLING
-                if pending or has_actions
+                if pending or has_owned_execution
                 else _cancel_terminal_status(current)
             )
             current.evidence_errors.append(f"task cancellation requested: {reason.strip()}")
@@ -587,11 +890,15 @@ class AgentTaskCoordinator:
         pending = [
             item.invocation_id or item.record_id
             for item in task.execution_records
-            if item.semantics == "action" and not item.terminal
+            if (
+                item.semantics == "action"
+                or (item.semantics == "session" and item.ownership == "task")
+            )
+            and not item.terminal
         ]
         if pending:
             raise AgentTaskError(
-                "cannot finalize while Action invocation(s) are non-terminal: "
+                "cannot finalize while task-owned Action/Session invocation(s) are non-terminal: "
                 + ", ".join(pending)
             )
         if not task.execution_records:
@@ -612,7 +919,7 @@ class AgentTaskCoordinator:
         if mode == "off":
             status = (
                 AgentTaskStatus.SUCCEEDED
-                if all(item.status == "succeeded" for item in task.execution_records)
+                if _execution_facts_succeeded(task)
                 else AgentTaskStatus.FAILED
             )
             result = self.store.update(
@@ -655,7 +962,7 @@ class AgentTaskCoordinator:
             if current.verification.mode == "audit":
                 current.status = (
                     AgentTaskStatus.SUCCEEDED
-                    if all(item.status == "succeeded" for item in current.execution_records)
+                    if _execution_facts_succeeded(current)
                     else AgentTaskStatus.FAILED
                 )
             elif current.verification.mode == "recovery" and verdict.verdict == "replan_required":
@@ -684,7 +991,7 @@ class AgentTaskCoordinator:
         status = (
             AgentTaskStatus.SUCCEEDED
             if task.verification.mode == "audit"
-            and all(item.status == "succeeded" for item in task.execution_records)
+            and _execution_facts_succeeded(task)
             else AgentTaskStatus.FAILED
         )
 
@@ -709,10 +1016,60 @@ class AgentTaskCoordinator:
         self._schedule_experience(result)
         return result
 
+    async def reconcile_nonterminal(self) -> AgentTaskRecord | None:
+        """Repair local execution facts from Gateway GETs without redispatching POSTs."""
+        task = self.store.active()
+        if task is None:
+            return None
+        binding = task.primary_skill_binding
+        if binding is not None and self.runtime_task_binding_ids is not None:
+            self.runtime_task_binding_ids.add(binding.binding_id)
+        for record in task.execution_records:
+            if record.terminal or record.semantics == "query":
+                continue
+            if not record.invocation_id:
+                self._finish_execution(
+                    task.task_id,
+                    record.record_id,
+                    status="unknown",
+                    error={
+                        "type": "RecoveryUnknown",
+                        "message": (
+                            "dispatch intent has no invocation identity; request was not resent"
+                        ),
+                    },
+                )
+                continue
+            tracker = (
+                self.runtime_session_ids
+                if record.semantics == "session"
+                else self.runtime_invocation_ids
+            )
+            if tracker is not None:
+                tracker.add(record.invocation_id)
+            try:
+                response = await self.client.invocation_status(record.invocation_id)
+            except Exception as exc:
+                self._finish_execution(
+                    task.task_id,
+                    record.record_id,
+                    status="unknown",
+                    invocation_id=record.invocation_id,
+                    attempt_id=record.attempt_id,
+                    error={"type": type(exc).__name__, "message": str(exc)},
+                )
+                continue
+            if record.semantics == "session":
+                self.observe_session(task.task_id, record.invocation_id, response)
+            else:
+                self.observe_action(task.task_id, record.invocation_id, response)
+        return self.store.get(task.task_id)
+
     def capabilities_summary(self) -> str:
         return (
-            "Forge robot execution uses only the Gateway Tool API. "
-            "Query is synchronous; Action acceptance is not completion."
+            "Forge execution uses only an activated Skill, a frozen AgentTask binding, and the "
+            "Gateway Tool API. Query is read-only; Action admission is not task success; "
+            "task-owned Sessions must be stopped before finalization."
         )
 
     def _require_executable(self, task_id: str) -> AgentTaskRecord:
@@ -723,15 +1080,43 @@ class AgentTaskCoordinator:
             )
         return task
 
+    async def _require_binding_tool(
+        self,
+        task_id: str,
+        tool_id: str,
+        semantics: Literal["query", "action", "session"],
+    ) -> BoundToolSpec:
+        task = self._require_executable(task_id)
+        binding = task.primary_skill_binding
+        if binding is None and self.binding_resolver is None:
+            return BoundToolSpec(
+                tool_id=tool_id,
+                semantics=semantics,
+                spec_sha256=canonical_sha256(
+                    {"tool_id": tool_id, "semantics": semantics, "unbound": True}
+                ),
+                ready_at_binding=True,
+            )
+        if binding is None or self.binding_resolver is None:
+            raise AgentTaskError("AgentTask has no frozen primary Forge Skill binding")
+        try:
+            return await self.binding_resolver.validate_tool(binding, tool_id, semantics)
+        except ForgeSkillBindingError as exc:
+            raise AgentTaskError(str(exc)) from exc
+
     def _append_execution(
         self,
         task_id: str,
         tool_id: str,
-        semantics: Literal["query", "action"],
+        semantics: Literal["query", "action", "session"],
         arguments: dict[str, Any],
-    ) -> str:
-        self._require_executable(task_id)
+        *,
+        tool: BoundToolSpec,
+        ownership: Literal["task", "runtime", "shared"] = "task",
+    ) -> tuple[str, str]:
+        task = self._require_executable(task_id)
         record_id = f"tool_{uuid4().hex[:16]}"
+        caller_id = f"paos:{task_id}:{task.active_revision_id}:{record_id}"
 
         def mutate(current: AgentTaskRecord) -> None:
             current.active_revision.execution_records.append(
@@ -740,13 +1125,21 @@ class AgentTaskCoordinator:
                     revision_id=current.active_revision_id,
                     tool_id=tool_id,
                     semantics=semantics,
+                    skill_binding_id=(
+                        current.primary_skill_binding.binding_id
+                        if current.primary_skill_binding is not None
+                        else None
+                    ),
+                    tool_spec_sha256=tool.spec_sha256,
+                    caller_id=caller_id,
+                    ownership=ownership,
                     arguments=dict(arguments),
                     evidence_refs=[f"tool:{record_id}"],
                 )
             )
 
         self.store.update(task_id, mutate, event_type=f"{semantics}_started")
-        return record_id
+        return record_id, caller_id
 
     def _finish_execution(
         self,
@@ -754,17 +1147,65 @@ class AgentTaskCoordinator:
         record_id: str,
         *,
         status: str,
+        invocation_id: str | None = None,
+        attempt_id: str | None = None,
         response: dict[str, Any] | None = None,
         error: dict[str, Any] | None = None,
     ) -> None:
         def mutate(current: AgentTaskRecord) -> None:
             record = _task_execution(current, record_id)
             record.status = status  # type: ignore[assignment]
+            record.invocation_id = invocation_id or record.invocation_id
+            record.attempt_id = attempt_id or record.attempt_id
             record.response = response
             record.error = error
             record.updated_at = utc_now()
 
         self.store.update(task_id, mutate, event_type="tool_execution_finished")
+
+    def _track_remote_identity(
+        self,
+        task_id: str,
+        record_id: str,
+        invocation_id: str,
+        *,
+        tracker: Any | None,
+        response: dict[str, Any],
+        kind: str,
+    ) -> dict[str, Any]:
+        """Retain an admitted remote identity even when Runtime-state tracking fails."""
+        if tracker is None:
+            return response
+        try:
+            tracker.add(invocation_id)
+            return response
+        except Exception as exc:
+            enriched = dict(response)
+            warnings = list(enriched.get("paos_warnings", []))
+            warnings.append(
+                {
+                    "type": "local_tracking",
+                    "message": (
+                        f"{kind} {invocation_id} was accepted but Runtime tracking failed: "
+                        f"{type(exc).__name__}: {exc}"
+                    ),
+                }
+            )
+            enriched["paos_warnings"] = warnings
+
+            def mutate(current: AgentTaskRecord) -> None:
+                record = _task_execution(current, record_id)
+                record.response = enriched
+                record.updated_at = utc_now()
+                current.evidence_errors.append(warnings[-1]["message"])
+
+            self.store.update(
+                task_id,
+                mutate,
+                event_type="runtime_tracking_failed",
+                payload={"invocation_id": invocation_id, "kind": kind.lower()},
+            )
+            return enriched
 
     async def _capture_before(self, task_id: str) -> None:
         task = self.store.get(task_id)
@@ -774,18 +1215,20 @@ class AgentTaskCoordinator:
             "agent_task",
             artifact_namespace="agent_tasks",
         )
-        collector = self._collector(task)
+        collector: ForgeObservationCollector | None = None
         errors: list[str] = []
         reference: str | None = None
         try:
+            collector = self._collector(task)
             await collector.start()
             snapshot = await collector.wait_for_before(self.config.evidence.capture_timeout_s)
             reference = writer.write_snapshot("before", snapshot)
         except Exception as exc:
             errors.append(str(exc) or type(exc).__name__)
         finally:
-            errors.extend(collector.errors)
-            await collector.close()
+            if collector is not None:
+                errors.extend(collector.errors)
+                await collector.close()
 
         def mutate(current: AgentTaskRecord) -> None:
             current.before_snapshot_ref = reference
@@ -801,13 +1244,14 @@ class AgentTaskCoordinator:
             "agent_task",
             artifact_namespace="agent_tasks",
         )
-        collector = self._collector(task)
+        collector: ForgeObservationCollector | None = None
         errors: list[str] = []
         after_ref: str | None = None
         terminal_observed_at = max(
             (item.updated_at for item in task.execution_records), default=utc_now()
         )
         try:
+            collector = self._collector(task)
             await collector.start()
             if task.before_snapshot_ref:
                 before = writer.load_snapshot(task.before_snapshot_ref)
@@ -824,8 +1268,9 @@ class AgentTaskCoordinator:
         except Exception as exc:
             errors.append(str(exc) or type(exc).__name__)
         finally:
-            errors.extend(collector.errors)
-            await collector.close()
+            if collector is not None:
+                errors.extend(collector.errors)
+                await collector.close()
         bundle, bundle_ref = writer.write_bundle(
             before_ref=task.before_snapshot_ref,
             after_ref=after_ref,
@@ -848,8 +1293,17 @@ class AgentTaskCoordinator:
         )
 
     def _collector(self, task: AgentTaskRecord) -> ForgeObservationCollector:
+        gateway_url = (
+            task.primary_skill_binding.gateway_url
+            if task.primary_skill_binding is not None
+            else getattr(self.client, "base_url", None)
+        )
+        if not isinstance(gateway_url, str) or not gateway_url:
+            raise AgentTaskError(
+                "Forge evidence collection requires the bound Runtime Gateway URL"
+            )
         return ForgeObservationCollector(
-            self.config.base_url,
+            gateway_url,
             required_image_sources=list(self.config.evidence.required_image_sources),
             max_artifact_bytes=self.config.evidence.max_artifact_bytes,
             require_state="robot_state" in task.verification.evidence_policy.required_kinds,
@@ -918,6 +1372,16 @@ class AgentTaskCoordinator:
         return content, valid_refs
 
     def _schedule_experience(self, task: AgentTaskRecord) -> None:
+        if (
+            task.terminal
+            and task.primary_skill_binding is not None
+            and self.runtime_task_binding_ids is not None
+            and not any(
+                item.semantics in {"action", "session"} and item.status == "unknown"
+                for item in task.execution_records
+            )
+        ):
+            self.runtime_task_binding_ids.discard(task.primary_skill_binding.binding_id)
         if self.experience is not None:
             self.experience.schedule_forge_completion(task.task_id)
 
@@ -929,11 +1393,59 @@ def _task_execution(task: AgentTaskRecord, record_id: str) -> ToolExecutionRecor
     raise AgentTaskError(f"Tool execution record not found: {record_id}")
 
 
+def _owned_execution(
+    task: AgentTaskRecord,
+    invocation_id: str,
+    *,
+    semantics: Literal["action", "session"],
+) -> ToolExecutionRecord:
+    for record in task.execution_records:
+        if record.invocation_id == invocation_id and record.semantics == semantics:
+            return record
+    raise AgentTaskError(
+        f"{semantics.title()} invocation {invocation_id!r} does not belong to AgentTask "
+        f"{task.task_id!r}"
+    )
+
+
 def _cancel_terminal_status(task: AgentTaskRecord) -> AgentTaskStatus:
-    actions = [item for item in task.execution_records if item.semantics == "action"]
-    if not actions or all(item.status in {"cancelled", "stopped"} for item in actions):
+    owned = [
+        item
+        for item in task.execution_records
+        if item.semantics == "action"
+        or (item.semantics == "session" and item.ownership == "task")
+    ]
+    if not owned or all(item.status in {"cancelled", "stopped"} for item in owned):
         return AgentTaskStatus.CANCELLED
     return AgentTaskStatus.FAILED
+
+
+def _execution_facts_succeeded(task: AgentTaskRecord) -> bool:
+    return all(
+        item.status == "succeeded"
+        or (
+            item.semantics == "session"
+            and (
+                (item.ownership == "task" and item.status == "stopped")
+                or (
+                    item.ownership in {"runtime", "shared"}
+                    and item.status in {"accepted", "running", "succeeded", "stopped"}
+                )
+            )
+        )
+        for item in task.execution_records
+    )
+
+
+def _remote_identity(exc: Exception) -> tuple[str | None, str | None]:
+    payload = getattr(exc, "payload", None)
+    data = _response_data(payload) if isinstance(payload, dict) else {}
+    invocation_id = data.get("invocation_id")
+    attempt_id = data.get("attempt_id")
+    return (
+        invocation_id if isinstance(invocation_id, str) and invocation_id else None,
+        attempt_id if isinstance(attempt_id, str) and attempt_id else None,
+    )
 
 
 def _fail_replan(task: AgentTaskRecord, message: str) -> None:

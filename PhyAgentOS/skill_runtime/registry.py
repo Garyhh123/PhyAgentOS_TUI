@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -278,6 +279,9 @@ class StaticPackageIndex:
         return self._entry(kind="node_bundle", artifact_id=artifact_id)
 
 
+DownloadProgressCallback = Callable[[str, RegistryArtifact, int, int | None], None]
+
+
 class DownloadCache:
     """Resumable archive cache rooted at ``cache/<sha256>/``."""
 
@@ -287,10 +291,12 @@ class DownloadCache:
         *,
         client: httpx.Client | None = None,
         timeout: float = 60.0,
+        progress: DownloadProgressCallback | None = None,
     ) -> None:
         self.root = (root or get_artifact_cache_root()).expanduser()
         self._owns_client = client is None
         self.client = client or httpx.Client(timeout=timeout, follow_redirects=True)
+        self.progress = progress
 
     def close(self) -> None:
         if self._owns_client:
@@ -307,6 +313,7 @@ class DownloadCache:
         partial = cache_dir / "archive.tar.gz.part"
         if final.is_file():
             if final.stat().st_size == artifact.size and sha256_file(final) == artifact.sha256:
+                self._notify("cached", artifact, artifact.size, artifact.size)
                 return final
             final.unlink()
 
@@ -315,10 +322,13 @@ class DownloadCache:
             partial.unlink()
             offset = 0
         if offset == artifact.size:
-            return self._commit(artifact, partial, final)
+            result = self._commit(artifact, partial, final)
+            self._notify("complete", artifact, artifact.size, artifact.size)
+            return result
         headers = {"Accept": "application/gzip"}
         if offset:
             headers["Range"] = f"bytes={offset}-"
+        self._notify("start", artifact, offset, artifact.size)
         try:
             with self.client.stream("GET", artifact.url, headers=headers) as response:
                 response.raise_for_status()
@@ -334,32 +344,53 @@ class DownloadCache:
                         raise RegistryError("download resume Content-Range does not match request")
                 self._validate_content_length(response, artifact.size - offset)
                 mode = "ab" if offset else "wb"
+                downloaded = offset
                 with partial.open(mode) as output:
                     for chunk in response.iter_bytes():
                         output.write(chunk)
+                        downloaded += len(chunk)
+                        self._notify("advance", artifact, downloaded, artifact.size)
                     output.flush()
                     os.fsync(output.fileno())
         except httpx.HTTPError as exc:
             raise RegistryError("artifact download failed; partial download was retained") from exc
-        return self._commit(artifact, partial, final)
+        result = self._commit(artifact, partial, final)
+        self._notify("complete", artifact, artifact.size, artifact.size)
+        return result
 
     def _download_fresh(
         self, artifact: RegistryArtifact, partial: Path, final: Path
     ) -> Path:
+        self._notify("start", artifact, 0, artifact.size)
         try:
             with self.client.stream(
                 "GET", artifact.url, headers={"Accept": "application/gzip"}
             ) as response:
                 response.raise_for_status()
                 self._validate_content_length(response, artifact.size)
+                downloaded = 0
                 with partial.open("wb") as output:
                     for chunk in response.iter_bytes():
                         output.write(chunk)
+                        downloaded += len(chunk)
+                        self._notify("advance", artifact, downloaded, artifact.size)
                     output.flush()
                     os.fsync(output.fileno())
         except httpx.HTTPError as exc:
             raise RegistryError("artifact download failed; partial download was retained") from exc
-        return self._commit(artifact, partial, final)
+        result = self._commit(artifact, partial, final)
+        self._notify("complete", artifact, artifact.size, artifact.size)
+        return result
+
+    def _notify(
+        self,
+        event: str,
+        artifact: RegistryArtifact,
+        downloaded: int,
+        total: int | None,
+    ) -> None:
+        if self.progress is not None:
+            self.progress(event, artifact, downloaded, total)
 
     @staticmethod
     def _validate_content_length(response: httpx.Response, expected: int) -> None:
