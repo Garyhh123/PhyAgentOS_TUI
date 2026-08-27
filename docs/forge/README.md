@@ -149,7 +149,8 @@ revision keeps the same task ID and is bounded by replan count and deadline.
 PAOS performs best-effort capture before the first bound Action and after every bound Action reaches
 terminal accounting state. Evidence artifacts include source, phase, sequence, timestamps, media
 metadata, size, SHA-256, and workspace-relative references. Capture errors are recorded rather than
-hidden.
+hidden. Bundle identity, quality, capture-window, policy requirements, and retained artifact bytes
+are validated before the verifier receives the task context.
 
 `forge_task_finalize` aggregates all bound Tool facts and applies the task contract:
 
@@ -159,7 +160,8 @@ hidden.
 - `recovery`: enforce semantics plus bounded `replan_required`.
 
 Forge ToolResult and events are authoritative for execution. The PAOS verifier decides only whether
-the user-level task is complete.
+the user-level task is complete. Its context includes the frozen Skill binding, PlanRevisions,
+ToolExecutionRecords, Gateway terminal results, before/after evidence, and scoped advisory Lessons.
 
 ## 10. Experience and evolution
 

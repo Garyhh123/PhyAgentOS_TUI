@@ -144,7 +144,8 @@ Tool record 终结后，后续 observation 不改写执行事实。Recovery revi
 
 PAOS 在第一次绑定 Action 前和所有绑定 Action 达到记账终态后进行 best-effort 采集。Evidence
 artifact 包含 source、phase、sequence、timestamp、media metadata、size、SHA-256 与工作区相对
-reference。采集错误会显式记录。
+reference。采集错误会显式记录。Verifier 接收任务上下文前，会检查 bundle 身份、质量、采集时间
+窗口、policy 要求以及保留 artifact 字节。
 
 `forge_task_finalize` 聚合全部绑定 Tool facts，并应用任务契约：
 
@@ -154,6 +155,8 @@ reference。采集错误会显式记录。
 - `recovery`：enforce 语义加有预算 `replan_required`。
 
 Forge ToolResult 与 events 对执行负责；PAOS verifier 只判断用户任务是否完成。
+它的上下文包含冻结的 Skill binding、PlanRevision、ToolExecutionRecord、Gateway 终态结果、
+before/after evidence 和作用域建议 Lesson。
 
 ## 10. Experience 与 evolution
 

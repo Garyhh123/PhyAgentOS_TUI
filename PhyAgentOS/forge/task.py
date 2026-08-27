@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import json
 import sqlite3
 import threading
@@ -28,7 +27,6 @@ from PhyAgentOS.forge.evidence import ForgeEvidenceWriter
 from PhyAgentOS.forge.observation import ForgeObservationCollector
 from PhyAgentOS.forge.tool_client import ForgeToolAPIError, ForgeToolClient
 from PhyAgentOS.verification.contracts import (
-    EvidenceBundle,
     TaskVerificationContract,
     VerificationAttempt,
     VerificationVerdict,
@@ -934,18 +932,16 @@ class AgentTaskCoordinator:
                 task_id, "semantic verification is enabled but verifier is unavailable"
             )
 
-        content, valid_refs = self._verification_content(task)
         lessons = (
             self.experience.verification_lessons_for_root(task_id)
             if self.experience is not None
             else "[]"
         )
-        content[0]["text"] += "\n\nSCOPED_LESSONS:\n" + lessons
         try:
-            verdict, attempt = await self.verifier.verify_content(
-                content=content,
-                expected_criteria=task.verification.success_criteria,
-                valid_evidence_refs=valid_refs,
+            verdict, _request, attempt = await self.verifier.verify_agent_task(
+                task,
+                events=self.store.events(task_id),
+                lessons=lessons,
                 source="auto",
                 mode="apply",
             )
@@ -1309,67 +1305,6 @@ class AgentTaskCoordinator:
             require_state="robot_state" in task.verification.evidence_policy.required_kinds,
             connection_timeout_s=self.config.evidence.connection_timeout_s,
         )
-
-    def _verification_content(
-        self, task: AgentTaskRecord
-    ) -> tuple[list[dict[str, Any]], set[str]]:
-        evidence: EvidenceBundle | None = None
-        valid_refs = {
-            reference
-            for record in task.execution_records
-            for reference in record.evidence_refs
-        }
-        images: list[tuple[str, str, bytes]] = []
-        if task.evidence_bundle_ref:
-            bundle_path = (self.workspace / task.evidence_bundle_ref).resolve()
-            if bundle_path.is_relative_to(self.workspace) and bundle_path.is_file():
-                evidence = EvidenceBundle.model_validate_json(
-                    bundle_path.read_text(encoding="utf-8")
-                )
-                for artifact in evidence.artifacts:
-                    valid_refs.add(artifact.artifact_id)
-                    path = (self.workspace / artifact.uri).resolve()
-                    if (
-                        artifact.retained
-                        and artifact.media_type.startswith("image/")
-                        and path.is_relative_to(self.workspace)
-                        and path.is_file()
-                    ):
-                        images.append((artifact.artifact_id, artifact.media_type, path.read_bytes()))
-        context = {
-            "task_id": task.task_id,
-            "task_description": task.task_description,
-            "task_verification_contract": task.verification.model_dump(mode="json"),
-            "plan_revisions": [item.model_dump(mode="json") for item in task.revisions],
-            "evidence_bundle": evidence.model_dump(mode="json") if evidence else None,
-            "evidence_errors": task.evidence_errors,
-            "valid_evidence_refs": sorted(valid_refs),
-            "events": self.store.events(task.task_id),
-        }
-        content: list[dict[str, Any]] = [
-            {
-                "type": "text",
-                "text": (
-                    "Determine whether every task success criterion is satisfied. "
-                    "Tool completion is an execution fact, not automatic proof of task success.\n\n"
-                    + json.dumps(context, ensure_ascii=False, indent=2)
-                ),
-            }
-        ]
-        for artifact_id, media_type, data in images:
-            content.extend(
-                [
-                    {"type": "text", "text": f"EVIDENCE_ARTIFACT: {artifact_id}"},
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{media_type};base64,"
-                            + base64.b64encode(data).decode("ascii")
-                        },
-                    },
-                ]
-            )
-        return content, valid_refs
 
     def _schedule_experience(self, task: AgentTaskRecord) -> None:
         if (

@@ -6,7 +6,7 @@ import asyncio
 import json
 import threading
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
 from PhyAgentOS.providers.base import LLMProvider
@@ -23,6 +23,9 @@ from PhyAgentOS.verification.request_builder import (
     VerificationRequestBuilder,
 )
 from PhyAgentOS.verification.service import VerificationServiceProcess
+
+if TYPE_CHECKING:
+    from PhyAgentOS.forge.task import AgentTaskRecord
 
 
 class VerificationVerdictError(ValueError):
@@ -81,7 +84,7 @@ class ForgeTaskVerifier:
         mode: Literal["apply", "review"] = "apply",
     ) -> tuple[VerificationVerdict, VerificationRequest, VerificationAttempt]:
         request = self.request_builder.build(record, history=history, lessons=lessons)
-        verdict, attempt = await self.verify_content(
+        verdict, attempt = await self._verify_content(
             content=request.content,
             expected_criteria=record.request.verification.success_criteria,
             valid_evidence_refs=set(request.valid_evidence_refs),
@@ -90,7 +93,30 @@ class ForgeTaskVerifier:
         )
         return verdict, request, attempt
 
-    async def verify_content(
+    async def verify_agent_task(
+        self,
+        task: AgentTaskRecord,
+        *,
+        events: list[dict[str, Any]],
+        lessons: str,
+        source: Literal["auto", "tool"] = "auto",
+        mode: Literal["apply", "review"] = "apply",
+    ) -> tuple[VerificationVerdict, VerificationRequest, VerificationAttempt]:
+        request = self.request_builder.build_agent_task(
+            task,
+            events=events,
+            lessons=lessons,
+        )
+        verdict, attempt = await self._verify_content(
+            content=request.content,
+            expected_criteria=task.verification.success_criteria,
+            valid_evidence_refs=set(request.valid_evidence_refs),
+            source=source,
+            mode=mode,
+        )
+        return verdict, request, attempt
+
+    async def _verify_content(
         self,
         *,
         content: list[dict[str, Any]],
@@ -99,7 +125,7 @@ class ForgeTaskVerifier:
         source: Literal["auto", "tool"] = "auto",
         mode: Literal["apply", "review"] = "apply",
     ) -> tuple[VerificationVerdict, VerificationAttempt]:
-        """Verify any Agent-owned task aggregate using the existing verifier service."""
+        """Run semantic verification only after a strict request has been built."""
         if self.max_calls and self.calls >= self.max_calls:
             raise VerificationBudgetError(
                 f"verifier call budget exhausted ({self.max_calls})"

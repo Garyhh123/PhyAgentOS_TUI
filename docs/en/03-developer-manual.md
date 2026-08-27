@@ -107,8 +107,8 @@ explicit finalization.
 ## 7. Verification and recovery
 
 `TaskVerificationContract` remains the public user-level contract. The verifier receives goal,
-criteria, constraints, all bound execution facts, validated evidence, prior attempts, and frozen
-Skill-scoped advisory Lessons.
+criteria, constraints, the frozen Skill binding, PlanRevisions, ToolExecutionRecords, Gateway
+terminal results, before/after evidence, task history, and frozen Skill-scoped advisory Lessons.
 
 In recovery mode, a valid `replan_required` verdict moves the task to `awaiting_replan` with a
 deadline. `begin_revision` checks the same `task_id`, replan budget, deadline, and task state, then
@@ -117,9 +117,11 @@ persisted as failed attempts; audit preserves execution semantics, while enforce
 
 ## 8. Evidence and retention
 
-Evidence paths are workspace-relative and written atomically. Images are validated for media type,
-decoded size, sequence, timestamps, phase, source, and SHA-256. The evidence bundle records capture
-quality and errors rather than presenting best-effort collection as authoritative.
+Evidence paths are workspace-relative and written atomically. Before semantic verification, the
+bundle identity, association quality, completeness, capture window, and required kinds and sources
+are checked. Retained artifacts are then validated for path containment, byte size, SHA-256, media
+type, and structured JSON where applicable. The evidence bundle records capture quality and errors
+rather than presenting best-effort collection as authoritative.
 
 Retention can remove entity bytes according to policy, but it must preserve the task record,
 execution references, bundle metadata, and tombstone information required for audit.

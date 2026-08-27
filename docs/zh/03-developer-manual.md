@@ -104,8 +104,8 @@ record 一旦终结，后续 observation 不会重写它。Cancellation response
 ## 7. Verification 与 recovery
 
 `TaskVerificationContract` 继续作为用户级公共契约。Verifier 接收 goal、criteria、
-constraints、全部绑定 execution facts、合法 evidence、历史 attempts 与冻结的 Skill 作用域
-建议 Lesson。
+constraints、冻结的 Skill binding、PlanRevision、ToolExecutionRecord、Gateway 终态结果、
+before/after evidence、任务历史与冻结的 Skill 作用域建议 Lesson。
 
 在 recovery 模式下，合法 `replan_required` verdict 将任务置为 `awaiting_replan` 并设置
 deadline。`begin_revision` 检查相同 `task_id`、replan budget、deadline 和任务状态，然后追加
@@ -114,9 +114,10 @@ attempt；audit 保留执行语义，enforce/recovery 则失败。
 
 ## 8. Evidence 与 retention
 
-Evidence 路径相对工作区并原子写入。图像校验 media type、decoded size、sequence、timestamp、
-phase、source 与 SHA-256。Evidence bundle 记录采集质量与错误，不把 best-effort 采集包装成
-权威事实。
+Evidence 路径相对工作区并原子写入。进入语义验证前，先检查 bundle 身份、关联质量、
+完整性、采集时间窗口以及必需的 kind 和 source；再检查保留 artifact 的路径边界、字节大小、
+SHA-256、media type 以及可适用的结构化 JSON。Evidence bundle 记录采集质量与错误，不把
+best-effort 采集包装成权威事实。
 
 Retention 可以按策略移除实体字节，但必须保留 task record、execution references、bundle
 metadata 和审计所需 tombstone。
