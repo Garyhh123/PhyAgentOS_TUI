@@ -32,9 +32,12 @@ the explicit lifecycle of installed Bundle profiles; it does not replace Gateway
 
 ### Skill Runtime
 
-- Registry/index metadata includes artifact size and SHA-256; exact locked node executables resolve.
+- Skill Bundle metadata includes size and SHA-256; every Node lock has an exact SHA-256 and resolves
+  to a sized direct download.
 - Required binaries are executable, required assets exist, and required environment variables are set.
-- Dora is installed and on `PATH`.
+- Dora CLI v0.5.0, the PhyAgentOS 0.2.3 lifecycle-command baseline, is installed and on `PATH`;
+  `dora --version` reports the expected executable. Installation is documented in the
+  [user manual](../en/02-user-manual.md#dora-cli-for-managed-skill-profiles).
 - The profile Gateway address is not occupied by an unmanaged process.
 
 ### Forge Gateway
@@ -61,6 +64,10 @@ paos skill switch <other-skill-name> --profile <profile>
 paos agent
 # or: paos gateway
 ```
+
+`paos skill start` runs `dora check` and invokes `dora up` if the local coordinator and daemon are
+not ready; operators do not need to start them separately. After startup, `dora check` should
+succeed.
 
 Healthy Runtime status requires persisted `running`, a live named Dora flow, Gateway `/tools`, and
 ready context for every manifest `required_tool`. Use `paos skill logs <name>` for lifecycle and

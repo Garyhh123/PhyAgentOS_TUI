@@ -1009,7 +1009,10 @@ def _install_skill_bundle(
                     source = StaticPackageIndex(index) if index else RegistryClient()
                     with source:
                         for node_id, lock in missing_nodes:
-                            node_artifact = source.node(lock.artifact_id)
+                            node_artifact = source.node(
+                                lock.artifact_id,
+                                expected_sha256=lock.sha256,
+                            )
                             if node_artifact.sha256 != lock.sha256:
                                 raise RuntimeError(
                                     f"Registry digest for Node {node_id!r} does not match "
@@ -1431,7 +1434,10 @@ def forge_node_install(
                 raise RuntimeError(f"Skill {skill_name!r} does not lock Node {node_id!r}")
             if archive is None:
                 with RegistryClient() as registry:
-                    artifact = registry.node(lock.artifact_id)
+                    artifact = registry.node(
+                        lock.artifact_id,
+                        expected_sha256=lock.sha256,
+                    )
                 if artifact.sha256 != lock.sha256:
                     raise RuntimeError("Registry Node sha256 does not match the Skill lock")
                 node_archive = cache.download(artifact)

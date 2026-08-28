@@ -155,9 +155,10 @@ Session 必须带 `task_id`，并计入任务验证。
 Skill Runtime 路径由 PAOS 数据路径 helper 管理，不增加额外配置字段。使用
 `paos skill search/install/update/remove/list/inspect/start/status/switch/logs/stop` 管理 Bundle 与
 Runtime 生命周期，使用 `paos forge-node install/verify <skill-name> <node-id>` 管理独立锁定
-Node；通过 `--archive <path>` 可安装独立获取的 Node 而不访问 Registry。启动 profile 时
-校验 required binaries、assets、环境变量、Dora、Gateway `/tools` 和 manifest 中全部
-`required_tools`。活动 Runtime manifest 的 `gateway_url` 是 Agent 使用的 Tool API URL。
+Node；通过 `--archive <path>` 可安装独立获取的 Node 而不访问 Registry。启动 profile 要求
+`PATH` 中存在 Dora CLI（v0.5.0 是 PhyAgentOS 0.2.3 的生命周期命令基线），并校验 required binaries、
+assets、环境变量、Gateway `/tools` 和 manifest 中全部 `required_tools`。RuntimeManager 需要时
+启动本地 Dora 服务。活动 Runtime manifest 的 `gateway_url` 是 Agent 使用的 Tool API URL。
 
 ## 9. `embodiments`
 

@@ -160,10 +160,10 @@ Skill Runtime paths are managed by PAOS data-path helpers rather than additional
 Use `paos skill search/install/update/remove/list/inspect/start/status/switch/logs/stop` for Bundle and
 Runtime lifecycle and `paos forge-node install/verify <skill-name> <node-id>` for independently
 locked nodes. Pass `--archive <path>` to install a separately obtained Node without Registry
-access. Starting a
-profile validates required binaries, assets, environment variables, Dora, Gateway `/tools`, and
-all manifest `required_tools`. An active Runtime's manifest `gateway_url` is the Tool API URL used
-by the Agent.
+access. Starting a profile requires Dora CLI on `PATH` (v0.5.0 is the PhyAgentOS 0.2.3
+lifecycle-command baseline), validates required binaries, assets, environment variables, Gateway `/tools`, and all
+manifest `required_tools`. RuntimeManager starts local Dora services when needed. An active
+Runtime's manifest `gateway_url` is the Tool API URL used by the Agent.
 
 ## 9. `embodiments`
 

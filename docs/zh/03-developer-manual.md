@@ -136,19 +136,25 @@ RuntimeManager：
 
 1. 解析已安装 Skill 与 profile；
 2. 物化锁定环境，不修改已安装 Node；
-3. 检查 Dora、dataflow、必需文件和环境；
+3. 检查 Dora CLI、dataflow、必需文件和环境；
 4. 拒绝接管已占用地址的非托管 Gateway；
-5. 启动命名 Dora flow；
+5. 检查本地 Dora 服务，需要时执行 `dora up`，再启动命名 flow；
 6. 等待 flow、`GET /tools` 与所有 required Tool contexts；
 7. 持久化 running/failed/stopped state 与生命周期日志。
+
+PhyAgentOS 0.2.3 的文档化生命周期命令基线为 Dora CLI v0.5.0。RuntimeManager 要求兼容的
+命令行为，但不强制精确语义版本。Dora 是主机 Runtime 前置条件，不是 Python dependency，
+也不属于 Skill Bundle。
 
 存在被追踪的非终态 invocation、Session 或 task binding 时，正常 stop 会被拒绝。Force stop
 记录 audit event，不改变 invocation truth。
 
 ## 10. Registry 与 availability
 
-Registry 和静态 index artifact 在进入 cache 前必须有 expected size 与 SHA-256。断点续传内容
-安装前再次校验。Registry URL 为空时只允许本地 Bundle 或显式静态 index。
+artifact 进入 cache 前必须具备 expected size 与 SHA-256。静态 index 直接提供两者；Registry
+Node 可以省略重复的 digest 与 size 字段，此时已验证 Skill lock 提供 expected digest，客户端从
+Registry 元数据或直接下载端点解析 size。Registry 一旦返回 digest，就必须与 lock 一致。断点续传
+内容在安装前再次校验。Registry URL 为空时只允许本地 Bundle 或显式静态 index；
 `PAOS_RESOURCE_REGISTRY_URL` 覆盖 `resourceRegistry.url`。
 
 `discover_active_runtime` 核对持久化 state、Dora flow、Gateway health 与 required Tool

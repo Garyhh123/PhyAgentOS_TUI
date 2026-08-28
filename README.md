@@ -120,7 +120,21 @@ python -m pip install -e .
 python -m pip install -e ".[dev]"
 ```
 
-Python 3.11 or 3.12 is recommended. Forge Gateway is an external service and must be started separately.
+Python 3.11 or 3.12 is recommended. Concrete Forge Skills and their Runtime artifacts are
+distributed separately.
+
+Dora is not required for the general Agent or for `paos skill install`. It is required on `PATH`
+when `paos skill start` launches a managed Forge Skill profile. PhyAgentOS 0.2.3 uses Dora CLI
+v0.5.0 as its documented lifecycle-command baseline. On Linux or macOS:
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/dora-rs/dora/releases/download/v0.5.0/dora-cli-installer.sh | sh
+dora --version
+```
+
+See the [user manual](docs/en/02-user-manual.md#dora-cli-for-managed-skill-profiles) for Windows,
+Cargo installation, and lifecycle checks.
 
 ### 2. Initialize the workspace
 
@@ -277,7 +291,9 @@ paos forge-node verify <skill-name> <node-id>
 
 Each Forge Skill bundle declares its workflow document, required Tool IDs, named runtime profiles,
 and exact platform/architecture Node locks. Each locked archive has an exact SHA-256 and contains
-one named root-level executable; installation records and verifies the extracted binary hash.
+one named root-level executable. For Registry Node downloads, the verified Skill lock supplies the
+digest when the Registry omits that duplicate field, and the exact size is resolved before the
+download begins; installation records and verifies the extracted binary hash.
 `python scripts/package_skill.py <bundle-dir> --output-dir <directory>` creates a deterministic
 bundle for publication. The PhyAgentOS source and release packages do not
 bundle concrete Forge Skills, Forge nodes, models, or simulation assets; obtain only the Skills

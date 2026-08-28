@@ -171,12 +171,14 @@ AgentTask terminal state 或 verification attempt。
 
 Skill Runtime 安装并管理 manifest v2 Bundle。安装要求安全 contained path、有界解包、SHA-256
 文件清单、严格 manifest、staging、原子替换与 rollback。每个 Node lock 固定 artifact ID、版本、
-平台、架构、归档类型、根目录可执行文件名与 SHA-256。Registry/静态 index 下载必须包含 size
-与 digest，安装始终显式触发，默认还需确认。
+平台、架构、归档类型、根目录可执行文件名与 SHA-256。静态 index 下载条目包含 size 与 digest；
+Registry Node 下载以已验证的 Skill lock 为摘要权威，并在进入 cache 前从 Registry 元数据或直接
+下载端点解析精确大小。安装始终显式触发，默认还需确认。
 
-RuntimeManager 启动命名 Dora profile，检查 required binaries/assets/environment，等待 Gateway
-`/tools` 与 manifest 全部 required Tool context，并持久化 status/log。健康活动 Runtime 提供
-Skill availability；其 manifest 是 Gateway URL 的唯一来源。
+RuntimeManager 要求 `PATH` 中存在 Dora CLI（v0.5.0 是 PhyAgentOS 0.2.3 的生命周期命令基线），需要时
+启动本地 Dora 服务，再启动命名 profile；随后检查 required binaries/assets/environment，等待
+Gateway `/tools` 与 manifest 全部 required Tool context，并持久化 status/log。健康活动 Runtime
+提供 Skill availability；其 manifest 是 Gateway URL 的唯一来源。
 
 存在被追踪非终态 invocation、Session 或 task binding 时，正常 stop 会被拒绝。Force stop
 记录 audit event，且不改变执行事实。

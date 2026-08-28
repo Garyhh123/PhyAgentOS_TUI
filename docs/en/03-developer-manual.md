@@ -141,20 +141,27 @@ RuntimeManager:
 
 1. resolves the installed Skill and profile;
 2. materializes the locked environment without mutating installed nodes;
-3. checks Dora, dataflow, required files, and environment;
+3. checks the Dora CLI, dataflow, required files, and environment;
 4. refuses to adopt an unmanaged Gateway already using the address;
-5. starts the named Dora flow;
+5. checks the local Dora services, runs `dora up` when needed, and starts the named flow;
 6. waits for flow, `GET /tools`, and all required Tool contexts;
 7. persists running/failed/stopped state and lifecycle logs.
+
+The documented PhyAgentOS 0.2.3 lifecycle-command baseline is Dora CLI v0.5.0. RuntimeManager
+requires compatible command behavior but does not enforce an exact semantic version. Dora is a
+host runtime prerequisite, not a Python dependency and not part of a Skill Bundle.
 
 A normal stop is rejected while non-terminal invocations, Sessions, or task bindings remain
 tracked. Force stop records an audit event and does not change invocation truth.
 
 ## 10. Registry and availability
 
-Registry and static-index artifacts require expected size and SHA-256 before entering the cache.
-Resumed downloads are verified again before installation. An empty Registry URL permits only local
-bundles or an explicit static index. `PAOS_RESOURCE_REGISTRY_URL` overrides `resourceRegistry.url`.
+Artifacts require an expected size and SHA-256 before entering the cache. Static indexes provide
+both values directly. A Registry Node may omit its duplicate digest and size fields: the verified
+Skill lock supplies the expected digest, and the client resolves the size from Registry metadata or
+the direct-download endpoint. Any Registry digest that is present must match the lock. Resumed
+downloads are verified again before installation. An empty Registry URL permits only local bundles
+or an explicit static index. `PAOS_RESOURCE_REGISTRY_URL` overrides `resourceRegistry.url`.
 
 `discover_active_runtime` reconciles persisted state, Dora flow, Gateway health, and required Tool
 contexts. Its availability provider flows through SkillsLoader, ExperienceCoordinator, and

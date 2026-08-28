@@ -177,12 +177,16 @@ never alters Gateway facts, AgentTask terminal state, or verification attempts.
 Skill Runtime installs and manages manifest-v2 Bundles. Installation requires safe contained
 paths, bounded extraction, SHA-256 file inventory, strict manifest validation, staging, atomic
 replacement, and rollback. Each Node lock fixes artifact ID, version, platform, architecture,
-archive type, root executable name, and SHA-256. Registry/static-index downloads require artifact
-size and digest; installation is explicit and confirmed by default.
+archive type, root executable name, and SHA-256. Static-index downloads carry size and digest.
+Registry Node downloads use the verified Skill lock as the digest authority and resolve an exact
+size from Registry metadata or the direct-download endpoint before entering the cache. Installation
+is explicit and confirmed by default.
 
-RuntimeManager starts a named Dora profile, checks required binaries/assets/environment, waits for
-Gateway `/tools` and all manifest required Tool contexts, and persists status/logs. A healthy active
-Runtime contributes Skill availability; its manifest is the only source of the Gateway URL.
+RuntimeManager requires Dora CLI on `PATH` (v0.5.0 is the PhyAgentOS 0.2.3 lifecycle-command baseline),
+starts local Dora services when needed, launches a named profile, checks required
+binaries/assets/environment, waits for Gateway `/tools` and all manifest required Tool contexts,
+and persists status/logs. A healthy active Runtime contributes Skill availability; its manifest is
+the only source of the Gateway URL.
 
 Normal stop is rejected while tracked non-terminal invocations, Sessions, or task bindings exist.
 Force stop records an audit event and does not change execution truth.

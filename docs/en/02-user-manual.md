@@ -27,6 +27,49 @@ ruff check PhyAgentOS tests
 The default configuration is `~/.PhyAgentOS/config.json`; the default workspace is
 `~/.PhyAgentOS/workspace`.
 
+### Dora CLI for managed Skill profiles
+
+Dora is not needed to run the general Agent, search for a Skill, or complete `paos skill install`.
+It is a host prerequisite for `paos skill start`, because RuntimeManager uses the `dora` command to
+manage the selected profile. PhyAgentOS 0.2.3 uses Dora CLI v0.5.0 as its documented
+lifecycle-command baseline; pin this version for reproducible deployments.
+
+Linux or macOS, using the versioned official installer:
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/dora-rs/dora/releases/download/v0.5.0/dora-cli-installer.sh | sh
+```
+
+Windows PowerShell:
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://github.com/dora-rs/dora/releases/download/v0.5.0/dora-cli-installer.ps1 | iex"
+```
+
+With an existing Rust toolchain:
+
+```bash
+cargo install dora-cli --version 0.5.0 --locked
+```
+
+Open a new shell if the installer changed `PATH`, then verify the executable:
+
+```bash
+dora --version
+# dora-cli 0.5.0
+```
+
+RuntimeManager requires a working compatible command interface but does not enforce an exact Dora
+semantic version or upgrade Dora automatically.
+
+The Python package `dora-rs` is the Python node/operator API and is not a substitute for installing
+the Dora CLI. Before a coordinator and daemon are running, `dora check` is expected to report that
+they are unavailable. `paos skill start` runs this check and starts them with `dora up` when needed;
+after a Runtime has started, `dora check` should succeed. See the
+[official Dora installation instructions](https://github.com/dora-rs/dora#installation) for
+platform details.
+
 ## 2. Configure the model and Forge
 
 Configure one supported model provider and the Forge timeout/evidence policy. Runtime selection is
@@ -90,7 +133,9 @@ paos skill switch <other-skill-name> --profile <profile>
 ```
 
 `install` verifies archive size, SHA-256, the embedded file inventory, manifest v2, and locked
-nodes before atomically replacing a Skill. `start` launches only the named Dora profile and checks
+nodes before atomically replacing a Skill. A verified Skill lock supplies a Node digest when the
+Registry omits that duplicate field; the Node download size is resolved before transfer. `start`
+launches only the named Dora profile and checks
 Gateway `/tools` plus required Tool contexts. Inspect lifecycle output with
 `paos skill logs <skill-name>`; stop with `paos skill stop <skill-name>`. `switch` refuses to run
 while an AgentTask is non-terminal, verifies the target before publishing it, and restores the
@@ -111,11 +156,15 @@ PhyAgentOS and installed only when needed.
 
 ## 4. Start PAOS
 
-Start Dora, the managed Skill Runtime/Gateway, and the Agent in that order when using an installed
-robot Skill. The Agent obtains the Gateway URL only from the explicitly active Skill manifest.
+Start the managed Skill Runtime/Gateway before the Agent when using an installed robot Skill.
+`paos skill start` checks the Dora CLI and starts the local Dora coordinator and daemon when they
+are not already ready. The Agent obtains the Gateway URL only from the explicitly active Skill
+manifest.
 
 ```bash
 paos status
+paos skill start <skill-name> --profile <profile>
+paos skill status <skill-name>
 paos agent
 
 # one request
@@ -232,7 +281,7 @@ does not delete execution records or evolution history.
 | Symptom | Check |
 |:--------|:------|
 | Tool not found or not ready | Run `forge_tool_context`; confirm ToolSpec, binding, Endpoint, and Runtime profile. |
-| Skill will not install | Confirm Registry/index metadata contains size and SHA-256 and all node locks resolve. |
+| Skill will not install | Confirm Skill bundle metadata has size and SHA-256, every Node lock has a SHA-256, and each Registry/index Node resolves to a sized direct download. |
 | Skill will not start | Run `paos skill status` and `logs`; verify Dora, dataflow paths, assets, nodes, and Gateway `/tools`. |
 | Another task is active | Read the known task with `forge_task_get`; finish or cancel it instead of editing SQLite. |
 | Action result is pending | Continue status/result reconciliation using the same `invocation_id`. |

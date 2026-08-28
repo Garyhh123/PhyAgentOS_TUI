@@ -28,6 +28,14 @@ Skill/Runtime/ToolSpec binding while keeping Gateway as the execution authority.
 - Runtime stop and switching account for active invocations, Sessions, and task bindings; forced
   stop records an audit event.
 
+### Fixed
+
+- Forge Node downloads accept Registry responses that omit duplicate digest and size fields. The
+  verified Skill lock remains the digest authority, while the direct-download endpoint supplies
+  the content length before the archive is downloaded and checked.
+- Documented the Dora CLI v0.5.0 lifecycle-command baseline, versioned installation methods, PATH and
+  lifecycle checks, and RuntimeManager's automatic local Dora service startup.
+
 ### Removed
 
 - Removed the concrete Forge Skill, simulation profile, and remote bundle-fetch helper from the

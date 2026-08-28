@@ -120,7 +120,19 @@ python -m pip install -e .
 python -m pip install -e ".[dev]"
 ```
 
-推荐 Python 3.11 或 3.12。Forge Gateway 是外部服务，需要独立启动。
+推荐 Python 3.11 或 3.12。具体 Forge Skill 及其 Runtime 制品独立分发。
+
+通用 Agent 与 `paos skill install` 不需要 Dora；`paos skill start` 启动托管 Forge Skill
+profile 时，`PATH` 中必须存在 Dora CLI。PhyAgentOS 0.2.3 以 Dora CLI v0.5.0 作为文档化
+生命周期命令基线。Linux 或 macOS 安装方式：
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/dora-rs/dora/releases/download/v0.5.0/dora-cli-installer.sh | sh
+dora --version
+```
+
+Windows、Cargo 安装和生命周期检查见[用户手册](docs/zh/02-user-manual.md#托管-skill-profile-所需的-dora-cli)。
 
 ### 2. 初始化工作区
 

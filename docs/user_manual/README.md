@@ -32,9 +32,11 @@ Gateway 负责执行，PAOS 负责用户任务聚合与语义判定。Skill Runt
 
 ### Skill Runtime
 
-- Registry/index metadata 含 artifact size 与 SHA-256，精确锁定 Node executable 可解析；
+- Skill Bundle metadata 包含 size 与 SHA-256，每个 Node lock 具有精确 SHA-256，并能解析为大小
+  明确的直接下载；
 - required binaries 可执行，required assets 存在，required environment 已设置；
-- Dora 已安装且位于 `PATH`；
+- Dora CLI v0.5.0（PhyAgentOS 0.2.3 的生命周期命令基线）已安装且位于 `PATH`，`dora --version`
+  指向预期 executable；安装方式见[用户手册](../zh/02-user-manual.md#托管-skill-profile-所需的-dora-cli)；
 - profile Gateway 地址没有被非托管进程占用。
 
 ### Forge Gateway
@@ -61,6 +63,9 @@ paos skill switch <other-skill-name> --profile <profile>
 paos agent
 # 或：paos gateway
 ```
+
+`paos skill start` 会运行 `dora check`，本地 coordinator 和 daemon 尚未 ready 时调用
+`dora up`；运维人员无需另行启动。Runtime 启动后，`dora check` 应当成功。
 
 Runtime 健康要求持久化状态为 `running`、命名 Dora flow 存活、Gateway `/tools` 可用，并且
 manifest 中每个 `required_tool` context ready。使用 `paos skill logs <name>` 查看生命周期和

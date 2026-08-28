@@ -18,7 +18,11 @@ PhyAgentOS 提供基于 Docker 的快速部署方案，无需手动配置 Python
 | 配置目录 | `/root/.PhyAgentOS`（通过卷挂载到宿主机持久化） |
 | 默认服务 | 交互式 CLI（`paos agent`），可切换为长驻网关 |
 
-镜像**不包含** GPU / CUDA、Isaac Sim、BEHAVIOR-1K 等重依赖（位于 `external/`，需另外配置）。镜像定位是 Agent 与网关服务，连接外部的 Forge Gateway。
+镜像**不包含** Dora CLI、具体 Forge Skill 或 Node、GPU / CUDA、Isaac Sim、BEHAVIOR-1K
+及其他机器人 Runtime 依赖。标准镜像运行通用 Agent 与消息总线 gateway，不提供托管 Forge
+Skill Runtime。需要该 Runtime 时，应按[用户手册](../zh/02-user-manual.md#托管-skill-profile-所需的-dora-cli)
+使用宿主机原生 PhyAgentOS 环境运行，或者构建包含固定 Dora CLI 版本与所选 Skill profile 全部
+前置条件的定制镜像。仅在宿主机安装 Dora 不会使其出现在标准容器内。
 
 > **关于网关端口**：`paos gateway` 是消息总线服务（Agent + 频道 + Cron + Heartbeat + Forge 编排），**仅主动外连**（连接 LLM provider、Telegram/钉钉等频道），不监听入站端口。`config.json` 中的 `gateway.port` 当前仅用于启动日志展示，未绑定 socket，因此容器**无需** `-p` 端口映射。
 
@@ -155,7 +159,12 @@ docker run -d --name phyagentos-gateway \
 
 ## ⚠️ 已知限制
 
-### 1. WhatsApp 渠道不可用
+### 1. 不包含托管 Forge Skill Runtime
+
+标准镜像没有 Dora CLI 或具体 Forge Runtime 制品。因此，除非显式扩展镜像并安装所选 Skill
+的平台依赖，否则该镜像不支持 `paos skill start`。仅使用 Agent 和消息渠道时不需要 Dora。
+
+### 2. WhatsApp 渠道不可用
 
 镜像构建 WhatsApp bridge 时采用 **best-effort** 策略：`@whiskeysockets/baileys` 的传递依赖 `libsignal-node` 通过 `git+ssh` 拉取，在隔离构建环境中会失败。因此：
 
@@ -164,11 +173,11 @@ docker run -d --name phyagentos-gateway \
 
 如需恢复 WhatsApp，需单独处理该依赖（锁定可走 HTTPS 的版本或镜像内配置 SSH 凭据）。
 
-### 2. 容器以 root 运行
+### 3. 容器以 root 运行
 
 为保持与 `~/.PhyAgentOS:/root/.PhyAgentOS` 的卷挂载约定一致，镜像默认以 root 用户运行。如需生产硬化，建议后续添加非 root 用户与 healthcheck。
 
-### 3. 不含 GPU 支持
+### 4. 不含 GPU 支持
 
 本镜像为 CPU 版，不支持 Isaac Sim / BEHAVIOR-1K 等需要 CUDA 的仿真。如需 GPU，需改用 `nvidia/cuda` 基础镜像并以 `--gpus all` 运行。
 

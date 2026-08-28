@@ -27,6 +27,46 @@ ruff check PhyAgentOS tests
 默认配置位于 `~/.PhyAgentOS/config.json`，默认工作区为
 `~/.PhyAgentOS/workspace`。
 
+### 托管 Skill profile 所需的 Dora CLI
+
+运行通用 Agent、搜索 Skill 或完成 `paos skill install` 不需要 Dora。`paos skill start` 需要
+主机预先安装 Dora CLI，因为 RuntimeManager 使用 `dora` 命令管理所选 profile。PhyAgentOS
+0.2.3 以 Dora CLI v0.5.0 作为文档化生命周期命令基线；可复现部署应固定该版本。
+
+Linux 或 macOS 使用带版本的官方 installer：
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/dora-rs/dora/releases/download/v0.5.0/dora-cli-installer.sh | sh
+```
+
+Windows PowerShell：
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://github.com/dora-rs/dora/releases/download/v0.5.0/dora-cli-installer.ps1 | iex"
+```
+
+已经安装 Rust toolchain 时：
+
+```bash
+cargo install dora-cli --version 0.5.0 --locked
+```
+
+installer 修改 `PATH` 后请打开新 shell，再验证 executable：
+
+```bash
+dora --version
+# dora-cli 0.5.0
+```
+
+RuntimeManager 要求可工作的兼容命令接口，但不会强制 Dora 的精确语义版本，也不会自动升级
+Dora。
+
+Python package `dora-rs` 是 Python node/operator API，不能替代 Dora CLI 安装。Coordinator
+和 daemon 尚未运行时，`dora check` 报告不可用属于预期行为。`paos skill start` 会执行该检查，
+并在需要时通过 `dora up` 启动服务；Runtime 启动后，`dora check` 应当成功。各平台细节见
+[Dora 官方安装说明](https://github.com/dora-rs/dora#installation)。
+
 ## 2. 配置模型与 Forge
 
 先配置一个模型 Provider 和 Forge timeout/evidence policy。Runtime 不是配置开关，而由显式
@@ -89,7 +129,8 @@ paos skill switch <other-skill-name> --profile <profile>
 ```
 
 `install` 校验归档大小、SHA-256、内嵌文件清单、manifest v2 与锁定 Node，全部通过后才原子
-替换 Skill。`start` 只启动指定 Dora profile，并检查 Gateway `/tools` 与所需 Tool context。
+替换 Skill。Registry 省略重复的 Node 摘要字段时，以已验证 Skill lock 中的摘要为准，并在传输
+前解析 Node 下载大小。`start` 只启动指定 Dora profile，并检查 Gateway `/tools` 与所需 Tool context。
 使用 `paos skill logs <skill-name>` 查看生命周期日志，使用
 `paos skill stop <skill-name>` 停止。存在非终态 AgentTask 时 `switch` 会拒绝执行；目标 Runtime
 通过就绪校验后才会被选中，共用 Gateway 的目标启动失败时会恢复先前 Runtime。运行中的 Agent
@@ -108,11 +149,14 @@ paos forge-node verify <skill-name> <node-id>
 
 ## 4. 启动 PAOS
 
-使用已安装机器人 Skill 时，按 Dora、托管 Skill Runtime/Gateway、Agent 的顺序启动。Agent
-只从显式活动 Skill 的 manifest 获取 Gateway URL。
+使用已安装机器人 Skill 时，先启动托管 Skill Runtime/Gateway，再启动 Agent。
+`paos skill start` 检查 Dora CLI，并在本地 Dora coordinator 和 daemon 尚未 ready 时自动启动。
+Agent 只从显式活动 Skill 的 manifest 获取 Gateway URL。
 
 ```bash
 paos status
+paos skill start <skill-name> --profile <profile>
+paos skill status <skill-name>
 paos agent
 
 # 单条请求
@@ -224,7 +268,7 @@ evidence。Evolution fail-open，反思错误不会改变执行或验证。
 | 现象 | 检查项 |
 |:-----|:-------|
 | Tool 不存在或未就绪 | 运行 `forge_tool_context`，检查 ToolSpec、binding、Endpoint 与 Runtime profile。 |
-| Skill 无法安装 | 确认 Registry/index 提供 size、SHA-256，且全部 Node lock 可解析。 |
+| Skill 无法安装 | 确认 Skill Bundle 元数据包含 size、SHA-256，每个 Node lock 包含 SHA-256，且 Registry/index Node 能解析为具有明确大小的直接下载。 |
 | Skill 无法启动 | 运行 `paos skill status` 与 `logs`，检查 Dora、dataflow、assets、nodes 和 Gateway `/tools`。 |
 | 已有活动任务 | 使用 `forge_task_get` 读取已知任务，完成或取消它，不要编辑 SQLite。 |
 | Action result 为 pending | 使用相同 `invocation_id` 继续核对 status/result。 |
