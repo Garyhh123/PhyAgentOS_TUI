@@ -1,6 +1,6 @@
 # Agent Experience and Skill Evolution
 
-> Documentation version: 0.2.2. This manual describes the implemented Agent-side validation, experience, Lesson, and Skill-evolution path over AgentTask records.
+> Documentation version: 0.2.3. This manual describes the implemented Agent-side validation, experience, Lesson, and Skill-evolution path over AgentTask records.
 
 ## 1. Purpose and boundary
 
@@ -41,7 +41,7 @@ Activation rules:
 
 The result contains the complete Skill document, activation ID, source, content digest, and applicable active Lessons. The digest fixes attribution to the revision used by the current turn; a promoted revision becomes visible through the summary on a later turn.
 
-AgentLoop records the ordered tool names and argument field names, not argument values. When `forge_task_create` creates an AgentTask, the current activation and trace snapshot is bound to that task. Bound Query/Action records and Gateway invocation references are attached as execution proceeds. A task with no matching Skill may continue and produces unbound experience rather than a guessed binding.
+AgentLoop records ordered tool names and argument field names, not argument values. A Forge AgentTask requires the current turn's primary activation; creation revalidates and freezes the exact Skill version, Runtime, manifest/workflow hashes, and required ToolSpecs. Bound Query/Action/Session records and Gateway invocation references are attached as execution proceeds. Diagnostic Query without a task is not attributed to a task episode.
 
 The binding also freezes the applicable active Lessons returned by each activated Skill. Automatic verification, every later PlanRevision, and review resolve Lesson context through the task ID, so they see the same bounded set even if the Lesson ledger changes afterward. These Lessons are non-authoritative workflow advisories: they may suggest a check, but they cannot establish a criterion status, replace execution facts or evidence, or be cited as evidence references. A task without an activated Skill supplies an empty Lesson set.
 
@@ -51,7 +51,7 @@ The binding also freezes the applicable active Lessons returned by each activate
 
 - redacted goal and criteria;
 - final semantic verdict and per-criterion statuses;
-- each PlanRevision's Query/Action semantics, input field names, execution status, verdict, and redacted reason;
+- each PlanRevision's Query/Action/Session semantics, input field names, execution status, verdict, and redacted reason;
 - opaque task, revision, invocation, attempt, and evidence fingerprints;
 - primary/supporting activations and the redacted workflow trace.
 

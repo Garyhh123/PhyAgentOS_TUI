@@ -2,7 +2,7 @@
 
 [English](../en/02-user-manual.md) · [文档索引](../README.md)
 
-> 文档版本：0.2.2。
+> 文档版本：0.2.3。
 
 ## 1. 安装与初始化
 
@@ -27,10 +27,50 @@ ruff check PhyAgentOS tests
 默认配置位于 `~/.PhyAgentOS/config.json`，默认工作区为
 `~/.PhyAgentOS/workspace`。
 
+### 托管 Skill profile 所需的 Dora CLI
+
+运行通用 Agent、搜索 Skill 或完成 `paos skill install` 不需要 Dora。`paos skill start` 需要
+主机预先安装 Dora CLI，因为 RuntimeManager 使用 `dora` 命令管理所选 profile。PhyAgentOS
+0.2.3 以 Dora CLI v0.5.0 作为文档化生命周期命令基线；可复现部署应固定该版本。
+
+Linux 或 macOS 使用带版本的官方 installer：
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/dora-rs/dora/releases/download/v0.5.0/dora-cli-installer.sh | sh
+```
+
+Windows PowerShell：
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://github.com/dora-rs/dora/releases/download/v0.5.0/dora-cli-installer.ps1 | iex"
+```
+
+已经安装 Rust toolchain 时：
+
+```bash
+cargo install dora-cli --version 0.5.0 --locked
+```
+
+installer 修改 `PATH` 后请打开新 shell，再验证 executable：
+
+```bash
+dora --version
+# dora-cli 0.5.0
+```
+
+RuntimeManager 要求可工作的兼容命令接口，但不会强制 Dora 的精确语义版本，也不会自动升级
+Dora。
+
+Python package `dora-rs` 是 Python node/operator API，不能替代 Dora CLI 安装。Coordinator
+和 daemon 尚未运行时，`dora check` 报告不可用属于预期行为。`paos skill start` 会执行该检查，
+并在需要时通过 `dora up` 启动服务；Runtime 启动后，`dora check` 应当成功。各平台细节见
+[Dora 官方安装说明](https://github.com/dora-rs/dora#installation)。
+
 ## 2. 配置模型与 Forge
 
-先配置一个模型 Provider；需要 Agent 调用 Gateway Tools 时再启用 Forge。配置以 camelCase
-保存，也接受 snake_case。
+先配置一个模型 Provider 和 Forge timeout/evidence policy。Runtime 不是配置开关，而由显式
+启动的 Skill profile 决定。配置以 camelCase 保存，也接受 snake_case。
 
 ```json
 {
@@ -55,9 +95,6 @@ ruff check PhyAgentOS tests
     "openrouter": {"apiKey": "YOUR_API_KEY"}
   },
   "forge": {
-    "enabled": true,
-    "baseUrl": "http://127.0.0.1:9001",
-    "apiVersion": "forge-tool-api.v1",
     "requestTimeoutS": 10,
     "pollIntervalS": 0.5,
     "executionTimeoutS": 300,
@@ -66,50 +103,60 @@ ruff check PhyAgentOS tests
       "associationQuality": "best_effort"
     }
   },
-  "resourceRegistry": {"url": ""}
+  "resourceRegistry": {"url": "https://paos-resource-manager.dev.x-era.com"}
 }
 ```
 
-活动 Skill Runtime manifest 的 `gateway_url` 优先于 `forge.baseUrl`。也可以通过
-`PAOS_RESOURCE_REGISTRY_URL` 提供 Registry URL；空 URL 表示不进行隐式下载。
+活动 Skill Runtime manifest 是 Gateway URL 的唯一来源。也可以通过
+`PAOS_RESOURCE_REGISTRY_URL` 提供 Registry URL；空 URL 只允许本地 Bundle 或显式静态
+index。启动 PAOS 不会下载 Skill。
 
 ## 3. 安装并运行 Skill Runtime
 
 使用已配置 Registry 或 schema v3 静态 package index：
 
 ```bash
-paos skill search move-arm-by-ee
-paos skill install move-arm-by-ee --version 0.2.0
-# 或：paos skill install move-arm-by-ee --index /path/to/index.json
+paos skill search <skill-name>
+paos skill install <skill-name> --version <version>
+# 或：paos skill install <skill-name> --index /path/to/index.json
+# 或：paos skill install /path/to/<skill-name>-<version>.tar.gz --local
 
 paos skill list
-paos skill inspect move-arm-by-ee
-paos skill start move-arm-by-ee --profile mujoco
-paos skill status move-arm-by-ee
+paos skill inspect <skill-name>
+paos skill start <skill-name> --profile <profile>
+paos skill status <skill-name>
+paos skill switch <other-skill-name> --profile <profile>
 ```
 
 `install` 校验归档大小、SHA-256、内嵌文件清单、manifest v2 与锁定 Node，全部通过后才原子
-替换 Skill。`start` 只启动指定 Dora profile，并检查 Gateway `/tools` 与所需 Tool context。
-使用 `paos skill logs move-arm-by-ee` 查看生命周期日志，使用
-`paos skill stop move-arm-by-ee` 停止。
+替换 Skill。Registry 省略重复的 Node 摘要字段时，以已验证 Skill lock 中的摘要为准，并在传输
+前解析 Node 下载大小。`start` 只启动指定 Dora profile，并检查 Gateway `/tools` 与所需 Tool context。
+使用 `paos skill logs <skill-name>` 查看生命周期日志，使用
+`paos skill stop <skill-name>` 停止。存在非终态 AgentTask 时 `switch` 会拒绝执行；目标 Runtime
+通过就绪校验后才会被选中，共用 Gateway 的目标启动失败时会恢复先前 Runtime。运行中的 Agent
+会在下一次 activation 或 Forge Tool 调用前跟随持久化选择。
 
 Node 制品可以独立管理：
 
 ```bash
-paos forge-node install <artifact-id>
-paos forge-node verify <node-id> <artifact-id>
+paos forge-node install <skill-name> <node-id>
+# 或安装独立获取的本地归档
+paos forge-node install <skill-name> <node-id> --archive /path/to/<node>.tar.gz
+paos forge-node verify <skill-name> <node-id>
 ```
 
-内置 `move-arm-by-ee` Skill 提供工作流文档，但运行 MuJoCo profile 仍需要匹配的 Bundle
-assets 与锁定 Node 制品。
+具体 Forge Skill、Node、模型与仿真资源独立于 PhyAgentOS 分发，仅在需要时安装。
 
 ## 4. 启动 PAOS
 
-使用已安装机器人 Skill 时，按 Dora、Skill Runtime/Gateway、Agent 的顺序启动。若 Gateway
-由外部管理，只需保证 Agent 调用前已就绪。
+使用已安装机器人 Skill 时，先启动托管 Skill Runtime/Gateway，再启动 Agent。
+`paos skill start` 检查 Dora CLI，并在本地 Dora coordinator 和 daemon 尚未 ready 时自动启动。
+Agent 只从显式活动 Skill 的 manifest 获取 Gateway URL。
 
 ```bash
 paos status
+paos skill start <skill-name> --profile <profile>
+paos skill status <skill-name>
 paos agent
 
 # 单条请求
@@ -125,30 +172,26 @@ paos gateway
 readiness、endpoint status 和机器人 frame 信息。Agent 必须遵循精确 input schema，不能猜测
 frame 或单位约定。
 
-内置运动工作流使用：
+活动 Skill 工作流声明允许的 Tool ID 以及对应 Query、Action 或 Session semantics；不得用
+binding 中不存在的相似 Tool 替代。
 
-- Query `motion.resolve_relative_pose` 解析相对末端目标；
-- Action `motion.move_pose` 启动移动；
-- Action `gripper.set_opening` 设置夹爪开度。
+## 6. 使用诊断 Query 或绑定执行
 
-## 6. 选择绑定或无任务执行
-
-无任务 Query/Action 使用同一 Tool API，但不计入用户任务验证：
+诊断 Query 使用同一 Tool API，但不计入用户任务验证：
 
 ```text
 forge_tool_query(tool_id, arguments)
-forge_tool_start_action(tool_id, arguments)
 ```
 
 对于用户可见的多调用任务：
 
-1. 调用 `forge_task_create(task_description, verification)` 并保存 `task_id`；
-2. 把该 `task_id` 传给所有参与任务的 Query 或 Action；
-3. 对每个 Action 保存返回的 `invocation_id` 与 `attempt_id`；
-4. 使用 `forge_tool_action_status` 与 `forge_tool_action_result` 核对到终态；
-5. 所有绑定 Action 终结后调用 `forge_task_finalize(task_id)`。
+1. 在本轮调用 `activate_skill(name, role="primary")`；
+2. 把 activation ID 传给 `forge_task_create(task_description, verification, activation_id)`；
+3. 把返回的 `task_id` 传给所有相关 Query、Action 或 Session；
+4. 按返回的 `invocation_id` 核对每个异步执行；未知 admission 后不得猜测 ID 或重复调用；
+5. 停止 task-owned Session，再调用 `forge_task_finalize(task_id)`。
 
-全局最多一个非终态 AgentTask。无任务调用不占此槽位，所有执行仍按 Gateway operation 的
+全局最多一个非终态 AgentTask。诊断 Query 不占此槽位，所有执行仍按 Gateway operation 的
 `max_concurrency` 竞争。
 
 ## 7. 定义验证
@@ -225,7 +268,7 @@ evidence。Evolution fail-open，反思错误不会改变执行或验证。
 | 现象 | 检查项 |
 |:-----|:-------|
 | Tool 不存在或未就绪 | 运行 `forge_tool_context`，检查 ToolSpec、binding、Endpoint 与 Runtime profile。 |
-| Skill 无法安装 | 确认 Registry/index 提供 size、SHA-256，且全部 Node lock 可解析。 |
+| Skill 无法安装 | 确认 Skill Bundle 元数据包含 size、SHA-256，每个 Node lock 包含 SHA-256，且 Registry/index Node 能解析为具有明确大小的直接下载。 |
 | Skill 无法启动 | 运行 `paos skill status` 与 `logs`，检查 Dora、dataflow、assets、nodes 和 Gateway `/tools`。 |
 | 已有活动任务 | 使用 `forge_task_get` 读取已知任务，完成或取消它，不要编辑 SQLite。 |
 | Action result 为 pending | 使用相同 `invocation_id` 继续核对 status/result。 |

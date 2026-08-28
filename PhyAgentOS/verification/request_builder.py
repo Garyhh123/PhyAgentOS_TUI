@@ -7,9 +7,16 @@ import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from PhyAgentOS.verification.contracts import EvidenceBundle, ForgeSessionRecord
+from PhyAgentOS.verification.contracts import (
+    EvidenceBundle,
+    ForgeSessionRecord,
+    VerificationEvidencePolicy,
+)
+
+if TYPE_CHECKING:
+    from PhyAgentOS.forge.task import AgentTaskRecord
 
 
 class VerificationEvidenceError(ValueError):
@@ -22,6 +29,15 @@ class VerificationRequest:
     artifact_paths: tuple[Path, ...]
     valid_evidence_refs: frozenset[str]
     evidence: EvidenceBundle
+
+
+@dataclass(frozen=True)
+class _ValidatedEvidence:
+    evidence: EvidenceBundle
+    artifact_paths: tuple[Path, ...]
+    images: tuple[tuple[str, str, bytes], ...]
+    structured: dict[str, Any]
+    artifact_ids: frozenset[str]
 
 
 class VerificationRequestBuilder:
@@ -39,6 +55,127 @@ class VerificationRequestBuilder:
         reference = record.verification.bundle_ref
         if not reference:
             raise VerificationEvidenceError("Forge session has no Evidence Bundle")
+        evidence_path, evidence = self._load_evidence(
+            reference,
+            expected_session_id=record.session_id,
+            expected_command_id=record.command_id,
+            identity_name="session",
+        )
+        if record.execution is None:
+            raise VerificationEvidenceError("Forge session has no Execution Record")
+        validated = self._validate_evidence(
+            evidence_path,
+            evidence,
+            policy=record.request.verification.evidence_policy,
+        )
+
+        context = {
+            "task_verification_contract": record.request.verification.model_dump(mode="json"),
+            "execution_record": record.execution.model_dump(mode="json"),
+            "evidence_bundle": validated.evidence.model_dump(mode="json"),
+            "structured_evidence": validated.structured,
+            "lineage_history": history,
+            "lessons": lessons,
+            "valid_evidence_refs": sorted(validated.artifact_ids),
+        }
+        return self._build_request(
+            context=context,
+            validated=validated,
+            valid_evidence_refs=validated.artifact_ids,
+        )
+
+    def build_agent_task(
+        self,
+        task: AgentTaskRecord,
+        *,
+        events: list[dict[str, Any]],
+        lessons: str,
+    ) -> VerificationRequest:
+        """Build one strict request for the AgentTask aggregate and its evidence."""
+        reference = task.evidence_bundle_ref
+        if not reference:
+            raise VerificationEvidenceError("AgentTask has no Evidence Bundle")
+        if not task.execution_records:
+            raise VerificationEvidenceError("AgentTask has no ToolExecutionRecords")
+        evidence_path, evidence = self._load_evidence(
+            reference,
+            expected_session_id=task.task_id,
+            expected_command_id="agent_task",
+            identity_name="AgentTask",
+        )
+        validated = self._validate_evidence(
+            evidence_path,
+            evidence,
+            policy=task.verification.evidence_policy,
+        )
+        execution_refs = self._validate_agent_task_lineage(task)
+        overlap = validated.artifact_ids.intersection(execution_refs)
+        if overlap:
+            raise VerificationEvidenceError(
+                "evidence references collide across execution facts and artifacts: "
+                + ", ".join(sorted(overlap))
+            )
+        valid_refs = validated.artifact_ids | execution_refs
+        records = task.execution_records
+        context = {
+            "agent_task": {
+                "task_id": task.task_id,
+                "task_description": task.task_description,
+                "status": task.status.value,
+                "created_at": task.created_at.isoformat(),
+                "updated_at": task.updated_at.isoformat(),
+                "runtime_snapshot_ref": task.runtime_snapshot_ref,
+            },
+            "goal": task.verification.goal,
+            "criteria": task.verification.success_criteria,
+            "constraints": task.verification.constraints,
+            "task_verification_contract": task.verification.model_dump(mode="json"),
+            "frozen_skill_binding": (
+                task.primary_skill_binding.model_dump(mode="json")
+                if task.primary_skill_binding is not None
+                else None
+            ),
+            "supporting_skill_bindings": [
+                item.model_dump(mode="json") for item in task.supporting_skill_bindings
+            ],
+            "plan_revisions": [item.model_dump(mode="json") for item in task.revisions],
+            "tool_execution_records": [item.model_dump(mode="json") for item in records],
+            "gateway_terminal_results": [
+                {
+                    "record_id": item.record_id,
+                    "tool_id": item.tool_id,
+                    "semantics": item.semantics,
+                    "status": item.status,
+                    "invocation_id": item.invocation_id,
+                    "attempt_id": item.attempt_id,
+                    "response": item.response,
+                    "error": item.error,
+                    "evidence_refs": item.evidence_refs,
+                }
+                for item in records
+                if item.terminal
+            ],
+            "evidence_bundle": validated.evidence.model_dump(mode="json"),
+            "structured_evidence": validated.structured,
+            "evidence_errors": task.evidence_errors,
+            "events": events,
+            "lessons": lessons,
+            "valid_evidence_refs": sorted(valid_refs),
+        }
+        return self._build_request(
+            context=context,
+            validated=validated,
+            valid_evidence_refs=valid_refs,
+        )
+
+    def _load_evidence(
+        self,
+        reference: str,
+        *,
+        expected_session_id: str,
+        expected_command_id: str,
+        identity_name: str,
+    ) -> tuple[Path, EvidenceBundle]:
         evidence_path = self._workspace_path(reference)
         try:
             evidence = EvidenceBundle.model_validate_json(
@@ -46,12 +183,26 @@ class VerificationRequestBuilder:
             )
         except Exception as exc:
             raise VerificationEvidenceError(f"invalid Evidence Bundle: {reference}") from exc
-        if evidence.session_id != record.session_id or evidence.command_id != record.command_id:
-            raise VerificationEvidenceError("Evidence Bundle identity does not match session")
-        if record.execution is None:
-            raise VerificationEvidenceError("Forge session has no Execution Record")
-        minimum = record.request.verification.evidence_policy.minimum_association
-        if minimum == "authoritative" and evidence.quality.association_quality != "authoritative":
+        if (
+            evidence.session_id != expected_session_id
+            or evidence.command_id != expected_command_id
+        ):
+            raise VerificationEvidenceError(
+                f"Evidence Bundle identity does not match {identity_name}"
+            )
+        return evidence_path, evidence
+
+    def _validate_evidence(
+        self,
+        evidence_path: Path,
+        evidence: EvidenceBundle,
+        *,
+        policy: VerificationEvidencePolicy,
+    ) -> _ValidatedEvidence:
+        if (
+            policy.minimum_association == "authoritative"
+            and evidence.quality.association_quality != "authoritative"
+        ):
             raise VerificationEvidenceError("evidence association is below task policy")
         if not evidence.quality.complete:
             raise VerificationEvidenceError(
@@ -59,7 +210,7 @@ class VerificationRequestBuilder:
                 + ", ".join(evidence.quality.missing_requirements or ["unknown"])
             )
         self._validate_capture_window(evidence)
-        self._validate_requirements(record, evidence)
+        self._validate_requirements(policy, evidence)
 
         paths: list[Path] = [evidence_path]
         images: list[tuple[str, str, bytes]] = []
@@ -103,16 +254,63 @@ class VerificationRequestBuilder:
                     raise VerificationEvidenceError(
                         f"verification JSON is invalid: {artifact.artifact_id}"
                     ) from exc
+        return _ValidatedEvidence(
+            evidence=evidence,
+            artifact_paths=tuple(paths),
+            images=tuple(images),
+            structured=structured,
+            artifact_ids=frozenset(artifact_ids),
+        )
 
-        context = {
-            "task_verification_contract": record.request.verification.model_dump(mode="json"),
-            "execution_record": record.execution.model_dump(mode="json"),
-            "evidence_bundle": evidence.model_dump(mode="json"),
-            "structured_evidence": structured,
-            "lineage_history": history,
-            "lessons": lessons,
-            "valid_evidence_refs": sorted(artifact_ids),
-        }
+    @staticmethod
+    def _validate_agent_task_lineage(task: AgentTaskRecord) -> frozenset[str]:
+        expected_binding_id = (
+            task.primary_skill_binding.binding_id
+            if task.primary_skill_binding is not None
+            else None
+        )
+        revision_ids: set[str] = set()
+        record_ids: set[str] = set()
+        evidence_refs: set[str] = set()
+        for revision in task.revisions:
+            if revision.revision_id in revision_ids:
+                raise VerificationEvidenceError("AgentTask PlanRevision IDs must be unique")
+            revision_ids.add(revision.revision_id)
+            if revision.skill_binding_id != expected_binding_id:
+                raise VerificationEvidenceError(
+                    f"PlanRevision binding does not match frozen AgentTask binding: "
+                    f"{revision.revision_id}"
+                )
+            for record in revision.execution_records:
+                if record.record_id in record_ids:
+                    raise VerificationEvidenceError(
+                        "AgentTask ToolExecutionRecord IDs must be unique"
+                    )
+                record_ids.add(record.record_id)
+                if record.revision_id != revision.revision_id:
+                    raise VerificationEvidenceError(
+                        f"ToolExecutionRecord revision mismatch: {record.record_id}"
+                    )
+                if record.skill_binding_id != expected_binding_id:
+                    raise VerificationEvidenceError(
+                        f"ToolExecutionRecord binding mismatch: {record.record_id}"
+                    )
+                for reference in record.evidence_refs:
+                    if not reference.strip():
+                        raise VerificationEvidenceError(
+                            f"ToolExecutionRecord has a blank evidence reference: "
+                            f"{record.record_id}"
+                        )
+                    evidence_refs.add(reference)
+        return frozenset(evidence_refs)
+
+    def _build_request(
+        self,
+        *,
+        context: dict[str, Any],
+        validated: _ValidatedEvidence,
+        valid_evidence_refs: frozenset[str],
+    ) -> VerificationRequest:
         content: list[dict[str, Any]] = [
             {
                 "type": "text",
@@ -125,7 +323,7 @@ class VerificationRequestBuilder:
                 ),
             }
         ]
-        for artifact_id, media_type, data in images:
+        for artifact_id, media_type, data in validated.images:
             content.extend(
                 [
                     {"type": "text", "text": f"EVIDENCE_ARTIFACT: {artifact_id}"},
@@ -138,13 +336,17 @@ class VerificationRequestBuilder:
                     },
                 ]
             )
-        return VerificationRequest(content, tuple(paths), frozenset(artifact_ids), evidence)
+        return VerificationRequest(
+            content,
+            validated.artifact_paths,
+            valid_evidence_refs,
+            validated.evidence,
+        )
 
     @staticmethod
     def _validate_requirements(
-        record: ForgeSessionRecord, evidence: EvidenceBundle
+        policy: VerificationEvidencePolicy, evidence: EvidenceBundle
     ) -> None:
-        policy = record.request.verification.evidence_policy
         for kind in policy.required_kinds:
             for phase in ("before", "after"):
                 candidates = [

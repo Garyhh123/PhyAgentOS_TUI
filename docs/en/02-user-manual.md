@@ -2,7 +2,7 @@
 
 [中文](../zh/02-user-manual.md) · [Documentation index](../README.md)
 
-> Documentation version: 0.2.2.
+> Documentation version: 0.2.3.
 
 ## 1. Install and initialize
 
@@ -27,10 +27,54 @@ ruff check PhyAgentOS tests
 The default configuration is `~/.PhyAgentOS/config.json`; the default workspace is
 `~/.PhyAgentOS/workspace`.
 
+### Dora CLI for managed Skill profiles
+
+Dora is not needed to run the general Agent, search for a Skill, or complete `paos skill install`.
+It is a host prerequisite for `paos skill start`, because RuntimeManager uses the `dora` command to
+manage the selected profile. PhyAgentOS 0.2.3 uses Dora CLI v0.5.0 as its documented
+lifecycle-command baseline; pin this version for reproducible deployments.
+
+Linux or macOS, using the versioned official installer:
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/dora-rs/dora/releases/download/v0.5.0/dora-cli-installer.sh | sh
+```
+
+Windows PowerShell:
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://github.com/dora-rs/dora/releases/download/v0.5.0/dora-cli-installer.ps1 | iex"
+```
+
+With an existing Rust toolchain:
+
+```bash
+cargo install dora-cli --version 0.5.0 --locked
+```
+
+Open a new shell if the installer changed `PATH`, then verify the executable:
+
+```bash
+dora --version
+# dora-cli 0.5.0
+```
+
+RuntimeManager requires a working compatible command interface but does not enforce an exact Dora
+semantic version or upgrade Dora automatically.
+
+The Python package `dora-rs` is the Python node/operator API and is not a substitute for installing
+the Dora CLI. Before a coordinator and daemon are running, `dora check` is expected to report that
+they are unavailable. `paos skill start` runs this check and starts them with `dora up` when needed;
+after a Runtime has started, `dora check` should succeed. See the
+[official Dora installation instructions](https://github.com/dora-rs/dora#installation) for
+platform details.
+
 ## 2. Configure the model and Forge
 
-Configure one supported model provider, then enable Forge when the Agent should call Gateway
-Tools. Configuration is serialized in camelCase and also accepts snake_case.
+Configure one supported model provider and the Forge timeout/evidence policy. Runtime selection is
+not a configuration switch; it follows the Skill profile that you start explicitly. Configuration
+is serialized in camelCase and also accepts snake_case.
 
 ```json
 {
@@ -55,9 +99,6 @@ Tools. Configuration is serialized in camelCase and also accepts snake_case.
     "openrouter": {"apiKey": "YOUR_API_KEY"}
   },
   "forge": {
-    "enabled": true,
-    "baseUrl": "http://127.0.0.1:9001",
-    "apiVersion": "forge-tool-api.v1",
     "requestTimeoutS": 10,
     "pollIntervalS": 0.5,
     "executionTimeoutS": 300,
@@ -66,51 +107,64 @@ Tools. Configuration is serialized in camelCase and also accepts snake_case.
       "associationQuality": "best_effort"
     }
   },
-  "resourceRegistry": {"url": ""}
+  "resourceRegistry": {"url": "https://paos-resource-manager.dev.x-era.com"}
 }
 ```
 
-An active Skill Runtime manifest's `gateway_url` overrides `forge.baseUrl`. The Registry URL can
-also be supplied with `PAOS_RESOURCE_REGISTRY_URL`. An empty URL is valid and means no implicit
-download.
+The active Skill Runtime manifest is the only source of the Gateway URL. The Registry URL can also
+be supplied with `PAOS_RESOURCE_REGISTRY_URL`; an empty URL permits only local bundles or an
+explicit static index. Starting PAOS never downloads a Skill.
 
 ## 3. Install and run a Skill Runtime
 
 Use a configured Registry or a schema-v3 static package index:
 
 ```bash
-paos skill search move-arm-by-ee
-paos skill install move-arm-by-ee --version 0.2.0
-# or: paos skill install move-arm-by-ee --index /path/to/index.json
+paos skill search <skill-name>
+paos skill install <skill-name> --version <version>
+# or: paos skill install <skill-name> --index /path/to/index.json
+# or: paos skill install /path/to/<skill-name>-<version>.tar.gz --local
 
 paos skill list
-paos skill inspect move-arm-by-ee
-paos skill start move-arm-by-ee --profile mujoco
-paos skill status move-arm-by-ee
+paos skill inspect <skill-name>
+paos skill start <skill-name> --profile <profile>
+paos skill status <skill-name>
+paos skill switch <other-skill-name> --profile <profile>
 ```
 
 `install` verifies archive size, SHA-256, the embedded file inventory, manifest v2, and locked
-nodes before atomically replacing a Skill. `start` launches only the named Dora profile and checks
+nodes before atomically replacing a Skill. A verified Skill lock supplies a Node digest when the
+Registry omits that duplicate field; the Node download size is resolved before transfer. `start`
+launches only the named Dora profile and checks
 Gateway `/tools` plus required Tool contexts. Inspect lifecycle output with
-`paos skill logs move-arm-by-ee`; stop with `paos skill stop move-arm-by-ee`.
+`paos skill logs <skill-name>`; stop with `paos skill stop <skill-name>`. `switch` refuses to run
+while an AgentTask is non-terminal, verifies the target before publishing it, and restores the
+previous Runtime if a same-Gateway target cannot start. A running Agent follows the persisted
+selection before its next activation or Forge Tool call.
 
 Node artifacts can be managed independently:
 
 ```bash
-paos forge-node install <artifact-id>
-paos forge-node verify <node-id> <artifact-id>
+paos forge-node install <skill-name> <node-id>
+# or install an independently obtained local archive
+paos forge-node install <skill-name> <node-id> --archive /path/to/<node>.tar.gz
+paos forge-node verify <skill-name> <node-id>
 ```
 
-The built-in `move-arm-by-ee` Skill documents the workflow, but its MuJoCo profile still requires
-the matching Bundle assets and locked node artifacts.
+Concrete Forge Skills, nodes, models, and simulator assets are distributed separately from
+PhyAgentOS and installed only when needed.
 
 ## 4. Start PAOS
 
-Start Dora, the Skill Runtime/Gateway, and the Agent in that order when using an installed robot
-Skill. A standalone externally managed Gateway only needs to be ready before the Agent calls it.
+Start the managed Skill Runtime/Gateway before the Agent when using an installed robot Skill.
+`paos skill start` checks the Dora CLI and starts the local Dora coordinator and daemon when they
+are not already ready. The Agent obtains the Gateway URL only from the explicitly active Skill
+manifest.
 
 ```bash
 paos status
+paos skill start <skill-name> --profile <profile>
+paos skill status <skill-name>
 paos agent
 
 # one request
@@ -126,30 +180,26 @@ Before a Tool call, use `forge_tool_context(tool_id)`. It returns the ToolSpec t
 binding, readiness, endpoint status, and robot frame information. The Agent must use the exact
 input schema and must not infer frame or unit conventions.
 
-The built-in motion workflow uses:
+The active Skill workflow declares the allowed Tool IDs and their Query, Action, or Session
+semantics. Do not substitute a similar-looking Tool that is absent from its binding.
 
-- Query `motion.resolve_relative_pose` to resolve a relative end-effector target;
-- Action `motion.move_pose` to start motion;
-- Action `gripper.set_opening` to set gripper opening.
+## 6. Use diagnostic Query or bound execution
 
-## 6. Choose bound or unbound execution
-
-An unbound Query or Action uses the same Tool API but is not included in user-task verification:
+A diagnostic Query uses the same Tool API but is not included in user-task verification:
 
 ```text
 forge_tool_query(tool_id, arguments)
-forge_tool_start_action(tool_id, arguments)
 ```
 
 For a user-visible multi-call task:
 
-1. Call `forge_task_create(task_description, verification)` and keep its `task_id`.
-2. Pass that `task_id` to every Query or Action that contributes to the task.
-3. For each Action, keep the returned `invocation_id` and `attempt_id`.
-4. Reconcile with `forge_tool_action_status` and `forge_tool_action_result` until terminal.
-5. Call `forge_task_finalize(task_id)` after every bound Action is terminal.
+1. Call `activate_skill(name, role="primary")` during the current turn.
+2. Pass its activation ID to `forge_task_create(task_description, verification, activation_id)`.
+3. Pass the returned `task_id` to every contributing Query, Action, or Session.
+4. Reconcile every asynchronous invocation by its returned `invocation_id`; never invent or retry it after an unknown admission.
+5. Stop task-owned Sessions, then call `forge_task_finalize(task_id)`.
 
-Only one AgentTask may be non-terminal globally. Unbound calls do not occupy this slot, and all
+Only one AgentTask may be non-terminal globally. Diagnostic Query does not occupy this slot, and all
 execution still competes according to Gateway operation `max_concurrency`.
 
 ## 7. Define verification
@@ -231,7 +281,7 @@ does not delete execution records or evolution history.
 | Symptom | Check |
 |:--------|:------|
 | Tool not found or not ready | Run `forge_tool_context`; confirm ToolSpec, binding, Endpoint, and Runtime profile. |
-| Skill will not install | Confirm Registry/index metadata contains size and SHA-256 and all node locks resolve. |
+| Skill will not install | Confirm Skill bundle metadata has size and SHA-256, every Node lock has a SHA-256, and each Registry/index Node resolves to a sized direct download. |
 | Skill will not start | Run `paos skill status` and `logs`; verify Dora, dataflow paths, assets, nodes, and Gateway `/tools`. |
 | Another task is active | Read the known task with `forge_task_get`; finish or cancel it instead of editing SQLite. |
 | Action result is pending | Continue status/result reconciliation using the same `invocation_id`. |

@@ -96,6 +96,11 @@ class AgentLoop:
         self.forge_tool_client = forge_tool_client
         self.forge_tool_invocation_ids = forge_tool_invocation_ids
         self.forge_task_coordinator = forge_task_coordinator
+        binding_resolver = (
+            forge_task_coordinator.binding_resolver
+            if forge_task_coordinator is not None
+            else None
+        )
 
         self.experience = None
         if evolution_config is not None and evolution_config.enabled:
@@ -111,6 +116,7 @@ class AgentLoop:
                     ),
                     task_coordinator=forge_task_coordinator,
                     runtime_availability_provider=runtime_availability_provider,
+                    binding_resolver=binding_resolver,
                     min_successful_episodes=evolution_config.min_successful_episodes,
                     min_lesson_episodes=evolution_config.min_lesson_episodes,
                     max_lessons_per_skill=evolution_config.max_lessons_per_skill,
@@ -122,6 +128,19 @@ class AgentLoop:
                     type(exc).__name__,
                 )
 
+        if self.experience is not None:
+            self.skill_activation = self.experience.activation
+        else:
+            from PhyAgentOS.agent.experience.activation import SkillActivationManager
+            from PhyAgentOS.agent.experience.store import ExperienceStore
+
+            self.skill_activation = SkillActivationManager(
+                workspace=workspace,
+                store=ExperienceStore(workspace),
+                runtime_availability_provider=runtime_availability_provider,
+                binding_resolver=binding_resolver,
+            )
+
         self.context = ContextBuilder(
             workspace,
             forge_context_provider=(
@@ -129,11 +148,14 @@ class AgentLoop:
                 if forge_task_coordinator is not None
                 else None
             ),
-            evolution_enabled=self.experience is not None,
+            evolution_enabled=(
+                self.experience is not None or self.forge_task_coordinator is not None
+            ),
             runtime_availability_provider=runtime_availability_provider,
         )
         if self.forge_task_coordinator is not None:
             self.forge_task_coordinator.set_experience(self.experience)
+            self.forge_task_coordinator.set_activation_manager(self.skill_activation)
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
         self.embodiment_registry = embodiment_registry
@@ -153,6 +175,7 @@ class AgentLoop:
         self._mcp_stack: AsyncExitStack | None = None
         self._mcp_connected = False
         self._mcp_connecting = False
+        self._forge_reconciled = False
         self._active_tasks: dict[str, list[asyncio.Task]] = {}  # session_key -> tasks
         self._processing_lock = asyncio.Lock()
         self.memory_consolidator = MemoryConsolidator(
@@ -195,10 +218,9 @@ class AgentLoop:
             self.tools.register(ImageTool(self.provider, send_callback=self.bus.publish_outbound))
 
         self.tools.register(SceneGraphQueryTool(workspace=self.workspace))
-        if self.experience is not None:
-            from PhyAgentOS.agent.tools.skill_activation import ActivateSkillTool
+        from PhyAgentOS.agent.tools.skill_activation import ActivateSkillTool
 
-            self.tools.register(ActivateSkillTool(self.experience.activation))
+        self.tools.register(ActivateSkillTool(self.skill_activation))
         if self.forge_task_coordinator is not None:
             from PhyAgentOS.agent.tools.forge_task import build_forge_task_tools
 
@@ -216,6 +238,9 @@ class AgentLoop:
 
     async def _connect_mcp(self) -> None:
         """Connect to configured MCP servers (one-time, lazy)."""
+        if not self._forge_reconciled and self.forge_task_coordinator is not None:
+            await self.forge_task_coordinator.reconcile_nonterminal()
+            self._forge_reconciled = True
         if self.experience is not None:
             await self.experience.start()
         if self._mcp_connected or self._mcp_connecting or not self._mcp_servers:
@@ -315,8 +340,8 @@ class AgentLoop:
 
                 for tool_call in response.tool_calls:
                     tools_used.append(tool_call.name)
-                    if self.experience is not None and experience_session_key is not None:
-                        self.experience.record_tool(
+                    if experience_session_key is not None:
+                        self.skill_activation.record_tool(
                             experience_session_key, tool_call.name, tool_call.arguments
                         )
                     args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
@@ -474,6 +499,7 @@ class AgentLoop:
                                 else ("cli", msg.chat_id))
             logger.info("Processing system message from {}", msg.sender_id)
             key = msg.session_key_override or f"{channel}:{chat_id}"
+            self.skill_activation.begin_turn(key, msg.content)
             task_ref = msg.metadata.get("agent_task_id") or msg.metadata.get(
                 "forge_session_id"
             )
@@ -508,8 +534,7 @@ class AgentLoop:
 
         key = session_key or msg.session_key
         session = self.sessions.get_or_create(key)
-        if self.experience is not None:
-            self.experience.begin_turn(key, msg.content)
+        self.skill_activation.begin_turn(key, msg.content)
 
         # Slash commands
         cmd = msg.content.strip().lower()

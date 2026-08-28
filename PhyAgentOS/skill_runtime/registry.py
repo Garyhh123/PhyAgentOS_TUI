@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+import re
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -48,7 +50,13 @@ class RegistryArtifact:
     node_digest: str | None = None
 
     @classmethod
-    def from_dict(cls, value: Any) -> RegistryArtifact:
+    def from_dict(
+        cls,
+        value: Any,
+        *,
+        expected_sha256: str | None = None,
+        allow_missing_size: bool = False,
+    ) -> RegistryArtifact:
         if not isinstance(value, dict):
             raise RegistryError("registry artifact metadata must be an object")
         source = value.get("artifact", value)
@@ -59,13 +67,21 @@ class RegistryArtifact:
         size = source.get("size", source.get("content_length"))
         if not isinstance(url, str) or not url.startswith(("http://", "https://")):
             raise RegistryError("registry artifact has an invalid download URL")
-        if (
-            not isinstance(digest, str)
-            or len(digest) != 64
-            or any(char not in "0123456789abcdefABCDEF" for char in digest)
+        if expected_sha256 is not None and (
+            not isinstance(expected_sha256, str)
+            or len(expected_sha256) != 64
+            or any(char not in "0123456789abcdefABCDEF" for char in expected_sha256)
         ):
+            raise RegistryError("expected artifact sha256 is invalid")
+        if digest is None and expected_sha256 is not None:
+            digest = expected_sha256
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", digest):
             raise RegistryError("registry artifact has an invalid sha256")
-        if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
+        if expected_sha256 is not None and digest.lower() != expected_sha256.lower():
+            raise RegistryError("registry artifact sha256 does not match the expected digest")
+        if size is None and allow_missing_size:
+            pass
+        elif not isinstance(size, int) or isinstance(size, bool) or size <= 0:
             raise RegistryError("registry artifact has an invalid size")
 
         def optional_string(*names: str) -> str | None:
@@ -153,9 +169,62 @@ class RegistryClient:
         value = self._get(f"/v1/forge-runtimes/{quote(artifact_set_id, safe='')}")
         return RegistryArtifact.from_dict(value)
 
-    def node(self, artifact_id: str) -> RegistryArtifact:
+    def node(
+        self,
+        artifact_id: str,
+        *,
+        expected_sha256: str | None = None,
+    ) -> RegistryArtifact:
         value = self._get(f"/v1/forge-nodes/{quote(artifact_id, safe='')}")
-        return RegistryArtifact.from_dict(value)
+        artifact = RegistryArtifact.from_dict(
+            value,
+            expected_sha256=expected_sha256,
+            allow_missing_size=True,
+        )
+        if artifact.size is not None:
+            return artifact
+        return replace(artifact, size=self._probe_artifact_size(artifact.url))
+
+    def _probe_artifact_size(self, url: str) -> int:
+        """Determine a direct-download size without consuming the artifact body."""
+        try:
+            response = self.client.head(url, headers={"Accept-Encoding": "identity"})
+            if response.status_code not in {405, 501}:
+                response.raise_for_status()
+                size = self._positive_content_length(response)
+                if size is not None:
+                    return size
+        except httpx.HTTPError:
+            pass
+
+        try:
+            with self.client.stream(
+                "GET",
+                url,
+                headers={"Accept-Encoding": "identity", "Range": "bytes=0-0"},
+            ) as response:
+                response.raise_for_status()
+                content_range = response.headers.get("Content-Range", "")
+                match = re.fullmatch(r"bytes 0-0/([1-9][0-9]*)", content_range)
+                if response.status_code == 206 and match is not None:
+                    return int(match.group(1))
+                size = self._positive_content_length(response)
+                if response.status_code == 200 and size is not None:
+                    return size
+        except httpx.HTTPError as exc:
+            raise RegistryError("cannot determine registry artifact size") from exc
+        raise RegistryError("cannot determine registry artifact size")
+
+    @staticmethod
+    def _positive_content_length(response: httpx.Response) -> int | None:
+        raw = response.headers.get("Content-Length")
+        if raw is None:
+            return None
+        try:
+            size = int(raw)
+        except ValueError:
+            return None
+        return size if size > 0 else None
 
 
 class StaticPackageIndex:
@@ -271,11 +340,28 @@ class StaticPackageIndex:
             self._entry(kind="skill_bundle", package_key=name, version=version)
         )
 
-    def node(self, artifact_id: str) -> RegistryArtifact:
-        return self._artifact(self.node_metadata(artifact_id))
+    def node(
+        self,
+        artifact_id: str,
+        *,
+        expected_sha256: str | None = None,
+    ) -> RegistryArtifact:
+        artifact = self._artifact(self.node_metadata(artifact_id))
+        if expected_sha256 is not None:
+            if (
+                not isinstance(expected_sha256, str)
+                or not re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha256)
+            ):
+                raise RegistryError("expected artifact sha256 is invalid")
+            if artifact.sha256 != expected_sha256.lower():
+                raise RegistryError("static package sha256 does not match the expected digest")
+        return artifact
 
     def node_metadata(self, artifact_id: str) -> dict[str, Any]:
         return self._entry(kind="node_bundle", artifact_id=artifact_id)
+
+
+DownloadProgressCallback = Callable[[str, RegistryArtifact, int, int | None], None]
 
 
 class DownloadCache:
@@ -287,10 +373,12 @@ class DownloadCache:
         *,
         client: httpx.Client | None = None,
         timeout: float = 60.0,
+        progress: DownloadProgressCallback | None = None,
     ) -> None:
         self.root = (root or get_artifact_cache_root()).expanduser()
         self._owns_client = client is None
         self.client = client or httpx.Client(timeout=timeout, follow_redirects=True)
+        self.progress = progress
 
     def close(self) -> None:
         if self._owns_client:
@@ -307,6 +395,7 @@ class DownloadCache:
         partial = cache_dir / "archive.tar.gz.part"
         if final.is_file():
             if final.stat().st_size == artifact.size and sha256_file(final) == artifact.sha256:
+                self._notify("cached", artifact, artifact.size, artifact.size)
                 return final
             final.unlink()
 
@@ -315,10 +404,13 @@ class DownloadCache:
             partial.unlink()
             offset = 0
         if offset == artifact.size:
-            return self._commit(artifact, partial, final)
+            result = self._commit(artifact, partial, final)
+            self._notify("complete", artifact, artifact.size, artifact.size)
+            return result
         headers = {"Accept": "application/gzip"}
         if offset:
             headers["Range"] = f"bytes={offset}-"
+        self._notify("start", artifact, offset, artifact.size)
         try:
             with self.client.stream("GET", artifact.url, headers=headers) as response:
                 response.raise_for_status()
@@ -334,32 +426,53 @@ class DownloadCache:
                         raise RegistryError("download resume Content-Range does not match request")
                 self._validate_content_length(response, artifact.size - offset)
                 mode = "ab" if offset else "wb"
+                downloaded = offset
                 with partial.open(mode) as output:
                     for chunk in response.iter_bytes():
                         output.write(chunk)
+                        downloaded += len(chunk)
+                        self._notify("advance", artifact, downloaded, artifact.size)
                     output.flush()
                     os.fsync(output.fileno())
         except httpx.HTTPError as exc:
             raise RegistryError("artifact download failed; partial download was retained") from exc
-        return self._commit(artifact, partial, final)
+        result = self._commit(artifact, partial, final)
+        self._notify("complete", artifact, artifact.size, artifact.size)
+        return result
 
     def _download_fresh(
         self, artifact: RegistryArtifact, partial: Path, final: Path
     ) -> Path:
+        self._notify("start", artifact, 0, artifact.size)
         try:
             with self.client.stream(
                 "GET", artifact.url, headers={"Accept": "application/gzip"}
             ) as response:
                 response.raise_for_status()
                 self._validate_content_length(response, artifact.size)
+                downloaded = 0
                 with partial.open("wb") as output:
                     for chunk in response.iter_bytes():
                         output.write(chunk)
+                        downloaded += len(chunk)
+                        self._notify("advance", artifact, downloaded, artifact.size)
                     output.flush()
                     os.fsync(output.fileno())
         except httpx.HTTPError as exc:
             raise RegistryError("artifact download failed; partial download was retained") from exc
-        return self._commit(artifact, partial, final)
+        result = self._commit(artifact, partial, final)
+        self._notify("complete", artifact, artifact.size, artifact.size)
+        return result
+
+    def _notify(
+        self,
+        event: str,
+        artifact: RegistryArtifact,
+        downloaded: int,
+        total: int | None,
+    ) -> None:
+        if self.progress is not None:
+            self.progress(event, artifact, downloaded, total)
 
     @staticmethod
     def _validate_content_length(response: httpx.Response, expected: int) -> None:

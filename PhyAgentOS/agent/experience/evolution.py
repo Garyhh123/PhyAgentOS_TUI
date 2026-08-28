@@ -178,21 +178,35 @@ class SkillEvolutionManager:
         self, episode: TaskEpisode, proposal: FailureObservationProposal
     ) -> tuple[FailureObservation, LessonCluster]:
         target = proposal.skill_name or episode.primary_skill
+        target_activation = next(
+            (item for item in episode.skill_activations if item.skill_name == target),
+            None,
+        )
+        version_spec = (
+            f"=={target_activation.skill_version}"
+            if target_activation is not None and target_activation.skill_version
+            else None
+        )
         workflow_key = proposal.workflow_key or ""
         pattern_key = proposal.pattern_key or ""
         if proposal.matched_cluster_id:
             cluster = self.store.get_cluster(proposal.matched_cluster_id)
             if cluster is None:
                 raise SkillEvolutionError("matched Lesson cluster does not exist")
-            if cluster.skill_name != target or cluster.workflow_key != workflow_key:
+            if (
+                cluster.skill_name != target
+                or cluster.workflow_key != workflow_key
+                or cluster.skill_version_spec != version_spec
+            ):
                 raise SkillEvolutionError("matched Lesson cluster has a different scope")
         else:
             digest = hashlib.sha256(
-                f"{target or 'unbound'}\n{workflow_key}\n{pattern_key}".encode("utf-8")
+                f"{target or 'unbound'}\n{version_spec or '*'}\n{workflow_key}\n{pattern_key}".encode("utf-8")
             ).hexdigest()[:20]
             cluster = LessonCluster(
                 cluster_id=f"lesson_cluster_{digest}",
                 skill_name=target,
+                skill_version_spec=version_spec,
                 workflow_key=workflow_key,
                 pattern_key=pattern_key,
                 canonical_pattern=proposal.pattern_summary or "",
@@ -208,6 +222,7 @@ class SkillEvolutionManager:
             episode_id=episode.episode_id,
             root_task_id=episode.root_task_id,
             skill_name=target,
+            skill_version_spec=version_spec,
             workflow_key=workflow_key,
             cluster_id=cluster.cluster_id,
             pattern_key=pattern_key,
@@ -323,6 +338,7 @@ class SkillEvolutionManager:
         lesson = ScopedLesson(
             lesson_id=lesson_id,
             skill_name=cluster.skill_name,
+            skill_version_spec=cluster.skill_version_spec,
             workflow_key=cluster.workflow_key,
             applies_when=draft.applies_when,
             does_not_apply_when=draft.does_not_apply_when,
@@ -757,6 +773,7 @@ class SkillEvolutionManager:
                 LessonCluster(
                     cluster_id=cluster_id,
                     skill_name=lesson.skill_name,
+                    skill_version_spec=lesson.skill_version_spec,
                     workflow_key=lesson.workflow_key,
                     pattern_key=pattern_key,
                     canonical_pattern=lesson.failure_mode,
@@ -778,6 +795,7 @@ class SkillEvolutionManager:
                     episode_id=episode.episode_id,
                     root_task_id=episode.root_task_id,
                     skill_name=lesson.skill_name,
+                    skill_version_spec=lesson.skill_version_spec,
                     workflow_key=lesson.workflow_key,
                     cluster_id=cluster.cluster_id,
                     pattern_key=pattern_key,

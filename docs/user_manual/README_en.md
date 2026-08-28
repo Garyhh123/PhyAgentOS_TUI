@@ -2,20 +2,20 @@
 
 [中文](README.md) · [Documentation index](../README.md)
 
-> Version: 0.2.2
+> Version: 0.2.3
 
 ## 1. Runtime model
 
 ```text
 User/Channel → AgentLoop → Forge task and Tool API tools
                                   │
-                     bound or unbound Tool call
+                   bound call or diagnostic Query
                                   ▼
                          ForgeToolClient
                                   ▼
 Gateway /tools → ToolInvocation → ToolEndpoint → Dora → robot/simulator
 
-bound calls → AgentTask SQLite → evidence → verification → experience/evolution
+bound calls → immutable Skill binding → AgentTask SQLite → verification/experience
 ```
 
 Gateway owns execution. PAOS owns user-task aggregation and semantic verdicts. Skill Runtime owns
@@ -25,16 +25,19 @@ the explicit lifecycle of installed Bundle profiles; it does not replace Gateway
 
 ### PAOS host
 
-- Python 3.11 or 3.12 and the intended v0.2.2 environment are installed.
+- Python 3.11 or 3.12 and the intended v0.2.3 environment are installed.
 - `paos status` resolves the expected config, workspace, model, and provider.
 - Workspace, PAOS data paths, and artifact paths have sufficient permissions and disk space.
 - Verification provider credentials are available when non-`off` tasks are allowed.
 
 ### Skill Runtime
 
-- Registry/index metadata includes artifact size and SHA-256; locked node digests resolve.
+- Skill Bundle metadata includes size and SHA-256; every Node lock has an exact SHA-256 and resolves
+  to a sized direct download.
 - Required binaries are executable, required assets exist, and required environment variables are set.
-- Dora is installed and on `PATH`.
+- Dora CLI v0.5.0, the PhyAgentOS 0.2.3 lifecycle-command baseline, is installed and on `PATH`;
+  `dora --version` reports the expected executable. Installation is documented in the
+  [user manual](../en/02-user-manual.md#dora-cli-for-managed-skill-profiles).
 - The profile Gateway address is not occupied by an unmanaged process.
 
 ### Forge Gateway
@@ -42,7 +45,7 @@ the explicit lifecycle of installed Bundle profiles; it does not replace Gateway
 - `GET /tools` returns a successful object envelope.
 - Required ToolSpecs and `/tools/{tool_id}/context` are present and ready.
 - Endpoint operation `max_concurrency` matches the robot's safe concurrency.
-- The move-arm profile has `agent.enabled: false`.
+- ToolSpec semantics, schemas, bindings, and readiness match the installed Skill manifest.
 
 ### Persistence
 
@@ -54,19 +57,27 @@ the explicit lifecycle of installed Bundle profiles; it does not replace Gateway
 For a managed Skill profile:
 
 ```bash
-paos skill inspect move-arm-by-ee
-paos skill start move-arm-by-ee --profile mujoco
-paos skill status move-arm-by-ee
+paos skill inspect <skill-name>
+paos skill start <skill-name> --profile <profile>
+paos skill status <skill-name>
+paos skill switch <other-skill-name> --profile <profile>
 paos agent
 # or: paos gateway
 ```
 
+`paos skill start` runs `dora check` and invokes `dora up` if the local coordinator and daemon are
+not ready; operators do not need to start them separately. After startup, `dora check` should
+succeed.
+
 Healthy Runtime status requires persisted `running`, a live named Dora flow, Gateway `/tools`, and
 ready context for every manifest `required_tool`. Use `paos skill logs <name>` for lifecycle and
-Dora launch logs.
+Dora launch logs. Runtime switching is permitted only with no non-terminal AgentTask; the target
+must become ready before selection, and a failed same-Gateway switch restores the previous
+Runtime. Long-running Agents follow the persisted selection before the next activation or Tool
+call.
 
-For an externally managed Gateway, start it independently and verify Tool context through the
-Agent with `forge_tool_context`; `paos status` checks local configuration only.
+The Agent uses only the Gateway identity and URL of this managed active Runtime. `paos status`
+checks local configuration only; use `forge_tool_context` for live Tool readiness.
 
 ## 4. Task monitoring
 
@@ -75,14 +86,16 @@ Record these identities separately:
 | Identity | Owner | Use |
 |:---------|:------|:----|
 | `task_id` | PAOS | User-visible aggregate and verification |
+| `binding_id` | PAOS | Frozen Skill version, Runtime, and ToolSpec set |
 | `revision_id` | PAOS | Append-only planning generation |
-| Query `record_id` | PAOS | One bound synchronous Query |
-| `invocation_id` | Gateway | One asynchronous Action lifecycle |
+| `record_id` | PAOS | One bound Query, Action, or Session record |
+| `caller_id` | PAOS | Persisted before asynchronous admission |
+| `invocation_id` | Gateway | One asynchronous Action or Session lifecycle |
 | `attempt_id` | Gateway | One execution attempt |
 
 Use `forge_task_get(task_id)` for aggregate state and Tool records. Use
-`forge_tool_action_status(invocation_id)` and `forge_tool_action_result(invocation_id)` for execution
-truth. A result endpoint may return HTTP 202 while pending.
+the task-bound Action or Session status/result tools for execution truth. A result endpoint may
+return HTTP 202 while pending.
 
 Expected task states:
 
@@ -95,26 +108,29 @@ Expected task states:
 
 ## 5. Cancellation and stop
 
-For one Action, call `forge_tool_cancel_action(invocation_id)`, then continue status/result
+For one Action, call `forge_tool_cancel_action(task_id, invocation_id)`, then continue status/result
 reconciliation. For all Actions bound to a task, call `forge_task_cancel(task_id, reason)`, reconcile
-each invocation, inspect physical state when effects are uncertain, then finalize the task.
+each invocation, and inspect physical state when effects are uncertain. Task cancellation also
+stops task-owned Sessions; shared and runtime-owned Sessions retain their independent lifecycle.
 
 Never report `requested`, `accepted`, a timeout, or `unknown` as proof of physical stop. Do not
 retry the motion until effect reconciliation is complete.
 
-Stop a managed Runtime only after its tracked invocations are terminal:
+Stop a managed Runtime only after tracked invocations and Sessions are terminal and no task binding remains:
 
 ```bash
-paos skill stop move-arm-by-ee
+paos skill stop <skill-name>
 ```
 
-`--force` is reserved for an operator who has independently assessed the physical system. It stops
-the managed Dora flow but does not rewrite Gateway invocation results.
+`--force` is reserved for an operator who has independently assessed the physical system. Before
+stopping the managed Dora flow it makes best-effort cancel/stop requests for tracked Actions and
+Sessions, then records each request and unresolved reference in the Runtime audit. Acceptance does
+not prove termination and Gateway invocation results are not rewritten.
 
 ## 6. Graceful shutdown
 
 1. Stop admitting new user tasks.
-2. Read the active AgentTask and reconcile every Action invocation.
+2. Read the active AgentTask and reconcile every Action/Session invocation.
 3. Finalize or cancel/finalize the AgentTask.
 4. Stop PAOS channels or Agent.
 5. Stop the Skill Runtime profile.
@@ -123,7 +139,7 @@ the managed Dora flow but does not rewrite Gateway invocation results.
 ## 7. Crash restart
 
 After a PAOS restart, open the persisted AgentTask with its known `task_id`. Do not recreate or
-resubmit an Action from local intent. Query every persisted `invocation_id` and update the record
+resubmit an Action or Session from local intent. Query every persisted `invocation_id` and update the record
 from Gateway status/result. If Gateway can no longer resolve an invocation, treat the effect as
 unknown and escalate to physical-state inspection.
 
@@ -162,17 +178,17 @@ it must not remove task records, invocation references, or evolution history.
 
 ## 10. Operational acceptance checklist
 
-- [ ] Package and runtime version report 0.2.2.
+- [ ] Package and runtime version report 0.2.3.
 - [ ] General Agent tools and dynamic MCP tools remain registered.
 - [ ] Required Skill Bundle and all node artifacts verify.
 - [ ] Managed Runtime reaches ready and all Tool contexts are healthy.
-- [ ] Bound and unbound Query/Action calls use the same Gateway Tool API.
-- [ ] Action admission, pending, terminal, cancel, timeout, and unknown behavior are exercised.
+- [ ] Diagnostic Query and bound Query/Action/Session use the same Gateway Tool API.
+- [ ] Action/Session admission, pending, terminal, cancel/stop, timeout, ownership, and unknown behavior are exercised.
 - [ ] One-active-AgentTask enforcement and PlanRevision recovery are exercised.
 - [ ] Evidence and task-level verification complete for a bound workflow.
 - [ ] Experience records AgentTask, Skill activation, verification, and invocation references.
 - [ ] Backups include AgentTask and evolution persistence.
-- [ ] Real MuJoCo acceptance is recorded only when matching assets, nodes, and Dora are available.
+- [ ] Concrete Skill/hardware acceptance is recorded separately with exact assets, nodes, and environment.
 
 ## Next reading
 

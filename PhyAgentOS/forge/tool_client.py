@@ -141,6 +141,25 @@ class ForgeToolClient:
             expected_statuses={202},
         )
 
+    async def start_session(
+        self,
+        tool_id: str,
+        arguments: dict[str, Any] | None = None,
+        *,
+        caller_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Start a Gateway Session; Sessions deliberately have no deadline."""
+        tool = await self.get_tool(tool_id)
+        spec = tool.get("data")
+        if not isinstance(spec, dict) or spec.get("semantics") != "session":
+            raise ForgeToolAPIError(f"Forge Tool {tool_id!r} is not a Session", payload=tool)
+        return await self._request(
+            "POST",
+            f"/tools/{_path_component(tool_id, 'tool_id')}:invoke",
+            payload=_invoke_payload(arguments, caller_id=caller_id, timeout_ms=None),
+            expected_statuses={202},
+        )
+
     async def invocation_status(self, invocation_id: str) -> dict[str, Any]:
         return await self._request(
             "GET",
@@ -161,6 +180,15 @@ class ForgeToolClient:
         return await self._request(
             "POST",
             f"/invocations/{_path_component(invocation_id, 'invocation_id')}/cancel",
+            payload=None,
+            expected_statuses={200, 202},
+        )
+
+    async def stop_session(self, invocation_id: str) -> dict[str, Any]:
+        """Request Session termination; acceptance is not a terminal state."""
+        return await self._request(
+            "POST",
+            f"/invocations/{_path_component(invocation_id, 'invocation_id')}/stop",
             payload=None,
             expected_statuses={200, 202},
         )

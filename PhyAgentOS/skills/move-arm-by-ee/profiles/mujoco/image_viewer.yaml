@@ -1,7 +1,0 @@
-images:
-  - image/hand
-  - image/top
-  - image/angle
-  - image/left_pillar
-
-renderer: wgpu

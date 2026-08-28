@@ -13,7 +13,7 @@
   </p>
   <p>
     <img src="https://img.shields.io/badge/Python-≥3.11-3776AB?logo=python&logoColor=white" alt="Python">
-    <img src="https://img.shields.io/badge/Version-v0.2.2-47A882" alt="Version">
+    <img src="https://img.shields.io/badge/Version-v0.2.3-47A882" alt="Version">
     <img src="https://img.shields.io/badge/License-MIT-3DA639" alt="License">
     <a href="https://arxiv.org/pdf/2607.16636">
       <img src="https://img.shields.io/badge/Tech_Report-arXiv-b31b1b?logo=arxiv&logoColor=white" alt="Tech Report">
@@ -38,6 +38,7 @@ PhyAgentOS is an agent framework for embodied tasks. The Agent plans high-level 
 
 | Version | Date | Update |
 |:--------|:-----|:-------|
+| ![v0.2.3](https://img.shields.io/badge/v0.2.3-47A882) | 2026-08-27 | Forge Skills can be installed and managed independently, activated into immutable AgentTask bindings, and used through governed Query, Action, and Session Tool API lifecycles with recovery and version-scoped experience. |
 | ![v0.2.2](https://img.shields.io/badge/v0.2.2-47A882) | 2026-08-21 | Unified Forge execution on the Query/Action Tool API and added AgentTask aggregation, a verifiable Skill Runtime, Resource Registry integration, and the move-arm-by-ee Skill while retaining Agent verification and evolution. |
 | ![v0.2.1](https://img.shields.io/badge/v0.2.1-47A882) | 2026-08-14 | Added verified task experience, explicit workflow Skill activation, guarded Skill evolution, clustered scope-aware Lessons, and Skill-scoped advisory context for semantic verification. |
 | ![v0.2.0](https://img.shields.io/badge/v0.2.0-47A882) | 2026-08-03 | Introduced the Forge execution architecture with Forge Gateway 1.0.0, immutable execution and evidence contracts, system-level semantic verification, Planner-owned recovery, crash-safe SQLite orchestration, and complete removal of the legacy Runtime execution chain. |
@@ -95,8 +96,8 @@ The system keeps three records separate:
 
 | Area | Current capability |
 |:-----|:-------------------|
-| Forge contract | One Query/Action Tool API plane through `/tools` and `/invocations`. |
-| Async orchestration | Query is synchronous; Action admission returns an invocation ID and must be reconciled to terminal status/result. |
+| Forge contract | One Query/Action/Session Tool API plane through `/tools` and `/invocations`. |
+| Async orchestration | Query is synchronous; Action and Session admission return invocation IDs whose state is reconciled through `/invocations`. |
 | Identity validation | Agent `task_id`, `revision_id`, Query record ID, Gateway `invocation_id`, and `attempt_id` remain distinct. |
 | Evidence | Async `/ws/images` and `/ws/state` collection with bounded latest-frame buffers, media validation, SHA-256, and per-source sequence boundaries. |
 | Verification | `off`, `audit`, `enforce`, and `recovery` modes with structured per-criterion verdicts. |
@@ -119,7 +120,21 @@ python -m pip install -e .
 python -m pip install -e ".[dev]"
 ```
 
-Python 3.11 or 3.12 is recommended. Forge Gateway is an external service and must be started separately.
+Python 3.11 or 3.12 is recommended. Concrete Forge Skills and their Runtime artifacts are
+distributed separately.
+
+Dora is not required for the general Agent or for `paos skill install`. It is required on `PATH`
+when `paos skill start` launches a managed Forge Skill profile. PhyAgentOS 0.2.3 uses Dora CLI
+v0.5.0 as its documented lifecycle-command baseline. On Linux or macOS:
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/dora-rs/dora/releases/download/v0.5.0/dora-cli-installer.sh | sh
+dora --version
+```
+
+See the [user manual](docs/en/02-user-manual.md#dora-cli-for-managed-skill-profiles) for Windows,
+Cargo installation, and lifecycle checks.
 
 ### 2. Initialize the workspace
 
@@ -163,9 +178,6 @@ The configuration file is serialized in camelCase; snake_case keys are also acce
     }
   },
   "forge": {
-    "enabled": true,
-    "baseUrl": "http://127.0.0.1:9001",
-    "apiVersion": "forge-tool-api.v1",
     "requestTimeoutS": 10,
     "pollIntervalS": 0.5,
     "executionTimeoutS": 300,
@@ -179,18 +191,19 @@ The configuration file is serialized in camelCase; snake_case keys are also acce
     }
   },
   "resourceRegistry": {
-    "url": ""
+    "url": "https://paos-resource-manager.dev.x-era.com"
   }
 }
 ```
 
-The `front` source is only an example. Leave `resourceRegistry.url` empty when artifacts are
-installed locally; PAOS never downloads an unconfigured runtime implicitly. An active Skill
-Runtime's manifest `gateway_url` takes precedence over `forge.baseUrl`.
+The `front` source is only an example. `resourceRegistry.url` selects a generic package registry;
+it may be empty when all artifacts are installed from local bundles or a supplied static index.
+PAOS connects only to the Gateway URL in the manifest of the explicitly started, healthy Skill
+Runtime. It never starts or downloads a concrete Skill merely because the Agent starts.
 
 ### 4. Start the Agent
 
-Start Forge Gateway first, then choose one of the PAOS entry points:
+Start the required installed Skill Runtime first, then choose one of the PAOS entry points:
 
 ```bash
 # Interactive CLI
@@ -245,33 +258,46 @@ A typical non-`off` contract looks like this:
 | `forge_tool_query` | Invoke a synchronous Query, optionally bound to an AgentTask. |
 | `forge_tool_start_action` | Admit an asynchronous Action and retain its Gateway invocation identity. |
 | `forge_tool_action_status/result/cancel_action` | Reconcile or request cancellation without treating acceptance as physical stop. |
+| `forge_tool_start_session` | Start a task-owned, shared, or runtime-owned Session under the binding policy. |
+| `forge_tool_session_status/result/stop_session` | Reconcile a Session and stop it only when the caller owns that lifecycle. |
 
-These tools are registered when `forge.enabled` is true or one healthy Skill Runtime is active.
+The context tool is always available for diagnostics. Task and mutating tools require one healthy,
+explicitly active Skill Runtime and an immutable Skill binding created from the current turn's
+primary `activate_skill` result.
 
-## Skill Runtime and move-arm-by-ee
+## Forge Skill Runtime
 
 Installed Skills are managed explicitly. Registry downloads require either
 `resourceRegistry.url`, `PAOS_RESOURCE_REGISTRY_URL`, or a supplied static index; local bundles are
-never replaced until their manifest, archive inventory, and locked node artifacts validate.
+never replaced until their manifest, archive inventory, and locked node executables validate.
 
 ```bash
-paos skill search move-arm-by-ee
-paos skill install move-arm-by-ee --version 0.2.0
-paos skill inspect move-arm-by-ee
-paos skill start move-arm-by-ee --profile mujoco
-paos skill status move-arm-by-ee
-paos skill logs move-arm-by-ee
-paos skill stop move-arm-by-ee
+paos skill search
+paos skill install <skill-name> --version <version>
+# Or install a local, independently obtained bundle
+paos skill install /path/to/<skill-name>-<version>.tar.gz --local
+paos skill inspect <skill-name>
+paos skill start <skill-name> --profile <profile>
+paos skill status <skill-name>
+# With no non-terminal AgentTask, select another installed Runtime
+paos skill switch <other-skill-name> --profile <profile>
+paos skill logs <skill-name>
+paos skill stop <skill-name>
 
-# Independently install or verify a locked Forge node
-paos forge-node install <artifact-id>
-paos forge-node verify <node-id> <artifact-id>
+# Verify the executable locked by the installed Skill manifest
+paos forge-node install <skill-name> <node-id> --archive /path/to/<node>.tar.gz
+paos forge-node verify <skill-name> <node-id>
 ```
 
-The built-in `move-arm-by-ee` workflow resolves relative end-effector targets with
-`motion.resolve_relative_pose`, starts motion through `motion.move_pose`, and controls the gripper
-through `gripper.set_opening`. Its Gateway profile disables the Gateway Agent API. Running the
-MuJoCo profile requires the matching Bundle assets and locked node artifacts.
+Each Forge Skill bundle declares its workflow document, required Tool IDs, named runtime profiles,
+and exact platform/architecture Node locks. Each locked archive has an exact SHA-256 and contains
+one named root-level executable. For Registry Node downloads, the verified Skill lock supplies the
+digest when the Registry omits that duplicate field, and the exact size is resolved before the
+download begins; installation records and verifies the extracted binary hash.
+`python scripts/package_skill.py <bundle-dir> --output-dir <directory>` creates a deterministic
+bundle for publication. The PhyAgentOS source and release packages do not
+bundle concrete Forge Skills, Forge nodes, models, or simulation assets; obtain only the Skills
+needed for a deployment and install them explicitly.
 
 ## Task experience and Skill evolution
 
@@ -347,7 +373,7 @@ PhyAgentOS/
 | [Agent experience and Skill evolution](docs/en/05-agent-experience-and-skill-evolution.md) | Users and developers | Skill activation, episodes, Lesson clustering, promotion, persistence, and guardrails |
 | [Operations manual](docs/user_manual/README_en.md) | Operations | Startup, monitoring, restart, cancellation, and incident handling |
 | [Integration guide](docs/user_development_guide/README_en.md) | Integrators | Connecting Gateway actions without action-specific verifier code |
-| [Unified Forge Tool API contract](docs/forge/UNIFIED_TOOL_API.md) | Gateway/PAOS developers | Query/Action Tool API, AgentTask, Skill Runtime, evidence, verification, and recovery |
+| [Unified Forge Tool API contract](docs/forge/UNIFIED_TOOL_API.md) | Gateway/PAOS developers | Query/Action/Session Tool API, immutable Skill binding, AgentTask, Runtime, verification, and recovery |
 
 ## Development
 

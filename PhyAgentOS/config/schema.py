@@ -287,29 +287,20 @@ class ForgeEvidenceConfig(Base):
 
 
 class ForgeConfig(Base):
-    """The only supported robot execution integration: Forge Tool API."""
+    """Agent-side timeout and evidence policy for an active Forge Skill runtime."""
 
-    enabled: bool = False
-    base_url: str = "http://127.0.0.1:9001"
-    api_version: Literal["forge-tool-api.v1"] = "forge-tool-api.v1"
     request_timeout_s: float = Field(default=10.0, gt=0)
     poll_interval_s: float = Field(default=0.5, ge=0.1, le=5.0)
     execution_timeout_s: float = Field(default=300.0, gt=0)
     evidence: ForgeEvidenceConfig = Field(default_factory=ForgeEvidenceConfig)
 
-    @field_validator("base_url")
-    @classmethod
-    def validate_base_url(cls, value: str) -> str:
-        normalized = value.strip().rstrip("/")
-        if not normalized.startswith(("http://", "https://")):
-            raise ValueError("forge.baseUrl must be an HTTP(S) URL")
-        return normalized
+DEFAULT_RESOURCE_REGISTRY_URL = "https://paos-resource-manager.dev.x-era.com"
 
 
 class ResourceRegistryConfig(Base):
     """Public artifact registry used for Skill and Forge Runtime downloads."""
 
-    url: str = ""
+    url: str = DEFAULT_RESOURCE_REGISTRY_URL
 
     @field_validator("url")
     @classmethod
@@ -495,6 +486,16 @@ class Config(BaseSettings):
             raise ValueError(
                 "legacy `runtime` configuration is unsupported; remove it and configure `forge`"
             )
+        if isinstance(value, dict) and isinstance(value.get("forge"), dict):
+            unsupported = sorted(
+                set(value["forge"])
+                & {"enabled", "baseUrl", "base_url", "apiVersion", "api_version"}
+            )
+            if unsupported:
+                raise ValueError(
+                    "Forge execution endpoints come only from an active installed Skill; "
+                    f"remove unsupported forge key(s): {', '.join(unsupported)}"
+                )
         return value
 
     @property

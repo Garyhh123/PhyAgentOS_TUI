@@ -5,6 +5,7 @@ import os
 import select
 import signal
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 # Force UTF-8 encoding for Windows console
@@ -25,6 +26,14 @@ from prompt_toolkit.history import FileHistory
 from prompt_toolkit.patch_stdout import patch_stdout
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.progress import (
+    BarColumn,
+    DownloadColumn,
+    Progress,
+    TextColumn,
+    TimeRemainingColumn,
+    TransferSpeedColumn,
+)
 from rich.table import Table
 from rich.text import Text
 
@@ -41,6 +50,42 @@ app = typer.Typer(
 
 console = Console()
 EXIT_COMMANDS = {"exit", "quit", "/exit", "/quit", ":q"}
+
+
+@contextmanager
+def _download_progress():
+    tasks: dict[str, int] = {}
+    with Progress(
+        TextColumn("[cyan]{task.description}"),
+        BarColumn(),
+        DownloadColumn(),
+        TransferSpeedColumn(),
+        TimeRemainingColumn(),
+        console=console,
+    ) as progress:
+
+        def report(event, artifact, downloaded: int, total: int | None) -> None:
+            label = artifact.name or artifact.version or "artifact"
+            task_id = tasks.get(artifact.url)
+            if event == "cached":
+                progress.console.print(
+                    f"[green]✓[/green] Using cached [cyan]{label}[/cyan] "
+                    f"({downloaded} bytes)"
+                )
+                return
+            if task_id is None:
+                progress.console.print(
+                    f"[bold]Downloading[/bold] [cyan]{label}[/cyan]\n"
+                    f"[dim]{artifact.url}[/dim]"
+                )
+                task_id = progress.add_task(label, total=total, completed=downloaded)
+                tasks[artifact.url] = task_id
+            else:
+                progress.update(task_id, total=total)
+            if event in {"advance", "complete"}:
+                progress.update(task_id, completed=downloaded)
+
+        yield report
 
 # ---------------------------------------------------------------------------
 # CLI input: prompt_toolkit for editing, paste, history, and display
@@ -377,41 +422,52 @@ def _make_forge_verifier(config: Config, provider):
 
 
 def _make_forge_components(config: Config, provider):
-    """Build one Tool API client/task aggregate, preferring an active Skill runtime."""
+    """Build dynamic Agent components from the single managed Skill runtime."""
+    from PhyAgentOS.forge.binding import ForgeSkillBindingResolver
     from PhyAgentOS.forge.task import AgentTaskCoordinator
-    from PhyAgentOS.forge.tool_client import ForgeToolClient
-    from PhyAgentOS.skill_runtime.integration import discover_active_runtime
+    from PhyAgentOS.skill_runtime.catalog import SkillCatalog
+    from PhyAgentOS.skill_runtime.integration import (
+        ActiveRuntimeRegistry,
+        DynamicForgeToolClient,
+        DynamicRuntimeSet,
+        discover_active_runtime,
+    )
+    from PhyAgentOS.skill_runtime.manager import RuntimeManager
+    from PhyAgentOS.skill_runtime.state import RuntimeStateStore
 
-    active_runtime = discover_active_runtime()
-    if active_runtime is None and not config.forge.enabled:
-        return None, None, None, None
-    if active_runtime is not None:
-        client = active_runtime.client
-        invocation_ids = active_runtime.invocation_ids
-        forge_config = config.forge.model_copy(
-            update={"enabled": True, "base_url": active_runtime.gateway_url}
-        )
-    else:
-        client = ForgeToolClient(
-            config.forge.base_url, timeout_s=config.forge.request_timeout_s
-        )
-        invocation_ids = set()
-        forge_config = config.forge
-
-    active_skill_name = active_runtime.skill_name if active_runtime is not None else None
-
-    def runtime_available(name: str) -> bool:
-        return active_skill_name is not None and name == active_skill_name
+    catalog = SkillCatalog()
+    state_store = RuntimeStateStore()
+    manager = RuntimeManager(catalog=catalog, state_store=state_store)
+    active_runtime = discover_active_runtime(
+        catalog=catalog,
+        state_store=state_store,
+        manager=manager,
+    )
+    runtime_registry = ActiveRuntimeRegistry(
+        active_runtime,
+        catalog=catalog,
+        state_store=state_store,
+        auto_refresh=True,
+    )
+    client = DynamicForgeToolClient(runtime_registry)
+    invocation_ids = DynamicRuntimeSet(runtime_registry, "invocation_ids")
+    session_ids = DynamicRuntimeSet(runtime_registry, "session_ids")
+    task_binding_ids = DynamicRuntimeSet(runtime_registry, "task_binding_ids")
+    binding_resolver = ForgeSkillBindingResolver(runtime_registry)
 
     coordinator = AgentTaskCoordinator(
         workspace=config.workspace_path,
-        config=forge_config,
+        config=config.forge,
         client=client,
+        binding_resolver=binding_resolver,
+        runtime_invocation_ids=invocation_ids,
+        runtime_session_ids=session_ids,
+        runtime_task_binding_ids=task_binding_ids,
         verifier=_make_forge_verifier(config, provider),
         max_replans=config.agents.verification.max_replans_per_episode,
         replan_timeout_s=config.agents.verification.replan_timeout_s,
     )
-    return client, invocation_ids, coordinator, runtime_available
+    return client, invocation_ids, coordinator, runtime_registry.is_available
 
 
 def _load_command_config(config: str | None = None, workspace: str | None = None) -> Config:
@@ -912,13 +968,15 @@ def skill_search(
     console.print(table)
 
 
-def _install_skill_from_source(
-    name: str,
-    version: str | None,
-    index: str | None,
+def _install_skill_bundle(
+    archive: Path,
+    *,
+    expected_sha256: str,
+    index: str | None = None,
 ) -> None:
     import tempfile
 
+    from PhyAgentOS.skill_runtime.catalog import SkillCatalog, SkillNotFoundError
     from PhyAgentOS.skill_runtime.installer import NodeInstaller, SkillInstaller
     from PhyAgentOS.skill_runtime.registry import (
         DownloadCache,
@@ -927,13 +985,9 @@ def _install_skill_from_source(
     )
     from PhyAgentOS.skill_runtime.state import RuntimeStateStore
 
-    static = index is not None
-    cache = DownloadCache()
-    try:
-        source = StaticPackageIndex(index) if index else RegistryClient()
-        with source:
-            artifact = source.skill(name, version)
-            archive = cache.download(artifact)
+    with _download_progress() as report:
+        cache = DownloadCache(progress=report)
+        try:
             with tempfile.TemporaryDirectory(prefix="paos-skill-preview-") as directory:
                 preview_root = Path(directory)
                 preview = SkillInstaller(
@@ -941,96 +995,175 @@ def _install_skill_from_source(
                     state_store=RuntimeStateStore(preview_root / "run"),
                 ).install(
                     archive,
-                    expected_sha256=artifact.sha256,
-                    verify_archive_manifest=not static,
+                    expected_sha256=expected_sha256,
                 )
                 node_installer = NodeInstaller()
-                for node_id, lock in sorted(preview.artifacts.nodes.items()):
-                    try:
-                        installed = node_installer.load(node_id, lock.artifact_id)
-                        if lock.digest is None or installed.digest == lock.digest:
-                            continue
-                    except Exception:
-                        pass
-                    node_artifact = source.node(lock.artifact_id)
-                    node_archive = cache.download(node_artifact)
-                    if static:
-                        metadata = source.node_metadata(lock.artifact_id)
-                        actual = {
-                            "node_id": metadata.get("node_id"),
-                            "version": str(metadata.get("version", "")),
-                            "platform": str(metadata.get("platform", "")).lower(),
-                            "arch": str(metadata.get("arch", "")).lower(),
-                        }
-                        expected = {
-                            "node_id": node_id,
-                            "version": lock.version,
-                            "platform": lock.platform,
-                            "arch": lock.arch,
-                        }
-                        if actual != expected:
-                            raise RuntimeError(
-                                f"static node metadata does not satisfy Skill lock: {lock.artifact_id}"
+                missing_nodes = [
+                    (node_id, lock)
+                    for node_id, lock in sorted(preview.artifacts.nodes.items())
+                    if not node_installer.satisfies(lock)
+                ]
+                if missing_nodes and (
+                    index is not None or preview.artifacts.resolver == "registry"
+                ):
+                    source = StaticPackageIndex(index) if index else RegistryClient()
+                    with source:
+                        for node_id, lock in missing_nodes:
+                            node_artifact = source.node(
+                                lock.artifact_id,
+                                expected_sha256=lock.sha256,
                             )
-                        inventory = metadata.get("inventory")
-                        entrypoints = metadata.get("entrypoints")
-                        if not isinstance(inventory, list) or not isinstance(entrypoints, dict):
-                            raise RuntimeError(
-                                f"static node metadata is incomplete: {lock.artifact_id}"
-                            )
-                        files = tuple(
-                            str(item["path"])
-                            for item in inventory
-                            if isinstance(item, dict) and isinstance(item.get("path"), str)
-                        )
-                        node_installer.install_indexed(
-                            node_archive,
-                            node_id=node_id,
-                            artifact_id=lock.artifact_id,
-                            version=lock.version,
-                            platform=lock.platform,
-                            arch=lock.arch,
-                            entrypoints={
-                                str(key): str(value) for key, value in entrypoints.items()
-                            },
-                            files=files,
-                            expected_digest=lock.digest,
+                            if node_artifact.sha256 != lock.sha256:
+                                raise RuntimeError(
+                                    f"Registry digest for Node {node_id!r} does not match "
+                                    "Skill lock"
+                                )
+                            node_archive = cache.download(node_artifact)
+                            installed = node_installer.install(node_archive, lock)
+                            if not node_installer.satisfies(lock):
+                                raise RuntimeError(
+                                    f"Node executable {installed!s} does not satisfy Skill lock"
+                                )
+                    missing_nodes = []
+                try:
+                    local = SkillCatalog().get(preview.name)
+                except SkillNotFoundError:
+                    local = None
+                if local == preview:
+                    if missing_nodes:
+                        names = ", ".join(node_id for node_id, _ in missing_nodes)
+                        console.print(
+                            f"[yellow]Skill [cyan]{preview.name}[/cyan] is installed; "
+                            f"install locked Node(s) locally before start: {names}[/yellow]"
                         )
                     else:
-                        if node_artifact.node_digest is None:
-                            raise RuntimeError(
-                                f"Registry node {lock.artifact_id!r} is missing node_digest"
-                            )
-                        node_installer.install(
-                            node_archive,
-                            expected_sha256=node_artifact.sha256,
-                            expected_digest=node_artifact.node_digest,
+                        console.print(
+                            f"[green]✓[/green] Skill [cyan]{preview.name}[/cyan] "
+                            f"{preview.version} is already ready"
                         )
-            manifest = SkillInstaller().install(
-                archive,
-                expected_sha256=artifact.sha256,
-                verify_archive_manifest=not static,
-            )
-    finally:
-        cache.close()
+                    return
+                manifest = SkillInstaller().install(
+                    archive,
+                    expected_sha256=expected_sha256,
+                )
+        finally:
+            cache.close()
     console.print(
         f"[green]✓[/green] Installed Skill [cyan]{manifest.name}[/cyan] {manifest.version}"
     )
+    if missing_nodes:
+        names = ", ".join(node_id for node_id, _ in missing_nodes)
+        console.print(
+            f"[yellow]Install locked Node(s) locally before start: {names}[/yellow]"
+        )
+
+
+def _confirm_skill_install(name: str, source: str, size: int) -> bool:
+    size_mib = size / (1024 * 1024)
+    console.print(
+        f"[bold]Skill:[/bold] [cyan]{name}[/cyan]\n"
+        f"[bold]Source:[/bold] {source}\n"
+        f"[bold]Skill Bundle:[/bold] {size_mib:.1f} MiB ({size} bytes)\n"
+        "[yellow]Additional locked Forge Node archives may be downloaded after the "
+        "Skill Bundle is inspected.[/yellow]"
+    )
+    return typer.confirm("Continue with installation and downloads?", default=False)
+
+
+def _install_skill_from_registry(
+    name: str,
+    *,
+    version: str | None,
+    index: str | None,
+    ask_confirmation: bool,
+) -> None:
+    from PhyAgentOS.skill_runtime.registry import (
+        DownloadCache,
+        RegistryClient,
+        StaticPackageIndex,
+    )
+
+    source = StaticPackageIndex(index) if index else RegistryClient()
+    with source:
+        artifact = source.skill(name, version)
+    assert artifact.sha256 is not None and artifact.size is not None
+    if ask_confirmation and not _confirm_skill_install(name, artifact.url, artifact.size):
+        console.print("[yellow]Installation cancelled.[/yellow]")
+        return
+    with _download_progress() as report:
+        cache = DownloadCache(progress=report)
+        try:
+            archive = cache.download(artifact)
+        finally:
+            cache.close()
+    _install_skill_bundle(
+        archive,
+        expected_sha256=artifact.sha256,
+        index=index,
+    )
+
+
+def _resolve_local_bundle_path(name: str) -> Path:
+    path = Path(name).expanduser()
+    if not path.is_file():
+        raise RuntimeError(f"Skill bundle file not found: {name!r}")
+    if not str(path).endswith((".tar.gz", ".tgz")):
+        raise RuntimeError("local Skill bundle must be a .tar.gz or .tgz archive")
+    return path
+
+
+def _install_skill_from_local_bundle(
+    path: Path,
+    *,
+    index: str | None,
+    ask_confirmation: bool,
+) -> None:
+    from PhyAgentOS.skill_runtime.archive import sha256_file
+
+    size = path.stat().st_size
+    if ask_confirmation and not _confirm_skill_install(path.name, str(path.resolve()), size):
+        console.print("[yellow]Installation cancelled.[/yellow]")
+        return
+    _install_skill_bundle(
+        path,
+        expected_sha256=sha256_file(path),
+        index=index,
+    )
+
+
+def _resolve_skill_install_source(name: str) -> str | Path:
+    path = Path(name).expanduser()
+    if path.exists() or name.endswith((".tar.gz", ".tgz")) or "/" in name or "\\" in name:
+        return _resolve_local_bundle_path(name)
+    return name
 
 
 @skill_app.command("install")
 def skill_install(
-    name: str = typer.Argument(..., help="Registry Skill name"),
+    name: str = typer.Argument(..., help="Registry Skill name or local .tar.gz bundle"),
     version: str | None = typer.Option(None, "--version", "-v", help="Exact version"),
     index: str | None = typer.Option(
         None,
         "--index",
         help="Schema-v3 static package index path or URL",
     ),
+    local: bool = typer.Option(False, "--local", help="Treat NAME as a local bundle path"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the install confirmation"),
 ):
-    """Install a Skill from a static index or Resource Registry."""
+    """Install a verified Skill from the Registry, static index, or local bundle."""
     try:
-        _install_skill_from_source(name, version, index)
+        source = _resolve_local_bundle_path(name) if local else _resolve_skill_install_source(name)
+        if isinstance(source, Path):
+            _install_skill_from_local_bundle(
+                source, index=index, ask_confirmation=not yes
+            )
+        else:
+            _install_skill_from_registry(
+                source,
+                version=version,
+                index=index,
+                ask_confirmation=not yes,
+            )
     except Exception as error:
         _skill_runtime_error(error)
 
@@ -1044,20 +1177,26 @@ def skill_update(
         "--index",
         help="Schema-v3 static package index path or URL",
     ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the update confirmation"),
 ):
     """Update an installed, stopped Skill while retaining a backup."""
     try:
         from PhyAgentOS.skill_runtime.catalog import SkillCatalog
 
         SkillCatalog().get(name)
-        _install_skill_from_source(name, version, index)
+        _install_skill_from_registry(
+            name,
+            version=version,
+            index=index,
+            ask_confirmation=not yes,
+        )
     except Exception as error:
         _skill_runtime_error(error)
 
 
 @skill_app.command("remove")
 def skill_remove(name: str = typer.Argument(..., help="Installed Skill name")):
-    """Remove a Skill unless it is running or has active invocations."""
+    """Remove a Skill unless it is running or owns invocations, Sessions, or tasks."""
     from PhyAgentOS.skill_runtime.installer import SkillInstaller
 
     try:
@@ -1176,6 +1315,51 @@ def skill_status(skill_name: str = typer.Argument(..., help="Installed Skill nam
         console.print(f"[red]Last error: {state.last_error}[/red]")
 
 
+@skill_app.command("switch")
+def skill_switch(
+    skill_name: str = typer.Argument(..., help="Installed target Skill name"),
+    profile: str = typer.Option(..., "--profile", "-p", help="Target Runtime profile"),
+):
+    """Safely switch the active Runtime when no AgentTask is non-terminal."""
+    from PhyAgentOS.config.loader import load_config
+    from PhyAgentOS.forge.task import AgentTaskStore
+    from PhyAgentOS.skill_runtime.catalog import SkillCatalog
+    from PhyAgentOS.skill_runtime.integration import (
+        ActiveRuntimeRegistry,
+        SkillRuntimeController,
+        discover_active_runtime,
+    )
+    from PhyAgentOS.skill_runtime.manager import RuntimeManager
+    from PhyAgentOS.skill_runtime.state import RuntimeStateStore
+
+    try:
+        catalog = SkillCatalog()
+        states = RuntimeStateStore()
+        manager = RuntimeManager(catalog=catalog, state_store=states)
+        active = discover_active_runtime(
+            catalog=catalog,
+            state_store=states,
+            manager=manager,
+        )
+        registry = ActiveRuntimeRegistry(active)
+        controller = SkillRuntimeController(
+            registry,
+            manager=manager,
+            catalog=catalog,
+            state_store=states,
+            task_store=AgentTaskStore(load_config().workspace_path),
+        )
+        selected = controller.switch(skill_name, profile)
+    except Exception as error:
+        _skill_runtime_error(error)
+        return
+    console.print(
+        f"[green]✓[/green] Active Forge Runtime is now "
+        f"[cyan]{selected.skill_name}[/cyan] "
+        f"(profile={selected.profile}, instance={selected.runtime_instance_id})"
+    )
+
+
 @skill_app.command("logs")
 def skill_logs(
     skill_name: str = typer.Argument(..., help="Installed Skill name"),
@@ -1198,7 +1382,11 @@ def skill_logs(
 @skill_app.command("stop")
 def skill_stop(
     skill_name: str = typer.Argument(..., help="Installed Skill name"),
-    force: bool = typer.Option(False, "--force", help="Force-stop despite active invocations"),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Force-stop despite active invocations, Sessions, or task bindings",
+    ),
 ):
     """Stop a managed Skill dataflow without shutting down shared Dora services."""
     from PhyAgentOS.skill_runtime.manager import RuntimeManager
@@ -1224,51 +1412,72 @@ app.add_typer(forge_node_app, name="forge-node")
 
 @forge_node_app.command("install")
 def forge_node_install(
-    artifact_id: str = typer.Argument(..., help="Registry node artifact ID"),
+    skill_name: str = typer.Argument(..., help="Installed Skill containing the Node lock"),
+    node_id: str = typer.Argument(..., help="Node ID from the Skill lock"),
+    archive: Path | None = typer.Option(
+        None,
+        "--archive",
+        help="Independently obtained local Node .tar.gz instead of a Registry download",
+    ),
 ):
-    """Download and atomically install one immutable Forge node version."""
+    """Download the exact single-executable archive pinned by a Skill lock."""
+    from PhyAgentOS.skill_runtime.catalog import SkillCatalog
     from PhyAgentOS.skill_runtime.installer import NodeInstaller
     from PhyAgentOS.skill_runtime.registry import DownloadCache, RegistryClient
 
-    cache = DownloadCache()
-    try:
-        with RegistryClient() as registry:
-            artifact = registry.node(artifact_id)
-        if artifact.node_digest is None:
-            raise RuntimeError("Registry response is missing node_digest")
-        archive = cache.download(artifact)
-        manifest = NodeInstaller().install(
-            archive,
-            expected_sha256=artifact.sha256,
-            expected_digest=artifact.node_digest,
-        )
-    except Exception as error:
-        _skill_runtime_error(error)
-        return
-    finally:
-        cache.close()
+    with _download_progress() as report:
+        cache = DownloadCache(progress=report)
+        try:
+            manifest = SkillCatalog().get(skill_name)
+            lock = manifest.artifacts.nodes.get(node_id)
+            if lock is None:
+                raise RuntimeError(f"Skill {skill_name!r} does not lock Node {node_id!r}")
+            if archive is None:
+                with RegistryClient() as registry:
+                    artifact = registry.node(
+                        lock.artifact_id,
+                        expected_sha256=lock.sha256,
+                    )
+                if artifact.sha256 != lock.sha256:
+                    raise RuntimeError("Registry Node sha256 does not match the Skill lock")
+                node_archive = cache.download(artifact)
+            else:
+                node_archive = archive.expanduser().resolve()
+                if not node_archive.is_file() or node_archive.is_symlink():
+                    raise RuntimeError("local Node archive is not a regular file")
+            installed = NodeInstaller().install(node_archive, lock)
+        except Exception as error:
+            _skill_runtime_error(error)
+            return
+        finally:
+            cache.close()
     console.print(
         f"[green]✓[/green] Installed Forge node "
-        f"[cyan]{manifest.node_id}[/cyan] {manifest.version} ({manifest.artifact_id})"
+        f"[cyan]{lock.node_id}[/cyan] {lock.version} ({lock.artifact_id}) at {installed}"
     )
 
 
 @forge_node_app.command("verify")
 def forge_node_verify(
-    node_id: str = typer.Argument(...),
-    artifact_id: str = typer.Argument(...),
+    skill_name: str = typer.Argument(..., help="Installed Skill containing the Node lock"),
+    node_id: str = typer.Argument(..., help="Node ID from the Skill lock"),
 ):
-    """Verify one installed node manifest, host lock, and all file digests."""
+    """Verify an installed executable and receipt against its Skill lock."""
+    from PhyAgentOS.skill_runtime.catalog import SkillCatalog
     from PhyAgentOS.skill_runtime.installer import NodeInstaller
 
     try:
-        manifest = NodeInstaller().load(node_id, artifact_id)
+        manifest = SkillCatalog().get(skill_name)
+        lock = manifest.artifacts.nodes.get(node_id)
+        if lock is None:
+            raise RuntimeError(f"Skill {skill_name!r} does not lock Node {node_id!r}")
+        NodeInstaller().load(lock)
     except Exception as error:
         _skill_runtime_error(error)
         return
     console.print(
-        f"[green]✓[/green] Forge node [cyan]{manifest.node_id}[/cyan] "
-        f"{manifest.artifact_id} verified"
+        f"[green]✓[/green] Forge node [cyan]{lock.node_id}[/cyan] "
+        f"{lock.artifact_id} SHA-256 verified"
     )
 
 # ============================================================================
