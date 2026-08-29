@@ -21,8 +21,8 @@ PhyAgentOS 提供基于 Docker 的快速部署方案，无需手动配置 Python
 镜像**不包含** Dora CLI、具体 Forge Skill 或 Node、GPU / CUDA、Isaac Sim、BEHAVIOR-1K
 及其他机器人 Runtime 依赖。标准镜像运行通用 Agent 与消息总线 gateway，不提供托管 Forge
 Skill Runtime。需要该 Runtime 时，应按[用户手册](../zh/02-user-manual.md#托管-skill-profile-所需的-dora-cli)
-使用宿主机原生 PhyAgentOS 环境运行，或者构建包含固定 Dora CLI 版本与所选 Skill profile 全部
-前置条件的定制镜像。仅在宿主机安装 Dora 不会使其出现在标准容器内。
+使用宿主机原生 PhyAgentOS 环境运行，或者构建包含 Dora CLI v0.4.1、`dora-message` v0.7.0
+与所选 Skill profile 全部前置条件的定制镜像。仅在宿主机安装 Dora 不会使其出现在标准容器内。
 
 > **关于网关端口**：`paos gateway` 是消息总线服务（Agent + 频道 + Cron + Heartbeat + Forge 编排），**仅主动外连**（连接 LLM provider、Telegram/钉钉等频道），不监听入站端口。`config.json` 中的 `gateway.port` 当前仅用于启动日志展示，未绑定 socket，因此容器**无需** `-p` 端口映射。
 
@@ -161,8 +161,9 @@ docker run -d --name phyagentos-gateway \
 
 ### 1. 不包含托管 Forge Skill Runtime
 
-标准镜像没有 Dora CLI 或具体 Forge Runtime 制品。因此，除非显式扩展镜像并安装所选 Skill
-的平台依赖，否则该镜像不支持 `paos skill start`。仅使用 Agent 和消息渠道时不需要 Dora。
+标准镜像没有 Dora CLI 或具体 Forge Runtime 制品。因此，除非显式扩展镜像并安装 Dora CLI
+v0.4.1、`dora-message` v0.7.0 与所选 Skill 的平台依赖，否则该镜像不支持
+`paos skill start`。仅使用 Agent 和消息渠道时不需要 Dora。
 
 ### 2. WhatsApp 渠道不可用
 

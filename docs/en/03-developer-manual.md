@@ -156,9 +156,10 @@ Start, stop, Skill install/update commit, and removal share a non-blocking per-S
 lock. Status preserves `starting` while that lock proves startup is still active, while a stale
 unlocked `starting` state is reconciled normally.
 
-The documented PhyAgentOS 0.2.3 lifecycle-command baseline is Dora CLI v0.5.0. RuntimeManager
-requires compatible command behavior but does not enforce an exact semantic version. Dora is a
-host runtime prerequisite, not a Python dependency and not part of a Skill Bundle.
+The current Forge Skill compatibility baseline is Dora CLI v0.4.1 with `dora-message` v0.7.0.
+RuntimeManager requires compatible command behavior but does not enforce an exact semantic version;
+operators must prevent a mismatched coordinator/daemon from being reused. Dora is a host runtime
+prerequisite, not a Python dependency and not part of a Skill Bundle.
 
 A normal stop is rejected while non-terminal invocations, Sessions, or task bindings remain
 tracked. Force stop records an audit event and does not change invocation truth.

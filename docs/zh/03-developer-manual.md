@@ -150,9 +150,9 @@ dataflow 渲染会解析 `FORGE_RUNTIME_BIN`、`PAOS_SKILL_ROOT`、`PAOS_SKILL_N
 install/update 提交与 remove 共享按 Skill 的非阻塞跨进程锁。锁能证明启动仍在执行时，status
 保留 `starting`；无锁的陈旧 `starting` 仍按原规则核对。
 
-PhyAgentOS 0.2.3 的文档化生命周期命令基线为 Dora CLI v0.5.0。RuntimeManager 要求兼容的
-命令行为，但不强制精确语义版本。Dora 是主机 Runtime 前置条件，不是 Python dependency，
-也不属于 Skill Bundle。
+当前 Forge Skill 兼容基线为 Dora CLI v0.4.1 与 `dora-message` v0.7.0。RuntimeManager 要求
+兼容的命令行为，但不强制精确语义版本；运维人员必须避免复用协议不匹配的 coordinator/daemon。
+Dora 是主机 Runtime 前置条件，不是 Python dependency，也不属于 Skill Bundle。
 
 存在被追踪的非终态 invocation、Session 或 task binding 时，正常 stop 会被拒绝。Force stop
 记录 audit event，不改变 invocation truth。

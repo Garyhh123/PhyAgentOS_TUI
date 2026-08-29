@@ -201,6 +201,10 @@ archives; do not treat `--version` as a Registry history query.
 
 ## 6. Design the Dora profile
 
+Develop and validate the currently distributed Forge Skill profiles with Dora CLI v0.4.1 and
+`dora-message` v0.7.0. Keep Node builds on that protocol generation until the Skill locks and host
+baseline are upgraded together.
+
 The dataflow should give each node explicit inputs/outputs and use the Gateway Tool request/response
 ports declared in its profile. Required executables are resolved from the immutable Runtime
 environment. Assets remain in the Skill Bundle and are referenced with relocatable paths.

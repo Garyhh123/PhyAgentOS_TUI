@@ -43,8 +43,9 @@ Skill/Runtime/ToolSpec binding while keeping Gateway as the execution authority.
 - Forge Node downloads accept Registry responses that omit duplicate digest and size fields. The
   verified Skill lock remains the digest authority, while the direct-download endpoint supplies
   the content length before the archive is downloaded and checked.
-- Documented the Dora CLI v0.5.0 lifecycle-command baseline, versioned installation methods, PATH and
-  lifecycle checks, and RuntimeManager's automatic local Dora service startup.
+- Documented the Dora CLI v0.4.1 and `dora-message` v0.7.0 Forge Skill compatibility baseline,
+  version-pinned installation methods, PATH and lifecycle checks, and RuntimeManager's automatic
+  local Dora service startup.
 - Startup-hook failures, missing Bash, and execution errors now persist a `failed` lifecycle state
   and diagnostic log before Dora can start, rather than leaving stale or unstarted state.
 - Start, stop, install/update commit, and removal now use a non-blocking cross-process lock per

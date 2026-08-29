@@ -35,8 +35,9 @@ Gateway 负责执行，PAOS 负责用户任务聚合与语义判定。Skill Runt
 - Skill Bundle metadata 包含 size 与 SHA-256，每个 Node lock 具有精确 SHA-256，并能解析为大小
   明确的直接下载；
 - required binaries 可执行，required assets 存在，required environment 已设置；
-- Dora CLI v0.5.0（PhyAgentOS 0.2.3 的生命周期命令基线）已安装且位于 `PATH`，`dora --version`
-  指向预期 executable；安装方式见[用户手册](../zh/02-user-manual.md#托管-skill-profile-所需的-dora-cli)；
+- Dora CLI v0.4.1 与 `dora-message` v0.7.0（当前 Forge Skill 兼容基线）已安装且位于
+  `PATH`，`dora --version` 同时指向预期版本；安装方式见
+  [用户手册](../zh/02-user-manual.md#托管-skill-profile-所需的-dora-cli)；
 - profile Gateway 地址没有被非托管进程占用。
 
 ### Forge Gateway

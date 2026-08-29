@@ -31,44 +31,47 @@ The default configuration is `~/.PhyAgentOS/config.json`; the default workspace 
 
 Dora is not needed to run the general Agent, search for a Skill, or complete `paos skill install`.
 It is a host prerequisite for `paos skill start`, because RuntimeManager uses the `dora` command to
-manage the selected profile. PhyAgentOS 0.2.3 uses Dora CLI v0.5.0 as its documented
-lifecycle-command baseline; pin this version for reproducible deployments.
+manage the selected profile. PhyAgentOS 0.2.3 uses Dora CLI v0.4.1 and `dora-message` v0.7.0 as its
+Forge Skill compatibility baseline; pin this exact release for reproducible deployments.
 
 Linux or macOS, using the versioned official installer:
 
 ```bash
 curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/dora-rs/dora/releases/download/v0.5.0/dora-cli-installer.sh | sh
+  https://github.com/dora-rs/dora/releases/download/v0.4.1/dora-cli-installer.sh | sh
 ```
 
 Windows PowerShell:
 
 ```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://github.com/dora-rs/dora/releases/download/v0.5.0/dora-cli-installer.ps1 | iex"
+powershell -ExecutionPolicy ByPass -c "irm https://github.com/dora-rs/dora/releases/download/v0.4.1/dora-cli-installer.ps1 | iex"
 ```
 
 With an existing Rust toolchain:
 
 ```bash
-cargo install dora-cli --version 0.5.0 --locked
+cargo install dora-cli --version 0.4.1 --locked
 ```
 
 Open a new shell if the installer changed `PATH`, then verify the executable:
 
 ```bash
 dora --version
-# dora-cli 0.5.0
+# dora-cli 0.4.1
+# dora-message: 0.7.0
 ```
 
-RuntimeManager requires a working compatible command interface but does not enforce an exact Dora
-semantic version or upgrade Dora automatically.
+RuntimeManager verifies the command interface but does not enforce the semantic version or upgrade
+Dora automatically. Operators must keep the CLI, coordinator, daemon, and locked Skill Nodes on
+the compatible protocol generation. The currently published Forge Skill Nodes use message format
+v0.7.0; Dora v0.5.0 uses v0.8.0 and rejects those Nodes during registration.
 
 The Python package `dora-rs` is the Python node/operator API and is not a substitute for installing
 the Dora CLI. Before a coordinator and daemon are running, `dora check` is expected to report that
 they are unavailable. `paos skill start` runs this check and starts them with `dora up` when needed;
 after a Runtime has started, `dora check` should succeed. See the
-[official Dora installation instructions](https://github.com/dora-rs/dora#installation) for
-platform details.
+[official Dora v0.4.1 release](https://github.com/dora-rs/dora/releases/tag/v0.4.1) for platform
+assets and checksums. Do not follow an unversioned installer that can select a newer CLI.
 
 ## 2. Configure the model and Forge
 
@@ -291,6 +294,7 @@ does not delete execution records or evolution history.
 | Tool not found or not ready | Run `forge_tool_context`; confirm ToolSpec, binding, Endpoint, and Runtime profile. |
 | Skill will not install | Confirm Skill bundle metadata has size and SHA-256, every Node lock has a SHA-256, and each Registry/index Node resolves to a sized direct download. |
 | Skill will not start | Run `paos skill status` and `logs`; verify Dora, dataflow paths, assets, nodes, and Gateway `/tools`. |
+| Dora reports message format v0.7.0 versus v0.8.0 | Stop the mismatched coordinator/daemon, install Dora CLI v0.4.1, verify `dora-message: 0.7.0`, then start the Skill again. |
 | Another task is active | Read the known task with `forge_task_get`; finish or cancel it instead of editing SQLite. |
 | Action result is pending | Continue status/result reconciliation using the same `invocation_id`. |
 | Action result is unknown | Inspect Gateway, Dora, and physical state; do not retry blindly. |

@@ -23,8 +23,8 @@ BEHAVIOR-1K, or other robot Runtime dependencies. The stock image runs the gener
 message-bus gateway; it does not provide a managed Forge Skill Runtime. Run that Runtime from a
 host-native PhyAgentOS installation following the
 [user manual](../en/02-user-manual.md#dora-cli-for-managed-skill-profiles), or build a custom image
-containing the pinned Dora CLI and every prerequisite of the selected Skill profile. Installing
-Dora only on the host does not make it visible inside the stock container.
+containing Dora CLI v0.4.1 with `dora-message` v0.7.0 and every prerequisite of the selected Skill
+profile. Installing Dora only on the host does not make it visible inside the stock container.
 
 > **About the gateway port**: `paos gateway` is a message-bus service (Agent + channels + Cron + Heartbeat + Forge orchestration) that makes **outbound connections only** (LLM providers, Telegram/DingTalk, etc.) and does **not** bind an inbound port. `gateway.port` in `config.json` is currently shown only in the startup log and is not bound to a socket, so the container needs **no** `-p` port mapping.
 
@@ -164,8 +164,9 @@ docker run -d --name phyagentos-gateway \
 ### 1. Managed Forge Skill Runtime is not included
 
 The stock image has no Dora CLI or concrete Forge Runtime artifacts. `paos skill start` therefore
-is not supported in this image without an explicitly extended image and the selected Skill's
-platform dependencies. Agent-only and message-channel use does not require Dora.
+is not supported in this image without an explicitly extended image containing Dora CLI v0.4.1,
+`dora-message` v0.7.0, and the selected Skill's platform dependencies. Agent-only and
+message-channel use does not require Dora.
 
 ### 2. WhatsApp channel unavailable
 

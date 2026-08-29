@@ -182,7 +182,8 @@ Registry Node downloads use the verified Skill lock as the digest authority and 
 size from Registry metadata or the direct-download endpoint before entering the cache. Installation
 is explicit and confirmed by default.
 
-RuntimeManager requires Dora CLI on `PATH` (v0.5.0 is the PhyAgentOS 0.2.3 lifecycle-command baseline).
+RuntimeManager requires Dora CLI on `PATH` (v0.4.1 with `dora-message` v0.7.0 is the current Forge
+Skill compatibility baseline).
 It materializes an environment whose digest covers the selected dataflow path and profile file
 contents. `PAOS_SKILL_NAME` and `PAOS_SKILL_VERSION` are available both to Dora processes and as
 rendered dataflow placeholders.

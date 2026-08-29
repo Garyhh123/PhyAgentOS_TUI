@@ -175,7 +175,8 @@ Skill Runtime 安装并管理 manifest v2 Bundle。安装要求安全 contained 
 Registry Node 下载以已验证的 Skill lock 为摘要权威，并在进入 cache 前从 Registry 元数据或直接
 下载端点解析精确大小。安装始终显式触发，默认还需确认。
 
-RuntimeManager 要求 `PATH` 中存在 Dora CLI（v0.5.0 是 PhyAgentOS 0.2.3 的生命周期命令基线）。
+RuntimeManager 要求 `PATH` 中存在 Dora CLI（v0.4.1 与 `dora-message` v0.7.0 是当前 Forge
+Skill 兼容基线）。
 它物化摘要覆盖 dataflow 路径与 profile 文件内容的环境，并将 `PAOS_SKILL_NAME` 与
 `PAOS_SKILL_VERSION` 注入 Dora 进程环境及 dataflow 占位符。
 

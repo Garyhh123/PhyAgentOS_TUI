@@ -191,6 +191,9 @@ rollback。不得要求调用方关闭摘要校验。
 
 ## 6. 设计 Dora profile
 
+当前分发的 Forge Skill profile 应使用 Dora CLI v0.4.1 与 `dora-message` v0.7.0 开发和验收。
+Skill lock 与主机基线整体升级前，Node 构建必须保持在同一协议代际。
+
 Dataflow 为每个 Node 定义明确 inputs/outputs，并使用 Gateway profile 声明的 Tool request/
 response ports。必需 executable 从不可变 Runtime environment 解析；assets 保留在 Skill Bundle
 中并使用可重定位路径。
