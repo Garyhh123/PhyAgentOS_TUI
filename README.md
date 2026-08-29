@@ -298,6 +298,8 @@ download begins; installation records and verifies the extracted binary hash.
 bundle for publication. The PhyAgentOS source and release packages do not
 bundle concrete Forge Skills, Forge nodes, models, or simulation assets; obtain only the Skills
 needed for a deployment and install them explicitly.
+The [integration development guide](docs/user_development_guide/README_en.md#5-package-publish-and-close-the-local-loop)
+documents Bundle layout, local validation, immutable publication order, and Registry acceptance.
 
 ## Task experience and Skill evolution
 

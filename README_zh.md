@@ -290,6 +290,8 @@ paos forge-node verify <skill-name> <node-id>
 `python scripts/package_skill.py <bundle-dir> --output-dir <directory>` 可生成确定性发布 Bundle。
 PhyAgentOS 源码与发布包不内置具体 Forge Skill、Forge node、模型或仿真资源；
 部署者只需独立获取实际需要的 Skill 并显式安装。
+[集成开发指南](docs/user_development_guide/README.md#5-打包发布与本地闭环)说明 Bundle 布局、
+本地验证、不可变发布顺序与 Registry 验收。
 
 ## 任务经验与 Skill 自进化
 

@@ -140,12 +140,21 @@ installers stage content, validate it, then atomically replace the target with r
 RuntimeManager:
 
 1. resolves the installed Skill and profile;
-2. materializes the locked environment without mutating installed nodes;
+2. materializes the locked environment without mutating installed nodes; its digest covers the
+   exact dataflow path and SHA-256 of every regular file beside that dataflow;
 3. checks the Dora CLI, dataflow, required files, and environment;
 4. refuses to adopt an unmanaged Gateway already using the address;
-5. checks the local Dora services, runs `dora up` when needed, and starts the named flow;
-6. waits for flow, `GET /tools`, and all required Tool contexts;
-7. persists running/failed/stopped state and lifecycle logs.
+5. persists `starting` and runs the optional Bundle start hook as
+   `bash <bundle>/start.sh <name> <version>` with inherited stdio;
+6. checks the local Dora services, runs `dora up` when needed, and starts the named flow;
+7. waits for flow, `GET /tools`, and all required Tool contexts;
+8. persists running/failed/stopped state and lifecycle logs.
+
+Dataflow rendering resolves `FORGE_RUNTIME_BIN`, `PAOS_SKILL_ROOT`, `PAOS_SKILL_NAME`, and
+`PAOS_SKILL_VERSION`; the two Skill identity values are also supplied to Dora process environments.
+Start, stop, Skill install/update commit, and removal share a non-blocking per-Skill cross-process
+lock. Status preserves `starting` while that lock proves startup is still active, while a stale
+unlocked `starting` state is reconciled normally.
 
 The documented PhyAgentOS 0.2.3 lifecycle-command baseline is Dora CLI v0.5.0. RuntimeManager
 requires compatible command behavior but does not enforce an exact semantic version. Dora is a
@@ -162,6 +171,8 @@ Skill lock supplies the expected digest, and the client resolves the size from R
 the direct-download endpoint. Any Registry digest that is present must match the lock. Resumed
 downloads are verified again before installation. An empty Registry URL permits only local bundles
 or an explicit static index. `PAOS_RESOURCE_REGISTRY_URL` overrides `resourceRegistry.url`.
+The public Registry lookup is name-based. A requested CLI version is validated against the
+downloaded Skill manifest before Node resolution rather than appended to the Registry URL.
 
 `discover_active_runtime` reconciles persisted state, Dora flow, Gateway health, and required Tool
 contexts. Its availability provider flows through SkillsLoader, ExperienceCoordinator, and

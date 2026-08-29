@@ -134,9 +134,17 @@ paos skill switch <other-skill-name> --profile <profile>
 
 `install` verifies archive size, SHA-256, the embedded file inventory, manifest v2, and locked
 nodes before atomically replacing a Skill. A verified Skill lock supplies a Node digest when the
-Registry omits that duplicate field; the Node download size is resolved before transfer. `start`
-launches only the named Dora profile and checks
-Gateway `/tools` plus required Tool contexts. Inspect lifecycle output with
+Registry omits that duplicate field; the Node download size is resolved before transfer. The
+public Registry resolves a Skill by name; `--version` is checked against the downloaded manifest
+before any Node download or installation commit.
+
+Before Dora starts, a Bundle may run `start.sh` as
+`bash <bundle>/start.sh <skill-name> <skill-version>` with terminal stdio inherited. These Bundles
+require Bash on `PATH`; a missing Bash or non-zero hook exit records `failed` and prevents Dora from
+starting. Bundles without the hook keep the normal cross-platform path. Status remains `starting`
+while a long hook, such as an external asset download, is active. After the hook succeeds, PAOS
+launches the named Dora profile and checks Gateway `/tools` and every required Tool context.
+Overlapping lifecycle changes for the same Skill are rejected immediately. Inspect lifecycle output with
 `paos skill logs <skill-name>`; stop with `paos skill stop <skill-name>`. `switch` refuses to run
 while an AgentTask is non-terminal, verifies the target before publishing it, and restores the
 previous Runtime if a same-Gateway target cannot start. A running Agent follows the persisted

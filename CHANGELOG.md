@@ -16,6 +16,9 @@ Skill/Runtime/ToolSpec binding while keeping Gateway as the execution authority.
 - Added crash recovery that reconciles persisted invocation IDs using reads only, plus
   version-scoped Forge experience and Lessons.
 - Added deterministic Skill bundle packaging and exact single-executable Node archive locks.
+- Added the optional Bundle startup hook
+  `bash <bundle>/start.sh <skill-name> <skill-version>` and supplies `PAOS_SKILL_NAME` and
+  `PAOS_SKILL_VERSION` to rendered dataflows and Dora process environments.
 
 ### Changed
 
@@ -27,6 +30,13 @@ Skill/Runtime/ToolSpec binding while keeping Gateway as the execution authority.
   Timeouts and unknown results cannot trigger an automatic POST retry.
 - Runtime stop and switching account for active invocations, Sessions, and task bindings; forced
   stop records an audit event.
+- Resource Registry Skill lookup uses the name endpoint. `paos skill install --version` validates
+  the downloaded manifest as a client-side constraint before Node resolution and installation
+  commit; schema-v3 static indexes retain version selection.
+- Runtime environment identity now covers the selected dataflow path and profile file digests, so
+  configuration edits and dataflow-path changes rematerialize the environment.
+- Expanded the bilingual integration guide with Bundle packaging, local validation, immutable
+  Node/Bundle publication order, and Registry acceptance guidance.
 
 ### Fixed
 
@@ -35,6 +45,11 @@ Skill/Runtime/ToolSpec binding while keeping Gateway as the execution authority.
   the content length before the archive is downloaded and checked.
 - Documented the Dora CLI v0.5.0 lifecycle-command baseline, versioned installation methods, PATH and
   lifecycle checks, and RuntimeManager's automatic local Dora service startup.
+- Startup-hook failures, missing Bash, and execution errors now persist a `failed` lifecycle state
+  and diagnostic log before Dora can start, rather than leaving stale or unstarted state.
+- Start, stop, install/update commit, and removal now use a non-blocking cross-process lock per
+  Skill, preventing overlapping lifecycle mutations while allowing automatic release on process
+  exit.
 
 ### Removed
 

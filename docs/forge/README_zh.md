@@ -175,10 +175,15 @@ Skill Runtime 安装并管理 manifest v2 Bundle。安装要求安全 contained 
 Registry Node 下载以已验证的 Skill lock 为摘要权威，并在进入 cache 前从 Registry 元数据或直接
 下载端点解析精确大小。安装始终显式触发，默认还需确认。
 
-RuntimeManager 要求 `PATH` 中存在 Dora CLI（v0.5.0 是 PhyAgentOS 0.2.3 的生命周期命令基线），需要时
-启动本地 Dora 服务，再启动命名 profile；随后检查 required binaries/assets/environment，等待
-Gateway `/tools` 与 manifest 全部 required Tool context，并持久化 status/log。健康活动 Runtime
-提供 Skill availability；其 manifest 是 Gateway URL 的唯一来源。
+RuntimeManager 要求 `PATH` 中存在 Dora CLI（v0.5.0 是 PhyAgentOS 0.2.3 的生命周期命令基线）。
+它物化摘要覆盖 dataflow 路径与 profile 文件内容的环境，并将 `PAOS_SKILL_NAME` 与
+`PAOS_SKILL_VERSION` 注入 Dora 进程环境及 dataflow 占位符。
+
+启动时先持久化 `starting`；Bundle 含可选 `start.sh` 时，要求 Bash，并在 Dora 前以
+`bash <bundle>/start.sh <name> <version>` 执行且继承终端 stdio。钩子成功后，RuntimeManager
+需要时启动本地 Dora 服务，再启动命名 profile，等待 Gateway `/tools` 与 manifest 全部
+required Tool context，并持久化 status/log。健康活动 Runtime 提供 Skill availability；其
+manifest 是 Gateway URL 的唯一来源。按 Skill 的跨进程锁拒绝重叠生命周期变更。
 
 存在被追踪非终态 invocation、Session 或 task binding 时，正常 stop 会被拒绝。Force stop
 记录 audit event，且不改变执行事实。

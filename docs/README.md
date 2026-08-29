@@ -21,7 +21,7 @@ The PhyAgentOS team maintains this directory for users, operators, and ecosystem
 
 - [运行手册](user_manual/README.md)：上线前检查、启动顺序、状态观测、取消、重启恢复、备份与故障分层。
 - [Docker 部署指南](user_manual/DOCKER.md)：基于 Docker 的快速部署，配合一键脚本完成构建、初始化与运行（仅外连网关，无入站端口）。
-- [集成开发指南](user_development_guide/README.md)：为 Gateway 增加 action、提供证据源、对接 Provider，以及 PAOS 扩展边界。
+- [集成开发指南](user_development_guide/README.md)：Tool/Node/Skill 接入、Bundle 打包与不可变发布、本地闭环、证据源、Provider 和 PAOS 扩展边界。
 - [通信架构](user_development_guide/COMMUNICATION.md)：Agent 消息、Forge HTTP/WebSocket、system event、SQLite 与 Artifact 边界。
 - [Forge Tool API 接入契约](forge/README_zh.md)：Query/Action/Session、不可变 Skill binding、ToolInvocation、AgentTask、证据、验证、恢复和 Skill Runtime 契约。
 
@@ -34,6 +34,7 @@ The PhyAgentOS team maintains this directory for users, operators, and ecosystem
 | 负责长期在线和故障处理 | [运行手册](user_manual/README.md) → [通信架构](user_development_guide/COMMUNICATION.md) |
 | 用 Docker 快速部署 | [Docker 部署指南](user_manual/DOCKER.md) |
 | 在 Gateway 增加新机器人动作 | [集成开发指南](user_development_guide/README.md) → [开发者手册](zh/03-developer-manual.md) |
+| 开发、打包并发布 Forge Skill | [集成开发指南](user_development_guide/README.md#5-打包发布与本地闭环) → [Forge 接入契约](forge/README_zh.md) |
 | 修改证据、验证、恢复或持久化 | [开发者手册](zh/03-developer-manual.md) → [Forge 接入契约](forge/README_zh.md) |
 | 使用或扩展任务经验、Lesson 与 Skill 自进化 | [Agent 经验与 Skill 自进化](zh/05-agent-experience-and-skill-evolution.md) → [开发者手册](zh/03-developer-manual.md) |
 
@@ -51,7 +52,7 @@ The PhyAgentOS team maintains this directory for users, operators, and ecosystem
 
 - [Operations Manual](user_manual/README_en.md): preflight checklist, startup order, observation, cancellation, restart recovery, backup, and failure layers.
 - [Docker Deployment Guide](user_manual/DOCKER_en.md): Docker-based quick deployment with a one-click script for build, init, and run (outbound-only gateway, no inbound port).
-- [Integration Development Guide](user_development_guide/README_en.md): adding Gateway actions, exposing evidence sources, connecting providers, and PAOS extension boundaries.
+- [Integration Development Guide](user_development_guide/README_en.md): Tool, Node, and Skill integration; Bundle packaging and immutable publication; the local loop; evidence sources; providers; and PAOS extension boundaries.
 - [Communication Architecture](user_development_guide/COMMUNICATION_en.md): Agent messages, Forge HTTP/WebSocket, system events, SQLite, and artifact boundaries.
 - [Forge Tool API Integration Contract](forge/README.md): Query/Action/Session, immutable Skill binding, ToolInvocation, AgentTask, evidence, verification, recovery, and Skill Runtime contracts.
 
@@ -64,6 +65,7 @@ The PhyAgentOS team maintains this directory for users, operators, and ecosystem
 | Operate a long-running service | [Operations Manual](user_manual/README_en.md) → [Communication Architecture](user_development_guide/COMMUNICATION_en.md) |
 | Deploy quickly with Docker | [Docker Deployment Guide](user_manual/DOCKER_en.md) |
 | Add a new robot action in Gateway | [Integration Guide](user_development_guide/README_en.md) → [Developer Manual](en/03-developer-manual.md) |
+| Develop, package, and publish a Forge Skill | [Integration Guide](user_development_guide/README_en.md#5-package-publish-and-close-the-local-loop) → [Forge Integration Contract](forge/README.md) |
 | Change evidence, verification, recovery, or persistence | [Developer Manual](en/03-developer-manual.md) → [Forge Integration Contract](forge/README.md) |
 | Use or extend task experience, Lessons, or Skill evolution | [Agent Experience and Skill Evolution](en/05-agent-experience-and-skill-evolution.md) → [Developer Manual](en/03-developer-manual.md) |
 

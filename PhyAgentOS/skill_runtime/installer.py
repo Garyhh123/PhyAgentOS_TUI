@@ -15,6 +15,7 @@ import yaml
 
 from PhyAgentOS.config.paths import get_forge_runtime_root, get_skill_bundle_root
 from PhyAgentOS.skill_runtime.archive import ArchiveValidator, sha256_file
+from PhyAgentOS.skill_runtime.locking import SkillOperationBusyError, SkillOperationLock
 from PhyAgentOS.skill_runtime.manifest import NodeLock, SkillManifest, load_manifest
 from PhyAgentOS.skill_runtime.runtime_manifest import normalize_arch, normalize_platform
 from PhyAgentOS.skill_runtime.state import RuntimeStateStore
@@ -101,36 +102,45 @@ class SkillInstaller:
             manifest = load_manifest(normalized / "skill.yaml")
             if manifest.skill_document != Path("SKILL.md"):
                 raise InstallerError("installed Skill skill_document must be SKILL.md")
-            target = self.root / manifest.name
-            if target.exists():
-                if manifest.name in _active_skills(self.state_store):
-                    raise InstallerError(f"Skill {manifest.name!r} is currently running")
-                try:
-                    old_version = load_manifest(target / "skill.yaml").version
-                except Exception:
-                    try:
-                        legacy = yaml.safe_load(
-                            (target / "skill.yaml").read_text(encoding="utf-8")
-                        )
-                        old_version = str(legacy.get("version", "legacy"))
-                    except Exception:
-                        old_version = "legacy"
-                stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
-                backup = self.root / ".backups" / manifest.name / f"{old_version}-{stamp}"
-                backup.parent.mkdir(parents=True, exist_ok=True)
-                os.replace(target, backup)
             try:
-                os.replace(normalized, target)
-                installed = load_manifest(target / "skill.yaml")
-            except Exception:
-                if target is not None and target.exists():
-                    failed = temporary / ".failed-install"
-                    os.replace(target, failed)
-                if backup is not None and target is not None:
-                    os.replace(backup, target)
-                raise
-            committed = True
-            return installed
+                with SkillOperationLock(self.state_store.root, manifest.name):
+                    target = self.root / manifest.name
+                    if target.exists():
+                        if manifest.name in _active_skills(self.state_store):
+                            raise InstallerError(f"Skill {manifest.name!r} is currently running")
+                        try:
+                            old_version = load_manifest(target / "skill.yaml").version
+                        except Exception:
+                            try:
+                                legacy = yaml.safe_load(
+                                    (target / "skill.yaml").read_text(encoding="utf-8")
+                                )
+                                old_version = str(legacy.get("version", "legacy"))
+                            except Exception:
+                                old_version = "legacy"
+                        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
+                        backup = (
+                            self.root
+                            / ".backups"
+                            / manifest.name
+                            / f"{old_version}-{stamp}"
+                        )
+                        backup.parent.mkdir(parents=True, exist_ok=True)
+                        os.replace(target, backup)
+                    try:
+                        os.replace(normalized, target)
+                        installed = load_manifest(target / "skill.yaml")
+                    except Exception:
+                        if target is not None and target.exists():
+                            failed = temporary / ".failed-install"
+                            os.replace(target, failed)
+                        if backup is not None and target is not None:
+                            os.replace(backup, target)
+                        raise
+                    committed = True
+                    return installed
+            except SkillOperationBusyError as exc:
+                raise InstallerError(str(exc)) from exc
         except InstallerError:
             raise
         except Exception as exc:
@@ -141,19 +151,23 @@ class SkillInstaller:
             shutil.rmtree(temporary, ignore_errors=True)
 
     def remove(self, name: str) -> None:
-        target = self.root / name
-        if name in {"", ".", ".."} or "/" in name or "\\" in name or not target.is_dir():
-            raise InstallerError(f"Skill {name!r} is not installed")
-        if name in _active_skills(self.state_store):
-            raise InstallerError(f"Skill {name!r} is currently running")
-        temporary = self.root / f".remove-{name}-{os.getpid()}"
-        os.replace(target, temporary)
         try:
-            shutil.rmtree(temporary)
-        except Exception:
-            if not target.exists():
-                os.replace(temporary, target)
-            raise
+            with SkillOperationLock(self.state_store.root, name):
+                target = self.root / name
+                if not target.is_dir():
+                    raise InstallerError(f"Skill {name!r} is not installed")
+                if name in _active_skills(self.state_store):
+                    raise InstallerError(f"Skill {name!r} is currently running")
+                temporary = self.root / f".remove-{name}-{os.getpid()}"
+                os.replace(target, temporary)
+                try:
+                    shutil.rmtree(temporary)
+                except Exception:
+                    if not target.exists():
+                        os.replace(temporary, target)
+                    raise
+        except (SkillOperationBusyError, ValueError) as exc:
+            raise InstallerError(str(exc)) from exc
 
 
 class NodeInstaller:
@@ -349,7 +363,14 @@ class SkillEnvironmentBuilder:
                 for lock, _ in providers.values()
             },
             "entrypoints": sorted(required),
+            "dataflow": profile.dataflow.as_posix(),
         }
+        profile_files: dict[str, str] = {}
+        profile_parent = skill.bundle_root / profile.dataflow.parent
+        for source in sorted(profile_parent.iterdir()):
+            if source.is_file():
+                profile_files[source.name] = sha256_file(source)
+        lock_value["profile_files"] = profile_files
         encoded = json.dumps(
             lock_value, ensure_ascii=False, separators=(",", ":"), sort_keys=True
         ).encode()
@@ -387,6 +408,9 @@ class SkillEnvironmentBuilder:
                 rendered = source_dataflow.read_text(encoding="utf-8").replace(
                     "${FORGE_RUNTIME_BIN}", str((target / "bin").resolve())
                 ).replace("${PAOS_SKILL_ROOT}", str(skill.bundle_root))
+                rendered = rendered.replace("${PAOS_SKILL_NAME}", skill.name).replace(
+                    "${PAOS_SKILL_VERSION}", skill.version
+                )
                 (launch_profile / profile.dataflow.name).write_text(
                     rendered, encoding="utf-8"
                 )

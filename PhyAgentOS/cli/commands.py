@@ -972,6 +972,7 @@ def _install_skill_bundle(
     archive: Path,
     *,
     expected_sha256: str,
+    expected_version: str | None = None,
     index: str | None = None,
 ) -> None:
     import tempfile
@@ -997,6 +998,11 @@ def _install_skill_bundle(
                     archive,
                     expected_sha256=expected_sha256,
                 )
+                if expected_version is not None and preview.version != expected_version:
+                    raise RuntimeError(
+                        f"Registry returned Skill {preview.name!r} version "
+                        f"{preview.version!r}; requested version was {expected_version!r}"
+                    )
                 node_installer = NodeInstaller()
                 missing_nodes = [
                     (node_id, lock)
@@ -1099,6 +1105,7 @@ def _install_skill_from_registry(
     _install_skill_bundle(
         archive,
         expected_sha256=artifact.sha256,
+        expected_version=version,
         index=index,
     )
 

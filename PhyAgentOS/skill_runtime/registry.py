@@ -161,8 +161,10 @@ class RegistryClient:
         return value
 
     def skill(self, name: str, version: str | None = None) -> RegistryArtifact:
-        suffix = f"/{quote(version, safe='')}" if version else ""
-        value = self._get(f"/v1/skills/{quote(name, safe='')}{suffix}")
+        # The public Registry resolves the active artifact by Skill name.  An
+        # optional CLI version is enforced against the downloaded manifest,
+        # not encoded into a non-existent Registry path.
+        value = self._get(f"/v1/skills/{quote(name, safe='')}")
         return RegistryArtifact.from_dict(value)
 
     def runtime(self, artifact_set_id: str) -> RegistryArtifact:

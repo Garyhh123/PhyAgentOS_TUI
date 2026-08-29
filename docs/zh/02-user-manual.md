@@ -130,7 +130,15 @@ paos skill switch <other-skill-name> --profile <profile>
 
 `install` 校验归档大小、SHA-256、内嵌文件清单、manifest v2 与锁定 Node，全部通过后才原子
 替换 Skill。Registry 省略重复的 Node 摘要字段时，以已验证 Skill lock 中的摘要为准，并在传输
-前解析 Node 下载大小。`start` 只启动指定 Dora profile，并检查 Gateway `/tools` 与所需 Tool context。
+前解析 Node 下载大小。公网 Registry 按 Skill 名称解析当前制品；`--version` 会在下载 Bundle 后、
+下载 Node 或提交安装前校验 manifest 版本。
+
+Bundle 可以在 Dora 启动前提供 `start.sh`；PAOS 以
+`bash <bundle>/start.sh <skill-name> <skill-version>` 执行并继承终端 stdio。此类 Bundle 要求
+`PATH` 中存在 Bash；Bash 缺失或钩子非零退出会记录为 `failed`，且不会启动 Dora。无钩子
+Bundle 继续使用常规跨平台启动路径。外部资源下载等长时间钩子执行期间状态保持 `starting`；
+钩子成功后，PAOS 才启动指定 Dora profile，并检查 Gateway `/tools` 与全部 required Tool
+context。同一 Skill 的重叠生命周期变更会立即报忙。
 使用 `paos skill logs <skill-name>` 查看生命周期日志，使用
 `paos skill stop <skill-name>` 停止。存在非终态 AgentTask 时 `switch` 会拒绝执行；目标 Runtime
 通过就绪校验后才会被选中，共用 Gateway 的目标启动失败时会恢复先前 Runtime。运行中的 Agent
