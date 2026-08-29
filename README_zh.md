@@ -1,7 +1,7 @@
 <div align="center">
   <img src="docs/imgs/logo_en.png" alt="PhyAgentOS" width="560">
 
-  <h3>认知与物理解耦 —— 基于证据验证的 Forge 原生具身执行框架</h3>
+  <h3>面向物理智能体的递归自我进化基础设施</h3>
 
   <p>
     <a href="https://github.com/PhyAgentOS/PhyAgentOS/stargazers">
