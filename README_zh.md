@@ -123,13 +123,15 @@ python -m pip install -e ".[dev]"
 推荐 Python 3.11 或 3.12。具体 Forge Skill 及其 Runtime 制品独立分发。
 
 通用 Agent 与 `paos skill install` 不需要 Dora；`paos skill start` 启动托管 Forge Skill
-profile 时，`PATH` 中必须存在 Dora CLI。PhyAgentOS 0.2.3 以 Dora CLI v0.5.0 作为文档化
-生命周期命令基线。Linux 或 macOS 安装方式：
+profile 时，`PATH` 中必须存在 Dora CLI。PhyAgentOS 0.2.3 以 Dora CLI v0.4.1 及
+`dora-message` v0.7.0 作为 Forge Skill 兼容基线。Linux 或 macOS 应安装该精确版本：
 
 ```bash
 curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/dora-rs/dora/releases/download/v0.5.0/dora-cli-installer.sh | sh
+  https://github.com/dora-rs/dora/releases/download/v0.4.1/dora-cli-installer.sh | sh
 dora --version
+# dora-cli 0.4.1
+# dora-message: 0.7.0
 ```
 
 Windows、Cargo 安装和生命周期检查见[用户手册](docs/zh/02-user-manual.md#托管-skill-profile-所需的-dora-cli)。
@@ -290,6 +292,8 @@ paos forge-node verify <skill-name> <node-id>
 `python scripts/package_skill.py <bundle-dir> --output-dir <directory>` 可生成确定性发布 Bundle。
 PhyAgentOS 源码与发布包不内置具体 Forge Skill、Forge node、模型或仿真资源；
 部署者只需独立获取实际需要的 Skill 并显式安装。
+[集成开发指南](docs/user_development_guide/README.md#5-打包发布与本地闭环)说明 Bundle 布局、
+本地验证、不可变发布顺序与 Registry 验收。
 
 ## 任务经验与 Skill 自进化
 

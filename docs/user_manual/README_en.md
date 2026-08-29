@@ -35,9 +35,9 @@ the explicit lifecycle of installed Bundle profiles; it does not replace Gateway
 - Skill Bundle metadata includes size and SHA-256; every Node lock has an exact SHA-256 and resolves
   to a sized direct download.
 - Required binaries are executable, required assets exist, and required environment variables are set.
-- Dora CLI v0.5.0, the PhyAgentOS 0.2.3 lifecycle-command baseline, is installed and on `PATH`;
-  `dora --version` reports the expected executable. Installation is documented in the
-  [user manual](../en/02-user-manual.md#dora-cli-for-managed-skill-profiles).
+- Dora CLI v0.4.1 with `dora-message` v0.7.0, the current Forge Skill compatibility baseline, is
+  installed and on `PATH`; `dora --version` reports both expected versions. Installation is
+  documented in the [user manual](../en/02-user-manual.md#dora-cli-for-managed-skill-profiles).
 - The profile Gateway address is not occupied by an unmanaged process.
 
 ### Forge Gateway

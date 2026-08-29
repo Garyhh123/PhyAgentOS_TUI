@@ -31,41 +31,45 @@ ruff check PhyAgentOS tests
 
 运行通用 Agent、搜索 Skill 或完成 `paos skill install` 不需要 Dora。`paos skill start` 需要
 主机预先安装 Dora CLI，因为 RuntimeManager 使用 `dora` 命令管理所选 profile。PhyAgentOS
-0.2.3 以 Dora CLI v0.5.0 作为文档化生命周期命令基线；可复现部署应固定该版本。
+0.2.3 以 Dora CLI v0.4.1 及 `dora-message` v0.7.0 作为 Forge Skill 兼容基线；可复现部署
+应固定该精确版本。
 
 Linux 或 macOS 使用带版本的官方 installer：
 
 ```bash
 curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/dora-rs/dora/releases/download/v0.5.0/dora-cli-installer.sh | sh
+  https://github.com/dora-rs/dora/releases/download/v0.4.1/dora-cli-installer.sh | sh
 ```
 
 Windows PowerShell：
 
 ```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://github.com/dora-rs/dora/releases/download/v0.5.0/dora-cli-installer.ps1 | iex"
+powershell -ExecutionPolicy ByPass -c "irm https://github.com/dora-rs/dora/releases/download/v0.4.1/dora-cli-installer.ps1 | iex"
 ```
 
 已经安装 Rust toolchain 时：
 
 ```bash
-cargo install dora-cli --version 0.5.0 --locked
+cargo install dora-cli --version 0.4.1 --locked
 ```
 
 installer 修改 `PATH` 后请打开新 shell，再验证 executable：
 
 ```bash
 dora --version
-# dora-cli 0.5.0
+# dora-cli 0.4.1
+# dora-message: 0.7.0
 ```
 
-RuntimeManager 要求可工作的兼容命令接口，但不会强制 Dora 的精确语义版本，也不会自动升级
-Dora。
+RuntimeManager 会检查兼容命令接口，但不会强制语义版本，也不会自动升级 Dora。运维人员必须
+保证 CLI、coordinator、daemon 与锁定 Skill Node 处于同一协议代际。当前已发布 Forge Skill
+Node 使用消息格式 v0.7.0；Dora v0.5.0 使用 v0.8.0，会在注册阶段拒绝这些 Node。
 
 Python package `dora-rs` 是 Python node/operator API，不能替代 Dora CLI 安装。Coordinator
 和 daemon 尚未运行时，`dora check` 报告不可用属于预期行为。`paos skill start` 会执行该检查，
 并在需要时通过 `dora up` 启动服务；Runtime 启动后，`dora check` 应当成功。各平台细节见
-[Dora 官方安装说明](https://github.com/dora-rs/dora#installation)。
+[Dora v0.4.1 官方 Release](https://github.com/dora-rs/dora/releases/tag/v0.4.1)中的平台制品与
+校验值；不要使用可能选择更新 CLI 的无版本 installer。
 
 ## 2. 配置模型与 Forge
 
@@ -130,7 +134,15 @@ paos skill switch <other-skill-name> --profile <profile>
 
 `install` 校验归档大小、SHA-256、内嵌文件清单、manifest v2 与锁定 Node，全部通过后才原子
 替换 Skill。Registry 省略重复的 Node 摘要字段时，以已验证 Skill lock 中的摘要为准，并在传输
-前解析 Node 下载大小。`start` 只启动指定 Dora profile，并检查 Gateway `/tools` 与所需 Tool context。
+前解析 Node 下载大小。公网 Registry 按 Skill 名称解析当前制品；`--version` 会在下载 Bundle 后、
+下载 Node 或提交安装前校验 manifest 版本。
+
+Bundle 可以在 Dora 启动前提供 `start.sh`；PAOS 以
+`bash <bundle>/start.sh <skill-name> <skill-version>` 执行并继承终端 stdio。此类 Bundle 要求
+`PATH` 中存在 Bash；Bash 缺失或钩子非零退出会记录为 `failed`，且不会启动 Dora。无钩子
+Bundle 继续使用常规跨平台启动路径。外部资源下载等长时间钩子执行期间状态保持 `starting`；
+钩子成功后，PAOS 才启动指定 Dora profile，并检查 Gateway `/tools` 与全部 required Tool
+context。同一 Skill 的重叠生命周期变更会立即报忙。
 使用 `paos skill logs <skill-name>` 查看生命周期日志，使用
 `paos skill stop <skill-name>` 停止。存在非终态 AgentTask 时 `switch` 会拒绝执行；目标 Runtime
 通过就绪校验后才会被选中，共用 Gateway 的目标启动失败时会恢复先前 Runtime。运行中的 Agent
@@ -270,6 +282,7 @@ evidence。Evolution fail-open，反思错误不会改变执行或验证。
 | Tool 不存在或未就绪 | 运行 `forge_tool_context`，检查 ToolSpec、binding、Endpoint 与 Runtime profile。 |
 | Skill 无法安装 | 确认 Skill Bundle 元数据包含 size、SHA-256，每个 Node lock 包含 SHA-256，且 Registry/index Node 能解析为具有明确大小的直接下载。 |
 | Skill 无法启动 | 运行 `paos skill status` 与 `logs`，检查 Dora、dataflow、assets、nodes 和 Gateway `/tools`。 |
+| Dora 报告消息格式 v0.7.0 与 v0.8.0 不匹配 | 停止不匹配的 coordinator/daemon，安装 Dora CLI v0.4.1，确认 `dora-message: 0.7.0` 后重新启动 Skill。 |
 | 已有活动任务 | 使用 `forge_task_get` 读取已知任务，完成或取消它，不要编辑 SQLite。 |
 | Action result 为 pending | 使用相同 `invocation_id` 继续核对 status/result。 |
 | Action result 为 unknown | 检查 Gateway、Dora 与物理现场，不要盲目重试。 |

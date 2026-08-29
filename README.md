@@ -125,12 +125,15 @@ distributed separately.
 
 Dora is not required for the general Agent or for `paos skill install`. It is required on `PATH`
 when `paos skill start` launches a managed Forge Skill profile. PhyAgentOS 0.2.3 uses Dora CLI
-v0.5.0 as its documented lifecycle-command baseline. On Linux or macOS:
+v0.4.1 with `dora-message` v0.7.0 as its Forge Skill compatibility baseline. On Linux or macOS,
+install that exact release:
 
 ```bash
 curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/dora-rs/dora/releases/download/v0.5.0/dora-cli-installer.sh | sh
+  https://github.com/dora-rs/dora/releases/download/v0.4.1/dora-cli-installer.sh | sh
 dora --version
+# dora-cli 0.4.1
+# dora-message: 0.7.0
 ```
 
 See the [user manual](docs/en/02-user-manual.md#dora-cli-for-managed-skill-profiles) for Windows,
@@ -298,6 +301,8 @@ download begins; installation records and verifies the extracted binary hash.
 bundle for publication. The PhyAgentOS source and release packages do not
 bundle concrete Forge Skills, Forge nodes, models, or simulation assets; obtain only the Skills
 needed for a deployment and install them explicitly.
+The [integration development guide](docs/user_development_guide/README_en.md#5-package-publish-and-close-the-local-loop)
+documents Bundle layout, local validation, immutable publication order, and Registry acceptance.
 
 ## Task experience and Skill evolution
 

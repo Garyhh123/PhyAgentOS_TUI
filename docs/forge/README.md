@@ -182,11 +182,18 @@ Registry Node downloads use the verified Skill lock as the digest authority and 
 size from Registry metadata or the direct-download endpoint before entering the cache. Installation
 is explicit and confirmed by default.
 
-RuntimeManager requires Dora CLI on `PATH` (v0.5.0 is the PhyAgentOS 0.2.3 lifecycle-command baseline),
-starts local Dora services when needed, launches a named profile, checks required
-binaries/assets/environment, waits for Gateway `/tools` and all manifest required Tool contexts,
-and persists status/logs. A healthy active Runtime contributes Skill availability; its manifest is
-the only source of the Gateway URL.
+RuntimeManager requires Dora CLI on `PATH` (v0.4.1 with `dora-message` v0.7.0 is the current Forge
+Skill compatibility baseline).
+It materializes an environment whose digest covers the selected dataflow path and profile file
+contents. `PAOS_SKILL_NAME` and `PAOS_SKILL_VERSION` are available both to Dora processes and as
+rendered dataflow placeholders.
+
+Startup persists `starting`, then runs `bash <bundle>/start.sh <name> <version>` with inherited stdio
+when the optional hook exists. Hook-enabled Bundles require Bash. After the hook succeeds,
+RuntimeManager starts local Dora services when needed, launches the named profile, waits for Gateway
+`/tools` and all required Tool contexts, and persists status/logs. A healthy active Runtime
+contributes Skill availability; its manifest is the only source of the Gateway URL. Per-Skill
+cross-process locking rejects overlapping lifecycle mutations.
 
 Normal stop is rejected while tracked non-terminal invocations, Sessions, or task bindings exist.
 Force stop records an audit event and does not change execution truth.

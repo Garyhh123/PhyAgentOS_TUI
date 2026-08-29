@@ -21,6 +21,7 @@ from PhyAgentOS.config.paths import (
 )
 from PhyAgentOS.skill_runtime.catalog import SkillCatalog
 from PhyAgentOS.skill_runtime.installer import InstallerError, SkillEnvironmentBuilder
+from PhyAgentOS.skill_runtime.locking import SkillOperationBusyError, SkillOperationLock
 from PhyAgentOS.skill_runtime.manifest import RuntimeProfile, SkillManifest
 from PhyAgentOS.skill_runtime.state import RuntimeState, RuntimeStateStore, utc_now
 
@@ -82,6 +83,13 @@ class RuntimeManager:
         return safe
 
     def start(self, skill_name: str, profile_name: str) -> RuntimeState:
+        try:
+            with SkillOperationLock(self.state_store.root, skill_name):
+                return self._start_locked(skill_name, profile_name)
+        except (SkillOperationBusyError, ValueError) as exc:
+            raise RuntimeManagerError(str(exc)) from exc
+
+    def _start_locked(self, skill_name: str, profile_name: str) -> RuntimeState:
         manifest = self.catalog.get(skill_name)
         profile = manifest.profiles.get(profile_name)
         if profile is None:
@@ -124,6 +132,7 @@ class RuntimeManager:
         self._log(skill_name, f"starting profile={profile_name} flow={flow_name}")
         launched = False
         try:
+            self._run_start_hook(manifest, profile_name)
             self._ensure_dora_up(manifest, profile, binary_root)
             launched = True
             self._start_flow(flow_name, manifest, profile, binary_root)
@@ -156,6 +165,13 @@ class RuntimeManager:
         state = self.state_store.load(skill_name)
         if state is None:
             return RuntimeStatusReport(None, False, False, {})
+        startup_in_progress = False
+        if state.status == "starting":
+            try:
+                with SkillOperationLock(self.state_store.root, skill_name):
+                    pass
+            except SkillOperationBusyError:
+                startup_in_progress = True
         flow_running = self._flow_running(state.flow_name)
         snapshot = self._gateway_snapshot(manifest)
         contexts = self._tool_context_readiness(manifest) if snapshot is not None else {}
@@ -170,7 +186,11 @@ class RuntimeManager:
             reconciled = state.with_status(
                 "stopped", active_invocations=(), active_sessions=(), active_task_bindings=()
             )
-        elif state.status in {"starting", "running"} and not live_ready:
+        elif (
+            state.status in {"starting", "running"}
+            and not live_ready
+            and not startup_in_progress
+        ):
             reasons = []
             if not flow_running:
                 reasons.append("Dora flow is not running")
@@ -185,6 +205,13 @@ class RuntimeManager:
         return RuntimeStatusReport(reconciled, flow_running, gateway_ready, contexts)
 
     def stop(self, skill_name: str, *, force: bool = False) -> RuntimeState:
+        try:
+            with SkillOperationLock(self.state_store.root, skill_name):
+                return self._stop_locked(skill_name, force=force)
+        except (SkillOperationBusyError, ValueError) as exc:
+            raise RuntimeManagerError(str(exc)) from exc
+
+    def _stop_locked(self, skill_name: str, *, force: bool) -> RuntimeState:
         manifest = self.catalog.get(skill_name)
         state = self.state_store.load(skill_name)
         if state is None:
@@ -309,6 +336,31 @@ class RuntimeManager:
             raise RuntimeManagerError("rendered Skill dataflow is missing")
         return path
 
+    def _run_start_hook(self, skill: SkillManifest, profile_name: str) -> None:
+        """Run the PR98 bundle ``start.sh`` hook before launching Dora."""
+        hook = skill.bundle_root / "start.sh"
+        if not hook.is_file():
+            return
+        bash = shutil.which("bash")
+        if bash is None:
+            raise RuntimeManagerError(
+                "bundle start.sh requires bash, but bash is not available on PATH"
+            )
+        self._log(skill.name, f"running bundle start.sh hook (profile={profile_name})")
+        try:
+            result = subprocess.run(
+                [bash, str(hook), skill.name, skill.version],
+                check=False,
+            )
+        except OSError as exc:
+            raise RuntimeManagerError("failed to execute bundle start.sh hook") from exc
+        if result.returncode != 0:
+            raise RuntimeManagerError(
+                "bundle start.sh hook exited with code "
+                f"{result.returncode}; skill start aborted"
+            )
+        self._log(skill.name, "bundle start.sh hook completed")
+
     def _ensure_dora_up(
         self,
         skill: SkillManifest,
@@ -330,6 +382,8 @@ class RuntimeManager:
                     **profile.environment,
                     "FORGE_RUNTIME_BIN": str(binary_root),
                     "PAOS_SKILL_ROOT": str(skill.bundle_root),
+                    "PAOS_SKILL_NAME": skill.name,
+                    "PAOS_SKILL_VERSION": skill.version,
                 }
                 subprocess.Popen(
                     [dora, "up"],
@@ -363,6 +417,8 @@ class RuntimeManager:
             **profile.environment,
             "FORGE_RUNTIME_BIN": str(binary_root),
             "PAOS_SKILL_ROOT": str(skill.bundle_root),
+            "PAOS_SKILL_NAME": skill.name,
+            "PAOS_SKILL_VERSION": skill.version,
         }
         self.logs_root.mkdir(parents=True, exist_ok=True)
         launch_log = self.logs_root / f"{flow_name}-dora.log"

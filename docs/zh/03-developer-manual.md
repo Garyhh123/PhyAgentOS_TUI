@@ -135,16 +135,24 @@ archive type、单一根目录 executable entrypoint 与 SHA-256。
 RuntimeManager：
 
 1. 解析已安装 Skill 与 profile；
-2. 物化锁定环境，不修改已安装 Node；
+2. 物化锁定环境，不修改已安装 Node；摘要覆盖精确 dataflow 路径及其同目录全部普通文件的
+   SHA-256；
 3. 检查 Dora CLI、dataflow、必需文件和环境；
 4. 拒绝接管已占用地址的非托管 Gateway；
-5. 检查本地 Dora 服务，需要时执行 `dora up`，再启动命名 flow；
-6. 等待 flow、`GET /tools` 与所有 required Tool contexts；
-7. 持久化 running/failed/stopped state 与生命周期日志。
+5. 持久化 `starting`，并以 `bash <bundle>/start.sh <name> <version>` 执行可选 Bundle
+   启动钩子，继承终端 stdio；
+6. 检查本地 Dora 服务，需要时执行 `dora up`，再启动命名 flow；
+7. 等待 flow、`GET /tools` 与所有 required Tool contexts；
+8. 持久化 running/failed/stopped state 与生命周期日志。
 
-PhyAgentOS 0.2.3 的文档化生命周期命令基线为 Dora CLI v0.5.0。RuntimeManager 要求兼容的
-命令行为，但不强制精确语义版本。Dora 是主机 Runtime 前置条件，不是 Python dependency，
-也不属于 Skill Bundle。
+dataflow 渲染会解析 `FORGE_RUNTIME_BIN`、`PAOS_SKILL_ROOT`、`PAOS_SKILL_NAME` 与
+`PAOS_SKILL_VERSION`，两个 Skill identity 值也会注入 Dora 进程环境。start、stop、Skill
+install/update 提交与 remove 共享按 Skill 的非阻塞跨进程锁。锁能证明启动仍在执行时，status
+保留 `starting`；无锁的陈旧 `starting` 仍按原规则核对。
+
+当前 Forge Skill 兼容基线为 Dora CLI v0.4.1 与 `dora-message` v0.7.0。RuntimeManager 要求
+兼容的命令行为，但不强制精确语义版本；运维人员必须避免复用协议不匹配的 coordinator/daemon。
+Dora 是主机 Runtime 前置条件，不是 Python dependency，也不属于 Skill Bundle。
 
 存在被追踪的非终态 invocation、Session 或 task binding 时，正常 stop 会被拒绝。Force stop
 记录 audit event，不改变 invocation truth。
@@ -156,6 +164,8 @@ Node 可以省略重复的 digest 与 size 字段，此时已验证 Skill lock �
 Registry 元数据或直接下载端点解析 size。Registry 一旦返回 digest，就必须与 lock 一致。断点续传
 内容在安装前再次校验。Registry URL 为空时只允许本地 Bundle 或显式静态 index；
 `PAOS_RESOURCE_REGISTRY_URL` 覆盖 `resourceRegistry.url`。
+公网 Registry 按名称查询 Skill；CLI 指定的版本在 Node 解析前与下载 Bundle 的 manifest 校验，
+不会拼接到 Registry URL。
 
 `discover_active_runtime` 核对持久化 state、Dora flow、Gateway health 与 required Tool
 contexts。availability provider 贯通 SkillsLoader、ExperienceCoordinator 与

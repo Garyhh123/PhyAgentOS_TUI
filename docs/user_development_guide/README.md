@@ -93,6 +93,8 @@ orientation behavior，避免 Agent 无法通过 `forge_tool_context` 检查的�
 <skill>/
 ├── skill.yaml
 ├── SKILL.md
+├── start.sh                    # 可选，Dora 启动前准备外部资源
+├── archive-manifest.json       # 打包脚本生成
 ├── profiles/<profile>/dataflow.yaml
 ├── profiles/<profile>/...
 └── assets/...
@@ -133,24 +135,64 @@ artifacts:
 Bundle archive inventory 需要覆盖每个文件及 SHA-256；links、路径穿越、冲突、过度展开和未列出
 内容会被拒绝。
 
-## 5. 发布 artifacts
+Bundle 如需在启动前下载权重或准备其他外部资源，可在根目录提供 `start.sh`。PAOS 使用
+`bash <bundle>/start.sh <name> <version>` 调用它，不改变工作目录并继承终端 stdio；脚本应从
+自身路径解析 Bundle 内文件，支持重复执行，并在失败时返回非零退出码。此类 Bundle 要求主机
+`PATH` 中存在 Bash。`PAOS_SKILL_NAME` 与 `PAOS_SKILL_VERSION` 可用于 dataflow 占位符，
+也会进入 Dora 进程环境。
 
-Resource Registry 或 schema v3 静态 index 必须提供 artifact identity、URL、精确 size 与
-SHA-256。Node metadata 还提供 Skill lock 要求的 identity 字段。相同 artifact
-identity 下不能发布可变内容。
+## 5. 打包、发布与本地闭环
 
-使用与用户一致的公开命令测试安装：
+### 5.1 构建并验证 Bundle
+
+仓库脚本会重新生成 `archive-manifest.json`，使用固定元数据构建确定性归档，再通过
+`ArchiveValidator` 安全解包复核：
 
 ```bash
-python scripts/package_skill.py /path/to/example-skill --output-dir /tmp/packages
-paos skill install example-skill --version 1.0.0
-paos forge-node verify example-skill gateway
-paos skill inspect example-skill
+python scripts/package_skill.py /path/to/example-skill --output-dir dist/skills
 ```
 
-Installer 先 staging、校验，再原子替换，失败则 rollback。不得要求调用方关闭摘要校验。
+输出文件名取自 `skill.yaml` 的 `name` 与 `version`，并打印归档 SHA-256 和字节数。已有同名
+输出默认不覆盖；仅在确认尚未发布时使用 `--force`。打包脚本拒绝 links，并排除版本控制、缓存
+与 `node_modules` 目录；发布源码目录不得包含凭据、预签名 URL、本机缓存、日志或运行状态。
+
+上传前使用与用户相同的公开命令完成本地闭环：
+
+```bash
+paos skill install dist/skills/example-skill-1.0.0.tar.gz --local
+paos forge-node verify example-skill gateway
+paos skill inspect example-skill
+paos skill start example-skill --profile sim
+paos skill status example-skill
+paos skill stop example-skill
+```
+
+本地 Bundle 与 Registry Bundle 使用相同的归档、manifest 和 Node lock 校验；缺失 Node 仍需
+通过配置的 Registry 或静态 index 解析。Installer 先 staging、校验，再原子替换，失败则
+rollback。不得要求调用方关闭摘要校验。
+
+### 5.2 不可变发布顺序
+
+1. 先发布并登记所有 Node artifacts。每个 `executable_tar_gz` 归档根目录只能包含一个与
+   `entrypoint` 同名的 executable，最终归档 SHA-256 必须写入 Skill lock。
+2. 固定 `skill.yaml` 的 name/version、profiles 与 Node locks，执行打包，并保存输出的 Bundle
+   SHA-256 与 `size_bytes`。
+3. 将 Bundle 上传到不可覆盖、长期有效的 HTTPS 对象键。上传后从最终 URL 回读并重新校验
+   SHA-256 与大小；修正已发布内容必须递增版本，不能覆盖原对象。
+4. 在 Resource Registry 登记当前 Skill 的 name、URL、SHA-256 与大小，并保证每个 Node
+   `artifact_id` 均可通过 Node 端点解析。也可以发布等价的 schema v3 静态 index。
+5. 从干净 PAOS HOME 通过 Registry 重跑安装、启动、状态和停止命令，确认没有依赖源码仓绝对
+   路径或开发机缓存。
+
+公网 Registry 按名称返回当前 Skill 条目，不提供历史版本子路径。`paos skill install
+<name> --version <version>` 中的版本是客户端约束：Bundle 下载后先校验 manifest version，
+不匹配时在 Node 下载和安装提交前失败。因此旧版本必须通过不可变 URL、静态 index 或本地归档
+另行保存，不能把 `--version` 当作 Registry 历史版本查询。
 
 ## 6. 设计 Dora profile
+
+当前分发的 Forge Skill profile 应使用 Dora CLI v0.4.1 与 `dora-message` v0.7.0 开发和验收。
+Skill lock 与主机基线整体升级前，Node 构建必须保持在同一协议代际。
 
 Dataflow 为每个 Node 定义明确 inputs/outputs，并使用 Gateway profile 声明的 Tool request/
 response ports。必需 executable 从不可变 Runtime environment 解析；assets 保留在 Skill Bundle
@@ -203,6 +245,9 @@ WebSocket association 提升为权威。
 - 诊断 Query 与绑定调用经过相同 routes；
 - AgentTask 单活动限制、revisions、evidence 与聚合 verification；
 - archive traversal/link/collision/digest 攻击与事务 rollback；
+- 有/无 `start.sh` 的启动、Bash 缺失与钩子非零退出；
+- Skill identity 注入 dataflow/Dora 环境，以及 profile 内容或 dataflow 路径变化后的重新物化；
+- 同一 Skill 的 start/stop/install/remove 跨进程冲突；
 - Runtime start/status/log/stop 与 availability 传播。
 
 随后完成模拟工作流。真实机器人或 MuJoCo 验收必须记录确切 Bundle、node digests、profile 与
@@ -218,6 +263,8 @@ WebSocket association 提升为权威。
 - [ ] Invocation/attempt ID 与 PAOS task ID 分离；
 - [ ] Cancel、stop、timeout、unknown 不推断物理停止，也不触发盲目 POST 重试；
 - [ ] Bundle/Node artifacts 有不可变 size/digest metadata；
+- [ ] Bundle 经仓库打包脚本和本地安装闭环验证，Registry 的 Skill 与全部 Node 端点可解析；
+- [ ] 可选启动钩子的参数、失败状态、重复执行与外部资源摘要经过验证；
 - [ ] Runtime profile 从干净环境启动并使全部 Tool context ready；
 - [ ] Tool-only profile 禁用 Gateway Agent API；
 - [ ] 通用 Agent tools、verification、experience、evolution 不需要能力专用分支。
