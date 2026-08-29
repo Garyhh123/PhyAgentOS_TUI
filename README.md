@@ -1,7 +1,7 @@
 <div align="center">
   <img src="docs/imgs/logo_en.png" alt="PhyAgentOS" width="560">
 
-  <h3>Cognitive–Physical Decoupling — Forge-native execution with evidence-grounded verification</h3>
+  <h3>Recursive Self-Improvement — The Infrastructure for Self-Evolving Physical Agents</h3>
 
   <p>
     <a href="https://github.com/PhyAgentOS/PhyAgentOS/stargazers">
