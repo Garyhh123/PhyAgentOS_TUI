@@ -1,6 +1,6 @@
-"""Forge Gateway-only execution integration."""
+"""PAOS-owned aggregation over the Forge Gateway Tool API."""
 
-from PhyAgentOS.forge.client import ForgeGatewayClient, ForgeGatewayError
-from PhyAgentOS.forge.orchestrator import ForgeSessionOrchestrator
+from PhyAgentOS.forge.task import AgentTaskCoordinator
+from PhyAgentOS.forge.tool_client import ForgeToolAPIError, ForgeToolClient
 
-__all__ = ["ForgeGatewayClient", "ForgeGatewayError", "ForgeSessionOrchestrator"]
+__all__ = ["AgentTaskCoordinator", "ForgeToolAPIError", "ForgeToolClient"]

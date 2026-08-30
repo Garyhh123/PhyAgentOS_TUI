@@ -10,7 +10,7 @@ If this file has no tasks (only headers and comments), the agent will skip the h
 <!-- Add your periodic tasks below this line -->
 
 - [ ] Read ENVIRONMENT.md and check if any objects have changed state. If something notable happened (e.g., an object fell, moved, or disappeared), proactively report to the user.
-- [ ] If the user asks about a Forge task, use `forge_get_session` rather than inferring its state from elapsed time.
+- [ ] If the user asks about a Forge task, use `forge_task_get` rather than inferring its state from elapsed time.
 
 ## Completed
 

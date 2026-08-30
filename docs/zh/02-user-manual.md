@@ -1,389 +1,296 @@
 # PhyAgentOS 用户手册
 
-> 文档版本：0.2.0。本文描述当前 Forge-only 执行链。PhyAgentOS 不再提供旧 Runtime、Watchdog 或 Markdown Session queue。
+[English](../en/02-user-manual.md) · [文档索引](../README.md)
 
-## 1. 环境与安装
+> 文档版本：1.0.0。
 
-基础要求：
+## 1. 安装与初始化
 
-- Python 3.11 或 3.12；
-- Git；
-- 一个受支持的 LLM Provider；
-- 一个可访问的 Forge Gateway 1.0.0；
-- 非 `off` 验证需要支持图像输入和结构化 JSON 输出的模型。
+PhyAgentOS 支持 Python 3.11 和 3.12。Forge Gateway、Dora、机器人驱动、仿真资产与锁定 Node
+制品在机器人 Skill 需要时独立部署。
 
 ```bash
 git clone https://github.com/PhyAgentOS/PhyAgentOS.git
 cd PhyAgentOS
 python -m pip install -e .
+paos onboard
+```
 
-# 运行测试或参与开发
+开发环境：
+
+```bash
 python -m pip install -e ".[dev]"
+pytest
+ruff check PhyAgentOS tests
 ```
 
-安装后主要命令如下：
+默认配置位于 `~/.PhyAgentOS/config.json`，默认工作区为
+`~/.PhyAgentOS/workspace`。
 
-```text
-paos onboard
-paos agent
-paos gateway
-paos status
-paos channels status
-paos channels login
-paos provider login <provider>
-```
+### 托管 Skill profile 所需的 Dora CLI
 
-## 2. 初始化
+运行通用 Agent、搜索 Skill 或完成 `paos skill install` 不需要 Dora。`paos skill start` 需要
+主机预先安装 Dora CLI，因为 RuntimeManager 使用 `dora` 命令管理所选 profile。PhyAgentOS
+1.0.0 以 Dora CLI v0.4.1 及 `dora-message` v0.7.0 作为 Forge Skill 兼容基线；可复现部署
+应固定该精确版本。
+
+Linux 或 macOS 使用带版本的官方 installer：
 
 ```bash
-paos onboard
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/dora-rs/dora/releases/download/v0.4.1/dora-cli-installer.sh | sh
 ```
 
-默认情况下，该命令创建或刷新：
+Windows PowerShell：
 
-```text
-~/.PhyAgentOS/config.json
-~/.PhyAgentOS/workspace/
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://github.com/dora-rs/dora/releases/download/v0.4.1/dora-cli-installer.ps1 | iex"
 ```
 
-如果配置已存在，选择“不覆盖”会在保留已有值的同时补全新字段。配置验证失败不会静默回退到旧执行链；根级 `runtime` 字段会触发明确错误，必须删除并改用 `forge`。
-
-使用自定义配置或工作区：
+已经安装 Rust toolchain 时：
 
 ```bash
-paos agent --config /path/to/config.json --workspace /path/to/workspace
-paos gateway --config /path/to/config.json --workspace /path/to/workspace
+cargo install dora-cli --version 0.4.1 --locked
 ```
 
-## 3. 配置模型 Provider
+installer 修改 `PATH` 后请打开新 shell，再验证 executable：
 
-最小 Provider 示例：
+```bash
+dora --version
+# dora-cli 0.4.1
+# dora-message: 0.7.0
+```
+
+RuntimeManager 会检查兼容命令接口，但不会强制语义版本，也不会自动升级 Dora。运维人员必须
+保证 CLI、coordinator、daemon 与锁定 Skill Node 处于同一协议代际。当前已发布 Forge Skill
+Node 使用消息格式 v0.7.0；Dora v0.5.0 使用 v0.8.0，会在注册阶段拒绝这些 Node。
+
+Python package `dora-rs` 是 Python node/operator API，不能替代 Dora CLI 安装。Coordinator
+和 daemon 尚未运行时，`dora check` 报告不可用属于预期行为。`paos skill start` 会执行该检查，
+并在需要时通过 `dora up` 启动服务；Runtime 启动后，`dora check` 应当成功。各平台细节见
+[Dora v0.4.1 官方 Release](https://github.com/dora-rs/dora/releases/tag/v0.4.1)中的平台制品与
+校验值；不要使用可能选择更新 CLI 的无版本 installer。
+
+## 2. 配置模型与 Forge
+
+先配置一个模型 Provider 和 Forge timeout/evidence policy。Runtime 不是配置开关，而由显式
+启动的 Skill profile 决定。配置以 camelCase 保存，也接受 snake_case。
 
 ```json
 {
   "agents": {
     "defaults": {
+      "workspace": "~/.PhyAgentOS/workspace",
       "model": "openrouter/openai/gpt-4o-mini",
-      "provider": "openrouter",
-      "workspace": "~/.PhyAgentOS/workspace"
+      "provider": "openrouter"
+    },
+    "verification": {
+      "serviceEnabled": true,
+      "evidenceRetention": "failed",
+      "maxReplansPerEpisode": 2
+    },
+    "evolution": {
+      "enabled": true,
+      "minSuccessfulEpisodes": 3,
+      "minLessonEpisodes": 3
     }
   },
   "providers": {
-    "openrouter": {
-      "apiKey": "YOUR_API_KEY"
-    }
-  }
-}
-```
-
-Agent 与 Verifier 默认使用同一模型。若要分离，设置 `agents.verification.model` 和 `agents.verification.provider`。配置中的 API key 不应提交到版本控制；长期部署还应限制配置文件的访问权限。
-
-OAuth Provider 可以使用：
-
-```bash
-paos provider login openai-codex
-paos provider login github-copilot
-```
-
-## 4. 配置 Forge
-
-```json
-{
-  "agents": {
-    "verification": {
-      "serviceEnabled": true,
-      "timeoutS": 180,
-      "evidenceRetention": "failed",
-      "maxReplansPerEpisode": 2,
-      "maxVerifierCallsPerRun": 50,
-      "replanTimeoutS": 120,
-      "serviceHost": "127.0.0.1",
-      "servicePort": 8100
-    }
+    "openrouter": {"apiKey": "YOUR_API_KEY"}
   },
   "forge": {
-    "enabled": true,
-    "baseUrl": "http://127.0.0.1:9001",
-    "apiVersion": "paos-forge-gateway-mvp-plus.v1",
     "requestTimeoutS": 10,
     "pollIntervalS": 0.5,
     "executionTimeoutS": 300,
     "evidence": {
       "requiredImageSources": ["front"],
-      "captureTimeoutS": 5,
-      "postCaptureTimeoutS": 5,
-      "connectionTimeoutS": 2,
-      "maxArtifactBytes": 8388608,
       "associationQuality": "best_effort"
     }
-  }
+  },
+  "resourceRegistry": {"url": "https://paos-resource-manager.dev.x-era.com"}
 }
 ```
 
-启动 PAOS 时会读取 `/agent/runtime/capabilities`。以下任一条件不满足都会拒绝启动：
+活动 Skill Runtime manifest 是 Gateway URL 的唯一来源。也可以通过
+`PAOS_RESOURCE_REGISTRY_URL` 提供 Registry URL；空 URL 只允许本地 Bundle 或显式静态
+index。启动 PAOS 不会下载 Skill。
 
-- `api_version` 精确等于 `paos-forge-gateway-mvp-plus.v1`；
-- `supports.sessions`、`supports.command_id`、`supports.runtime_context` 为 true；
-- `supports.serial_actions_only` 为 true；
-- `actions` 是对象；随后提交的 action 必须存在于该对象。
+## 3. 安装并运行 Skill Runtime
 
-`requiredImageSources` 中的 source ID 必须与 Gateway `/ws/images` 的 `id` 一致。若列表为空，PAOS 会从 runtime context 的 image readiness 中发现 source；若仍为空，非 `off` 任务会以 `FORGE_EVIDENCE_CONFIGURATION_REQUIRED` 失败。
-
-完整字段与默认值见 [Forge 配置参考](04-forge-configuration-reference.md)。
-
-## 5. 启动顺序
-
-推荐顺序：
-
-1. 启动 Forge Runtime/Dora/机器人或仿真环境；
-2. 启动 Forge Gateway 1.0.0；
-3. 确认 Gateway capabilities、status、context 和图像流可用；
-4. 启动 PAOS Agent 或 Gateway。
-
-交互模式：
+使用已配置 Registry 或 schema v3 静态 package index：
 
 ```bash
+paos skill search <skill-name>
+paos skill install <skill-name> --version <version>
+# 或：paos skill install <skill-name> --index /path/to/index.json
+# 或：paos skill install /path/to/<skill-name>-<version>.tar.gz --local
+
+paos skill list
+paos skill inspect <skill-name>
+paos skill start <skill-name> --profile <profile>
+paos skill status <skill-name>
+paos skill switch <other-skill-name> --profile <profile>
+```
+
+`install` 校验归档大小、SHA-256、内嵌文件清单、manifest v2 与锁定 Node，全部通过后才原子
+替换 Skill。Registry 省略重复的 Node 摘要字段时，以已验证 Skill lock 中的摘要为准，并在传输
+前解析 Node 下载大小。公网 Registry 按 Skill 名称解析当前制品；`--version` 会在下载 Bundle 后、
+下载 Node 或提交安装前校验 manifest 版本。
+
+Bundle 可以在 Dora 启动前提供 `start.sh`；PAOS 以
+`bash <bundle>/start.sh <skill-name> <skill-version>` 执行并继承终端 stdio。此类 Bundle 要求
+`PATH` 中存在 Bash；Bash 缺失或钩子非零退出会记录为 `failed`，且不会启动 Dora。无钩子
+Bundle 继续使用常规跨平台启动路径。外部资源下载等长时间钩子执行期间状态保持 `starting`；
+钩子成功后，PAOS 才启动指定 Dora profile，并检查 Gateway `/tools` 与全部 required Tool
+context。同一 Skill 的重叠生命周期变更会立即报忙。
+使用 `paos skill logs <skill-name>` 查看生命周期日志，使用
+`paos skill stop <skill-name>` 停止。存在非终态 AgentTask 时 `switch` 会拒绝执行；目标 Runtime
+通过就绪校验后才会被选中，共用 Gateway 的目标启动失败时会恢复先前 Runtime。运行中的 Agent
+会在下一次 activation 或 Forge Tool 调用前跟随持久化选择。
+
+Node 制品可以独立管理：
+
+```bash
+paos forge-node install <skill-name> <node-id>
+# 或安装独立获取的本地归档
+paos forge-node install <skill-name> <node-id> --archive /path/to/<node>.tar.gz
+paos forge-node verify <skill-name> <node-id>
+```
+
+具体 Forge Skill、Node、模型与仿真资源独立于 PhyAgentOS 分发，仅在需要时安装。
+
+## 4. 启动 PAOS
+
+使用已安装机器人 Skill 时，先启动托管 Skill Runtime/Gateway，再启动 Agent。
+`paos skill start` 检查 Dora CLI，并在本地 Dora coordinator 和 daemon 尚未 ready 时自动启动。
+Agent 只从显式活动 Skill 的 manifest 获取 Gateway URL。
+
+```bash
+paos status
+paos skill start <skill-name> --profile <profile>
+paos skill status <skill-name>
 paos agent
-```
 
-单消息模式：
+# 单条请求
+paos agent -m "检查运动 Tool context，将夹爪向前移动 5 cm，并验证结果。"
 
-```bash
-paos agent -m "先读取 Forge capabilities，再执行一个受支持动作；使用 audit 验证并报告执行事实与任务判定。"
-```
-
-如果这条消息提交了 Forge task，单消息进程不会在首次模型回复后立即退出，而会保持 Agent 和 Orchestrator 运行，直到 root lineage 终结并处理 completion/recovery system event。
-
-长期在线模式：
-
-```bash
+# 长期运行消息渠道、Cron、Heartbeat 与 Agent
 paos gateway
-paos gateway --port 18790 --verbose
 ```
 
-该入口同时运行 Agent、已启用消息渠道、Cron、Heartbeat 和 Forge Orchestrator。
+## 5. 检查 Tool context
 
-## 6. 提交第一个任务
+调用 Tool 前使用 `forge_tool_context(tool_id)`。它返回 ToolSpec，以及实时 binding、
+readiness、endpoint status 和机器人 frame 信息。Agent 必须遵循精确 input schema，不能猜测
+frame 或单位约定。
 
-### 6.1 先读取能力
+活动 Skill 工作流声明允许的 Tool ID 以及对应 Query、Action 或 Session semantics；不得用
+binding 中不存在的相似 Tool 替代。
 
-action type 和 inputs 由 Gateway 定义，不应从文档示例猜测。可以先告诉 Agent：
+## 6. 使用诊断 Query 或绑定执行
+
+诊断 Query 使用同一 Tool API，但不计入用户任务验证：
 
 ```text
-调用 forge_get_context，列出当前 readiness、可用 action、required inputs 和 input mapping；不要执行动作。
+forge_tool_query(tool_id, arguments)
 ```
 
-### 6.2 描述目标与验收标准
+对于用户可见的多调用任务：
 
-推荐在请求中明确：
+1. 在本轮调用 `activate_skill(name, role="primary")`；
+2. 把 activation ID 传给 `forge_task_create(task_description, verification, activation_id)`；
+3. 把返回的 `task_id` 传给所有相关 Query、Action 或 Session；
+4. 按返回的 `invocation_id` 核对每个异步执行；未知 admission 后不得猜测 ID 或重复调用；
+5. 停止 task-owned Session，再调用 `forge_task_finalize(task_id)`。
 
-- 用户目标；
-- 可接受的高层动作范围；
-- 每条可观察、可独立判定的 success criterion；
-- 必须保留的安全或任务 constraints；
-- verification mode；
-- 必需的 evidence source/kind。
+全局最多一个非终态 AgentTask。诊断 Query 不占此槽位，所有执行仍按 Gateway operation 的
+`max_concurrency` 竞争。
 
-示例：
+## 7. 定义验证
 
-```text
-读取 Forge 能力，选择合适的高层动作把红色物体放入托盘。
-使用 recovery 验证。Goal 是“红色物体最终位于托盘内”。
-Criteria：1）最终图像中红色物体完整位于托盘边界内；
-2）蓝色物体仍在原区域。Constraint：不要移动蓝色物体。
-使用 front 图像作为 before/after 证据。
-```
-
-Agent 最终调用 `forge_execute_task` 时，会构造：
+`audit`、`enforce` 或 `recovery` 必须提供 goal 和至少一项 success criterion：
 
 ```json
 {
-  "task_description": "...",
-  "action_type": "<advertised action>",
-  "inputs": {},
-  "verification": {
-    "mode": "recovery",
-    "goal": "红色物体最终位于托盘内。",
-    "success_criteria": [
-      "最终图像中红色物体完整位于托盘边界内。",
-      "蓝色物体仍在原区域。"
-    ],
-    "constraints": ["不要移动蓝色物体。"],
-    "evidence_policy": {
-      "required_kinds": ["rgb_image"],
-      "required_sources": ["front"],
-      "minimum_association": "best_effort"
-    }
+  "mode": "recovery",
+  "goal": "夹爪相对初始位姿向前移动 5 cm。",
+  "success_criteria": [
+    "末端最终位姿在声明 frame 中近似向前 5 cm。",
+    "机器人未报告碰撞或移动失败。"
+  ],
+  "constraints": ["保持末端方向不变。"],
+  "evidence_policy": {
+    "required_kinds": ["rgb_image"],
+    "required_sources": ["front"],
+    "minimum_association": "best_effort"
   }
 }
 ```
 
-session ID 与 command ID 由 PAOS 生成，调用方不能指定、复用或从旧任务复制。
+| 模式 | 行为 |
+|:-----|:-----|
+| `off` | 根据绑定 Tool execution facts 派生任务结果。 |
+| `audit` | 记录语义验证，同时保留执行派生结果。 |
+| `enforce` | 语义验证决定成功；缺失或非法验证时 fail closed。 |
+| `recovery` | 与 enforce 相同；`replan_required` 允许有预算的新 PlanRevision。 |
 
-## 7. 验证模式
+finalize 返回 `awaiting_replan` 时调用
+`forge_task_begin_revision(task_id, reason)`，并继续使用同一 task ID。不要创建第二个任务，也
+不要重试物理效果未知的 invocation。
 
-| 模式 | 何时使用 | 行为 |
-|:-----|:---------|:-----|
-| `off` | 只需知道 Gateway 命令是否结束 | 不采集验证 Evidence Bundle，不调用 Verifier，按 execution status 终结。 |
-| `audit` | 先评估 verifier 质量，不希望阻塞执行结果 | 缺 before 证据时仍可派发；记录 verdict/error；最终状态保持执行派生结果；永不 replan。 |
-| `enforce` | 任务完成必须有语义证据 | Verifier `success` 才成功；缺证、非法输出、错误、`failure`、`replan_required`、`inconclusive` 都失败。 |
-| `recovery` | 失败后允许 Planner 再尝试 | 与 enforce 一样 fail closed；合法 `replan_required` 生成 Recovery Request。 |
+## 8. 取消与 unknown 结果
 
-非 `off` 模式必须提供非空 goal 和至少一项非空 success criterion，并要求 Verification Service 可用。
+`forge_tool_cancel_action(invocation_id)` 发出取消请求。`requested` 或 `accepted` 只确认控制
+消息处理；应继续读取 status/result，直到 Gateway 报告已知终态。`unknown` 和本地 timeout
+可用于任务记账终结，但不能证明物理停止。
 
-## 8. 查询、取消、复核和 Reset
+`forge_task_cancel(task_id, reason)` 为全部非终态绑定 Action 请求取消，并将任务置为
+`cancelling`。随后应核对 invocation，必要时检查现场，再显式 finalize。存在不确定 invocation
+时 Runtime stop 保持门控，除非运维人员明确 force。
 
-Agent 可使用：
+## 9. Experience、activation 与 evolution
 
-- `forge_get_session(session_id)`：返回完整持久化 record；
-- `forge_cancel_session(session_id, reason)`：取消非终态任务；已派发时同时请求 Gateway cancel；
-- `verify_forge_session(session_id)`：复核终态 session；要求证据仍 retained；
-- `forge_reset(inputs)`：没有活动 lineage 时才允许 reset；
-- `forge_get_context()`：读取启动时缓存的 capabilities，以及实时 status/context。
+注册 Skill 与工作流匹配时，在第一次工作流工具调用前使用 `activate_skill(name, role)`。
+Skill 发现优先级为 workspace、已安装、内置；Runtime availability 参与激活资格判断。
 
-`verify_forge_session` 是 review，不会改变 `status`、Execution Record 或原自动验证尝试；它会追加 attempt 并更新 `verification_result.json` 中的验证视图。
+Experience 记录全部 Agent tool calls，并把 AgentTask、PlanRevision、invocation 引用、验证和
+显式 Skill activation 归入一个 episode。Scoped Lesson 只是建议，不能替代任务 criteria 或
+evidence。Evolution fail-open，反思错误不会改变执行或验证。
 
-## 9. 状态解释
-
-| PAOS 状态 | 含义 | 是否终态 |
-|:----------|:-----|:---------|
-| `accepted` | 请求与 ID 已保存 | 否 |
-| `capturing_before` | 等待并持久化执行前证据 | 否 |
-| `dispatching` | dispatch attempt 已保存，正在 POST | 否 |
-| `running` | Gateway session 未到终态 | 否 |
-| `finalizing` | 写 Execution Record 并等待 after evidence | 否 |
-| `awaiting_verification` | Evidence Bundle 已就绪，等待验证 | 否 |
-| `verifying` | 独立 Verification Service 正在判定 | 否 |
-| `awaiting_replan` | Recovery Request 已生成，等待 Planner child | 否 |
-| `replanned` | parent 已由新 child 接替 | 是 |
-| `succeeded` / `failed` | PAOS 按当前 mode 终结 | 是 |
-| `timed_out` / `cancelled` | 执行超时或取消 | 是 |
-
-在 `enforce`/`recovery` 中，应同时查看：
+## 10. 持久化与 retention
 
 ```text
-record.status
-record.execution.status
-record.verification.verdict.verdict
-record.error_code / record.error_message
+<workspace>/
+├── .paos/agent_tasks/tasks.sqlite3
+├── .paos/evolution/experience.sqlite3
+├── .paos/evolution/revisions/<skill>/
+├── skills/<skill>/
+└── artifacts/agent_tasks/<task_id>/
+    ├── before_snapshot.json
+    ├── after_snapshot.json
+    ├── evidence_bundle.json
+    └── evidence/
 ```
 
-它们分别表示 PAOS 任务结果、Gateway 执行事实、语义判定和故障原因。
+备份时先停止 PAOS，将 SQLite 及 WAL/SHM 文件、完整 artifact 和 Skill revision 目录一起备份。
+`evidenceRetention` 控制验证后的证据保留，不删除 execution record 或 evolution 历史。
 
-## 10. Artifact 与 retention
+## 11. 故障排查
 
-```text
-<workspace>/.paos/forge/orchestrator.sqlite3
-<workspace>/artifacts/forge/<session_id>/
-  execution_record.json
-  before_snapshot.json
-  after_snapshot.json
-  evidence_bundle.json
-  verification_result.json
-  evidence/
-```
-
-Evidence retention：
-
-| 值 | 实体证据处理 |
-|:---|:-------------|
-| `all` | 全部保留 |
-| `failed` | 最终成功时删除实体，失败时保留 |
-| `none` | 完成验证后删除实体 |
-
-删除实体后，Evidence Bundle 仍保留 URI、source、phase、时间、sequence、byte size、SHA-256、`retained=false` 和 `deleted_at`，以便审计。Retention 不能删除或覆盖 Execution Record。
-
-## 11. 重启与恢复
-
-- 未记录 dispatch attempt：Orchestrator 可以继续执行。
-- 已记录 dispatch attempt：只向 Gateway GET 原 session；绝不自动重发 action。
-- 原 session 存在且身份匹配：继续等待终态、采集 after 或验证。
-- 原 session 404：标记 `FORGE_EXECUTION_STATE_LOST`。
-- 验证中断：旧 attempt 标记 abandoned 后重试。
-- 等待 replan：可以再次发送 recovery system event；child 创建通过事务去重。
-
-正常退出时，PAOS 会尝试取消活动 Gateway session，并保存 cancel response。物理系统仍需独立的安全停机与 operator override；PAOS cancel 不替代硬件急停。
-
-## 12. Embodiment 与知识工作区
-
-`EMBODIED.md`、`ENVIRONMENT.md`、SceneGraph 和 `embodiments` 配置属于知识层。单机模式使用 `agents.defaults.workspace`；fleet 模式可以组织 shared + per-robot 知识工作区，但当前仍只有一个 Forge endpoint 和一个串行执行槽。
-
-```json
-{
-  "embodiments": {
-    "mode": "fleet",
-    "sharedWorkspace": "~/.PhyAgentOS/workspaces/shared",
-    "instances": [
-      {
-        "robotId": "robot_001",
-        "workspace": "~/.PhyAgentOS/workspaces/robot_001",
-        "profileName": "lab-arm",
-        "enabled": true
-      }
-    ]
-  }
-}
-```
-
-该配置不包含 driver、Target 或 Gateway routing 语义。
-
-## 13. 旧工作区清理
-
-PAOS 不自动删除用户已有文件。升级前先备份，再按需人工移除旧执行协议：
-
-```text
-RUNTIME.md
-TARGETS.md
-SKILLRUNTIME.md
-SESSIONS.md
-configs/runtime/
-artifacts/runtime/
-```
-
-保留 `EMBODIED.md`、`ENVIRONMENT.md`、`LESSONS.md`、`TASK.md` 以及其他用户知识。当前代码不会读取或生成上述旧执行协议。
-
-## 14. 故障排查
-
-### 启动时 API 或 capability 失败
-
-确认 URL 指向 Forge Gateway 1.0.0，并检查 `/agent/runtime/capabilities`。版本或 required supports 不能通过配置降级。
-
-### `FORGE_ACTION_UNSUPPORTED`
-
-请求的 `action_type` 不在启动时缓存的 capabilities 中。先调用 `forge_get_context`，按 advertised action 和 required inputs 重新规划。Gateway capability 发生变化后应重启 PAOS，使启动校验与 Agent 摘要一起刷新。
-
-### `FORGE_EVIDENCE_CONFIGURATION_REQUIRED`
-
-既没有配置 `requiredImageSources`，runtime context 也没有可发现图像源。填写实际 source ID，并确认 `/ws/images` 正在发布。
-
-### `FORGE_EVIDENCE_UNAVAILABLE`
-
-before 或 after 窗口缺少必须 source。检查 WebSocket、媒体格式、大小限制、source ID、sequence 是否递增，以及 capture timeout。
-
-### `FORGE_EXECUTION_STATE_LOST`
-
-PAOS 已记录 dispatch intent，但 Gateway 返回 404。系统故意不重发未知动作；应人工核实物理世界与 Gateway 日志后，再创建新的高层任务。
-
-### `VERIFICATION_EVIDENCE_UNAVAILABLE`
-
-Evidence Bundle 不完整、artifact 丢失/已删除、摘要不匹配，或 capture window 无效。若要显式复核，请将 retention 设为 `all` 或在失败时使用 `failed`。
-
-### `VERIFICATION_INVALID_VERDICT`
-
-模型没有为每条 criterion 返回且仅返回一条合法结论，或引用了未知 evidence ID。选择更稳定的模型，不要放宽公共契约。
-
-### `VERIFICATION_SERVICE_UNAVAILABLE`
-
-检查 Provider、模型、`servicePort` 冲突和 verifier timeout。`audit` 会记录错误并保留 execution 结果；`enforce`/`recovery` 会 fail closed。
-
-### Busy / active lineage
-
-另一个 root lineage 尚未终结。先使用 `forge_get_session` 查询，必要时取消。不要直接编辑 SQLite 绕过串行约束。
+| 现象 | 检查项 |
+|:-----|:-------|
+| Tool 不存在或未就绪 | 运行 `forge_tool_context`，检查 ToolSpec、binding、Endpoint 与 Runtime profile。 |
+| Skill 无法安装 | 确认 Skill Bundle 元数据包含 size、SHA-256，每个 Node lock 包含 SHA-256，且 Registry/index Node 能解析为具有明确大小的直接下载。 |
+| Skill 无法启动 | 运行 `paos skill status` 与 `logs`，检查 Dora、dataflow、assets、nodes 和 Gateway `/tools`。 |
+| Dora 报告消息格式 v0.7.0 与 v0.8.0 不匹配 | 停止不匹配的 coordinator/daemon，安装 Dora CLI v0.4.1，确认 `dora-message: 0.7.0` 后重新启动 Skill。 |
+| 已有活动任务 | 使用 `forge_task_get` 读取已知任务，完成或取消它，不要编辑 SQLite。 |
+| Action result 为 pending | 使用相同 `invocation_id` 继续核对 status/result。 |
+| Action result 为 unknown | 检查 Gateway、Dora 与物理现场，不要盲目重试。 |
+| Verification 失败 | 检查任务 criteria、Tool records、evidence bundle 与 verifier availability。 |
+| 未加载 Skill Lesson | 确认显式 activation、Runtime availability 和符合条件的 active scoped Lessons。 |
 
 ## 后续阅读
 
-- [框架介绍](01-framework-introduction.md)
 - [Forge 配置参考](04-forge-configuration-reference.md)
 - [运行手册](../user_manual/README.md)
-- [Forge 接入契约](../forge/README_zh.md)
-- [文档索引](../README.md)
+- [Forge Tool API 接入契约](../forge/README_zh.md)

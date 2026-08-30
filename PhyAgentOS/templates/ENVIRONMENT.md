@@ -1,8 +1,8 @@
 # Environment State
 
 This optional file stores compact, long-lived scene knowledge supplied by the user or an
-external perception system. Forge execution does not write this file automatically; use
-`forge_get_context` for live robot state.
+external perception system. Forge execution does not write this file automatically; use the
+appropriate Query Tool via `forge_tool_query` for live robot state.
 
 ```json
 {

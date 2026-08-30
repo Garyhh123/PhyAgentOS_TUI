@@ -1,6 +1,6 @@
 # Docker Deployment Guide
 
-> Version: 0.2.0 · [中文](DOCKER.md)
+> Version: 1.0.0 · [中文](DOCKER.md)
 
 PhyAgentOS ships with a Docker-based quick deployment that requires no manual Python / Node.js setup. Together with the [`scripts/install.sh`](../../scripts/install.sh) one-click script, you can build, initialize, and run in under a minute.
 
@@ -14,11 +14,17 @@ PhyAgentOS ships with a Docker-based quick deployment that requires no manual Py
 |:-----|:-----|
 | Python 3.12 runtime | All `pyproject.toml` deps installed via `uv` |
 | `paos` CLI | Registered as the entrypoint (`ENTRYPOINT`) |
-| Node.js 20 | Used to build the WhatsApp bridge (best-effort; see [Known limitations](#-known-limitations)) |
+| Node.js 20 | Strictly builds the WhatsApp bridge from locked npm dependencies |
 | Config directory | `/root/.PhyAgentOS` (persisted to the host via a volume mount) |
 | Default service | Interactive CLI (`paos agent`); switchable to a long-running gateway |
 
-The image does **not** include GPU / CUDA, Isaac Sim, BEHAVIOR-1K, or other heavy dependencies (these live under `external/` and need separate setup). The image's role is the Agent and gateway service, which connects to an external Forge Gateway.
+The image does **not** include Dora CLI, concrete Forge Skills or nodes, GPU / CUDA, Isaac Sim,
+BEHAVIOR-1K, or other robot Runtime dependencies. The stock image runs the general Agent and its
+message-bus gateway; it does not provide a managed Forge Skill Runtime. Run that Runtime from a
+host-native PhyAgentOS installation following the
+[user manual](../en/02-user-manual.md#dora-cli-for-managed-skill-profiles), or build a custom image
+containing Dora CLI v0.4.1 with `dora-message` v0.7.0 and every prerequisite of the selected Skill
+profile. Installing Dora only on the host does not make it visible inside the stock container.
 
 > **About the gateway port**: `paos gateway` is a message-bus service (Agent + channels + Cron + Heartbeat + Forge orchestration) that makes **outbound connections only** (LLM providers, Telegram/DingTalk, etc.) and does **not** bind an inbound port. `gateway.port` in `config.json` is currently shown only in the startup log and is not bound to a socket, so the container needs **no** `-p` port mapping.
 
@@ -155,14 +161,12 @@ docker run -d --name phyagentos-gateway \
 
 ## ⚠️ Known limitations
 
-### 1. WhatsApp channel unavailable
+### 1. Managed Forge Skill Runtime is not included
 
-Building the WhatsApp bridge is **best-effort**: a transitive dependency of `@whiskeysockets/baileys` fetches `libsignal-node` over `git+ssh`, which fails in isolated build environments. Therefore:
-
-- The WhatsApp channel (`paos channels login`) is **unavailable**
-- CLI, gateway, and other channels (Telegram / DingTalk / Feishu, etc.) are **unaffected**
-
-To restore WhatsApp, the dependency must be handled separately (pin a version reachable over HTTPS, or configure SSH credentials inside the image).
+The stock image has no Dora CLI or concrete Forge Runtime artifacts. `paos skill start` therefore
+is not supported in this image without an explicitly extended image containing Dora CLI v0.4.1,
+`dora-message` v0.7.0, and the selected Skill's platform dependencies. Agent-only and
+message-channel use does not require Dora.
 
 ### 2. Container runs as root
 

@@ -287,24 +287,27 @@ class ForgeEvidenceConfig(Base):
 
 
 class ForgeConfig(Base):
-    """The only supported robot execution integration."""
+    """Agent-side timeout and evidence policy for an active Forge Skill runtime."""
 
-    enabled: bool = False
-    base_url: str = "http://127.0.0.1:9001"
-    api_version: Literal["paos-forge-gateway-mvp-plus.v1"] = (
-        "paos-forge-gateway-mvp-plus.v1"
-    )
     request_timeout_s: float = Field(default=10.0, gt=0)
     poll_interval_s: float = Field(default=0.5, ge=0.1, le=5.0)
     execution_timeout_s: float = Field(default=300.0, gt=0)
     evidence: ForgeEvidenceConfig = Field(default_factory=ForgeEvidenceConfig)
 
-    @field_validator("base_url")
+DEFAULT_RESOURCE_REGISTRY_URL = "https://paos-resource-manager.dev.x-era.com"
+
+
+class ResourceRegistryConfig(Base):
+    """Public artifact registry used for Skill and Forge Runtime downloads."""
+
+    url: str = DEFAULT_RESOURCE_REGISTRY_URL
+
+    @field_validator("url")
     @classmethod
-    def validate_base_url(cls, value: str) -> str:
+    def validate_url(cls, value: str) -> str:
         normalized = value.strip().rstrip("/")
-        if not normalized.startswith(("http://", "https://")):
-            raise ValueError("forge.baseUrl must be an HTTP(S) URL")
+        if normalized and not normalized.startswith(("http://", "https://")):
+            raise ValueError("resourceRegistry.url must be an HTTP(S) URL")
         return normalized
 
 
@@ -344,12 +347,33 @@ class AgentVerificationConfig(Base):
     service_port: int = Field(default=8100, ge=1, le=65535)
 
 
+class AgentEvolutionConfig(Base):
+    """Task-level experience capture and guarded Skill evolution."""
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="forbid",
+    )
+
+    enabled: bool = True
+    scope: Literal["verified_forge_lineage"] = "verified_forge_lineage"
+    promotion_mode: Literal["guarded_auto"] = "guarded_auto"
+    min_successful_episodes: int = Field(default=3, ge=1)
+    min_lesson_episodes: int = Field(default=3, ge=1)
+    max_lessons_per_skill: int = Field(default=8, ge=1, le=50)
+    max_evolution_calls_per_run: int = Field(default=20, ge=0)
+    model: str | None = None
+    provider: str | None = None
+
+
 class AgentsConfig(Base):
     """Agent configuration."""
 
     defaults: AgentDefaults = Field(default_factory=AgentDefaults)
     modes: AgentModes = Field(default_factory=AgentModes)
     verification: AgentVerificationConfig = Field(default_factory=AgentVerificationConfig)
+    evolution: AgentEvolutionConfig = Field(default_factory=AgentEvolutionConfig)
 
 
 class ProviderConfig(Base):
@@ -453,6 +477,7 @@ class Config(BaseSettings):
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     embodiments: EmbodimentsConfig = Field(default_factory=EmbodimentsConfig)
     forge: ForgeConfig = Field(default_factory=ForgeConfig)
+    resource_registry: ResourceRegistryConfig = Field(default_factory=ResourceRegistryConfig)
 
     @model_validator(mode="before")
     @classmethod
@@ -461,6 +486,16 @@ class Config(BaseSettings):
             raise ValueError(
                 "legacy `runtime` configuration is unsupported; remove it and configure `forge`"
             )
+        if isinstance(value, dict) and isinstance(value.get("forge"), dict):
+            unsupported = sorted(
+                set(value["forge"])
+                & {"enabled", "baseUrl", "base_url", "apiVersion", "api_version"}
+            )
+            if unsupported:
+                raise ValueError(
+                    "Forge execution endpoints come only from an active installed Skill; "
+                    f"remove unsupported forge key(s): {', '.join(unsupported)}"
+                )
         return value
 
     @property

@@ -1,200 +1,162 @@
 # PhyAgentOS Communication Architecture
 
-> Version: 0.2.0 · [中文](COMMUNICATION.md)
+[中文](COMMUNICATION.md) · [Documentation index](../README.md)
 
-## 1. Five communication boundaries
+> Version: 1.0.0
 
-PhyAgentOS does not mix user messaging, physical execution, and verification on one internal bus:
+## 1. Communication boundaries
 
-1. **User-message boundary:** Channel ↔ MessageBus ↔ AgentLoop.
-2. **Agent/Forge orchestration boundary:** Agent tools ↔ `ForgeSessionOrchestrator`.
-3. **PAOS/Gateway boundary:** async HTTP plus WebSocket.
-4. **Verifier boundary:** Orchestrator ↔ independent Verification Service process.
-5. **Persistence boundary:** Orchestrator ↔ SQLite; Adapter/Verifier ↔ workspace artifacts.
+PhyAgentOS separates six boundaries:
 
-```text
-External Channel
-      │ InboundMessage / OutboundMessage
-      ▼
-  MessageBus ─ AgentLoop ─ Forge tools ─ Orchestrator
-                                          │
-                ┌─────────────────────────┼────────────────────┐
-                ▼                         ▼                    ▼
-          HTTP / WebSocket             SQLite          Verification HTTP
-                ▼                         ▼                    ▼
-          Forge Gateway             Event Store          Child process
-                │
-                ▼
-        Forge Runtime / Dora
-```
+1. user/channel ↔ AgentLoop messages;
+2. Agent tools ↔ AgentTaskCoordinator;
+3. ForgeToolClient ↔ Gateway Query/Action/Session Tool API;
+4. observation collector ↔ Gateway image/state WebSockets;
+5. verifier ↔ isolated Verification Service;
+6. AgentTask/experience/Runtime ↔ their own persistent stores.
+
+The boundaries share opaque references, not execution ownership.
 
 ## 2. User-message boundary
 
-A Channel converts external input into `InboundMessage`. AgentLoop loads context by `session_key`, invokes the model and tools, and emits `OutboundMessage`. CLI one-message mode may call `process_direct`, but the internal Planner and Forge tools remain the same.
+Channels publish `InboundMessage` objects to the Agent bus. AgentLoop builds context, invokes the
+model and tools, then emits `OutboundMessage`. Tool calls use registered JSON schemas. The existing
+file, directory, shell, web, messaging, image, Scene Graph, Cron, Spawn, Agent Mode, Skill
+activation, and dynamic MCP tools follow this same loop.
 
-A Channel must not:
+AgentTask's `origin_session_key` associates completion experience with the originating Agent
+conversation. It is not a Gateway execution identifier.
 
-- call Gateway directly;
-- write SQLite or artifacts directly;
-- generate or reuse Forge session/command IDs;
-- report Gateway `succeeded` directly as task success.
-
-## 3. Agent/Orchestrator boundary
-
-The seven Forge tools are the Agent's only execution interface:
+## 3. AgentTask boundary
 
 ```text
-forge_execute_task
-forge_get_session
-forge_cancel_session
-forge_get_context
-forge_reset
-verify_forge_session
-create_replanned_forge_session
+forge_task_create
+forge_task_get
+forge_task_begin_revision
+forge_task_finalize
+forge_task_cancel
 ```
 
-`forge_execute_task` immediately returns generated IDs and `accepted`; it does not block a model call on physical execution. Orchestrator progresses in the background and routes terminal state back to the originating `session_key` through a system event.
+These tools call AgentTaskCoordinator and never call Dora or a robot. The coordinator uses
+transactional SQLite to enforce one non-terminal AgentTask and stores append-only PlanRevisions,
+Tool records, evidence references, and verification attempts.
 
-A completion event contains:
+Diagnostic Query may omit `task_id`; governed Query and every Action/Session include it. The
+wrapper checks the immutable Skill/Runtime/ToolSpec binding and creates or updates the matching
+Tool record around the same Gateway request. This is aggregation, not another execution plane.
 
-```json
-{
-  "session_id": "...",
-  "root_session_id": "...",
-  "status": "succeeded|failed|timed_out|cancelled",
-  "execution_status": "succeeded|failed|timed_out|cancelled|unknown",
-  "verification_verdict": "success|failure|replan_required|inconclusive|null",
-  "error_code": null,
-  "error_message": null
-}
-```
-
-A recovery event carries parent, goal, criteria, preserved constraints, unmet criteria, guidance, evidence references, and deadline. It instructs Planner to call `create_replanned_forge_session` but contains no executable action.
-
-## 4. PAOS/Gateway HTTP
-
-| Method | Path | PAOS use | State effect |
-|:-------|:-----|:---------|:-------------|
-| GET | `/agent/runtime/capabilities` | Startup contract and action discovery | Validate/cache before work |
-| GET | `/agent/runtime/status` | Live `forge_get_context` status | Read only |
-| GET | `/agent/runtime/context` | Readiness, image sources, context | Read only/source discovery |
-| POST | `/agent/runtime/reset` | Explicit reset | Only without active lineage |
-| POST | `/agent/sessions` | Create one high-level action | Called after durable dispatch intent |
-| GET | `/agent/sessions/{session_id}` | Only execution-terminal source | queued/running/terminal |
-| POST | `/agent/sessions/{session_id}/cancel` | Timeout, user cancel, graceful shutdown | Persist cancel response |
-
-`ForgeGatewayClient` uses `httpx.AsyncClient`, disables proxy-environment inheritance (`trust_env=False`), and consistently decodes JSON objects. HTTP errors and `ok=false` become `ForgeGatewayError`, retaining status code for restart-404 semantics.
-
-## 5. Session and command identity
-
-PAOS generates:
+## 4. Gateway HTTP boundary
 
 ```text
-session_id = forge_<random>
-command_id = command_<random>
+GET  /tools
+GET  /tools/{tool_id}
+GET  /tools/{tool_id}/context
+POST /tools/{endpoint_id}/{operation}:invoke   # Query, HTTP 200
+POST /tools/{tool_id}:invoke                   # Action/Session admission, HTTP 202
+GET  /invocations/{invocation_id}
+GET  /invocations/{invocation_id}/result       # HTTP 202 while pending
+POST /invocations/{invocation_id}/cancel
+POST /invocations/{invocation_id}/stop         # Session
 ```
 
-Every response after POST preserves:
+Query invocation first reads the ToolSpec and uses its `endpoint_id`, `operation`, and
+`semantics=query` binding. Action/Session invocation addresses the stable Tool ID; both return an
+`invocation_id`, and Action also returns an `attempt_id`.
 
-```text
-response session_id == PAOS session_id
-response command_id == PAOS command_id
-command.session_id == PAOS session_id
-command.request_id == PAOS command_id
-session.action_type == request.action_type
-command action_type/policy_id/command == advertised capability
-```
+Every successful response is a JSON object with `ok=true` and object-valued `data`. Error envelopes
+may carry code and retryability. A transport timeout means remote state is unknown. Returned
+invocation identities must be retained even if later local persistence or tracking fails.
 
-PAOS does not accept a new Gateway-generated ID as an alias. Parsing may select a command only when strict identity validation ultimately succeeds.
+## 5. Identity boundary
 
-## 6. PAOS/Gateway WebSocket
+| Identity | Namespace | Mutability |
+|:---------|:----------|:-----------|
+| `task_id` | PAOS AgentTask | Stable for all revisions |
+| `binding_id` | PAOS Forge binding | Immutable Skill/Runtime/ToolSpec snapshot |
+| `revision_id` | PAOS PlanRevision | Immutable, append-only generation |
+| `record_id` | PAOS ToolExecutionRecord | Immutable record identity |
+| `caller_id` | PAOS ToolExecutionRecord | Persisted before asynchronous admission |
+| `invocation_id` | Gateway ToolInvocation | Stable Action/Session lifecycle identity |
+| `attempt_id` | Gateway attempt | Stable for the returned attempt |
 
-### `/ws/images`
+No component derives one namespace from another. Correlation happens by explicit stored references.
 
-```json
-{
-  "type": "image",
-  "id": "front",
-  "seq": 42,
-  "timestamp": 1785744000.123,
-  "content_type": "image/jpeg",
-  "data": "<base64>"
-}
-```
+## 6. Invocation terminal semantics
 
-PAOS stores Gateway `timestamp` as `captured_at` when present and independently records local `received_at`. Per-source sequence participates in the before/after boundary.
+Gateway status/result is the only Action/Session terminal source. Pending remains non-terminal. Known
+terminal values include success, failure, cancellation, or stopped as reported by Gateway.
+`unknown` is terminal for PAOS accounting because progress cannot be proven, but it is not a known
+physical stop and remains tracked for normal Runtime-stop gating.
 
-### `/ws/state`
+Cancellation/stop `requested` or `accepted` acknowledges control delivery only. It does not untrack an
+invocation or set an AgentTask to cancelled. PAOS continues reconciliation and finalizes the task
+explicitly.
 
-Each message is a JSON object. Gateway 1.0.0 has no uniform source-timestamp field, so PAOS preserves the payload and local `received_at` with `captured_at=null`.
+## 7. Evidence WebSocket boundary
 
-### Connection semantics
+PAOS connects to configured image and optional state streams using bounded connection and capture
+timeouts. Messages are treated as untrusted input. Image media, decoded size, sequence, phase,
+source, local receive time, and SHA-256 are validated before persistence.
 
-- HTTP(S) base URL maps automatically to WS(S).
-- Images and state use independent connections and reconnection loops.
-- Collector retains only the highest legal sequence per source.
-- Non-required sources may be ignored.
-- Connection/message/validation errors enter Bundle quality instead of masquerading as evidence.
+The collector captures before the first bound physical execution and after task-owned executions reach terminal
+accounting state. Evidence association is best-effort; Gateway ToolResult and invocation events
+remain authoritative for execution.
 
-## 7. Gateway terminal semantics
+## 8. Verification boundary
 
-The only terminal source is `GET /agent/sessions/{session_id}`. PAOS accepts:
+The Agent-side verifier sends resolved public task contracts, normalized Tool facts, evidence,
+history, and frozen scoped Lessons to the isolated Verification Service. Lessons are untrusted,
+non-authoritative advice. The service cannot invoke Gateway, create a PlanRevision, or change
+execution records.
 
-```text
-session.status == command.status == succeeded | failed | cancelled
-```
+Verifier output must validate as the versioned verdict contract. AgentTaskCoordinator applies
+`off`, `audit`, `enforce`, or `recovery` semantics and persists every attempt.
 
-PAOS never infers terminal state from fixed waiting, robot stability, image change, command outputs, or WebSocket state.
+## 9. Experience boundary
 
-The PAOS execution deadline produces `timed_out` followed by cancellation; this is not a native Gateway terminal report.
+ExperienceCoordinator receives an AgentTask completion reference. `AgentTaskOutcomeSource` builds a
+redacted envelope containing workflow structure, semantic verdicts, field names, and opaque task,
+revision, invocation, attempt, and evidence references. Raw arguments, results, credentials,
+endpoints, and physical coordinates are not copied into learned content.
 
-## 8. Verification Service boundary
+The episode is unique per AgentTask. PlanRevisions, repeated completion notifications, reviews,
+and replay do not create independent support.
 
-The child process exposes local HTTP:
+## 10. Persistence boundary
 
-| Method | Path | Use |
-|:-------|:-----|:----|
-| GET | `/healthz` | Bounded readiness check |
-| POST | `/v1/verify-task` | Submit `forge_verification_request_v1` |
+| Store | Content |
+|:------|:--------|
+| `.paos/agent_tasks/tasks.sqlite3` | AgentTask records and append-only events |
+| `artifacts/agent_tasks/<task_id>/` | Before/after snapshots, bundle metadata, evidence entities |
+| `.paos/evolution/experience.sqlite3` | Bindings, episodes, Lessons, candidates, jobs, events |
+| Skill Runtime state path | Installed Runtime state, invocation/Session IDs, task bindings, and audit events |
+| Skill Runtime logs path | Lifecycle and Dora launch logs |
 
-Requests require a randomly derived `X-PAOS-Admin-Token`. The service receives resolved public contracts, multimodal evidence, history, and lessons only. It never accesses Gateway or creates a recovery child.
+SQLite updates and artifact writes are transactional or atomic within their own boundary. A
+Gateway response is not rolled back because local experience processing failed; evolution is
+fail-open.
 
-## 9. Persistence boundary
+## 11. Skill Runtime and Registry boundary
 
-### SQLite
+Registry/index clients return artifact metadata and downloads. Cache and installers require size
+and SHA-256, then validate archive inventories and exact single-executable Node locks before atomic installation.
+RuntimeManager starts a named Dora flow and observes Gateway `/tools`; it never calls an alternate
+Gateway Agent API.
 
-SQLite stores `ForgeSessionRecord` JSON, unique identities, indexed status, and append-only events. It is Orchestrator's recovery source; business code does not mutate tables directly.
+The active Runtime availability provider supplies Skill visibility and Gateway URL to the Agent.
+It does not mutate AgentTask or experience data.
 
-### Artifacts
+## 12. Trust rules
 
-Adapter uses atomic replacement for:
-
-```text
-execution_record.json
-before_snapshot.json / after_snapshot.json
-evidence_bundle.json
-evidence/*
-```
-
-Verifier writes `verification_result.json` and `LESSONS.md`. Artifact URIs are relative to the workspace and are resolved and checked again on read.
-
-### Consistency boundary
-
-SQLite and files are not one cross-resource transaction. Therefore ordering matters: before entities/manifest complete before their reference is stored; dispatch intent is durable before HTTP mutation; a written Execution Record is reused across a database-commit crash window but fails on identity mismatch.
-
-## 10. Trust boundary
-
-| Data | Trust policy |
-|:-----|:-------------|
-| Gateway capabilities | Strict version and shape; revalidate action identity in every response |
-| Gateway JSON | Object required; HTTP or `ok=false` fails |
-| WebSocket image | Validate Base64, size, media type, magic bytes, sequence |
-| Artifact | Revalidate safe URI, existence, byte size, SHA-256, media type |
-| Verifier output | Validate JSON, Pydantic, exact criteria, known evidence refs |
-| Recovery guidance | Planner context only, never a command |
+- Treat ToolSpec, Gateway responses, WebSocket payloads, task text, and learned text as untrusted data.
+- Never log credentials or raw sensitive task inputs.
+- Never infer stop from cancel acceptance, timeout, or unknown.
+- Never bypass digest or archive safety checks.
+- Never place a second execution API between Agent tools and ForgeToolClient.
+- Keep Runtime force-stop and destructive artifact cleanup as explicit operator actions.
 
 ## Next reading
 
 - [Integration Development Guide](README_en.md)
-- [Developer Manual](../en/03-developer-manual.md)
-- [Forge Integration Contract](../forge/README.md)
+- [Operations Manual](../user_manual/README_en.md)
+- [Forge Tool API Contract](../forge/README.md)

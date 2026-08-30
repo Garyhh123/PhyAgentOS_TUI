@@ -1,227 +1,293 @@
 # PhyAgentOS Integration Development Guide
 
-> Version: 0.2.0 · [中文](README.md)
+[中文](README.md) · [Documentation index](../README.md)
 
-This guide is for integrators of Forge Gateway, robot capabilities, evidence sources, LLM providers, and PAOS Agent tools. Robot execution now enters only through Forge Gateway 1.0.0. PAOS no longer exposes Target, Policy, SkillRuntime, or SessionRunner extension points.
+> Version: 1.0.0
 
-## 1. Choose the correct extension point
+## 1. Choose the integration point
 
-| Need | Where to change | PAOS-side work |
-|:-----|:----------------|:---------------|
-| New robot or simulator | Forge Runtime / Dora / hardware integration | No PAOS driver; validate the Gateway contract |
-| New high-level action | Gateway capabilities and action dispatch | Usually no product code; add generic contract/E2E tests and docs |
-| New policy | Policy/runtime behind the Forge action | Expose generic policy identity and result semantics |
-| New camera | Gateway `/ws/images` producer | Configure source ID and test before/after sequence |
-| New structured state | Gateway `/ws/state` or a public evidence-kind extension | For a new kind, update contracts/resolver/retention/tests together |
-| New verifier model | PAOS Provider configuration/implementation | Support multimodal input and strict JSON output |
-| New Agent entry point | PAOS Channel | Use MessageBus/AgentLoop; never call Gateway directly |
-| New execution tool | Prefer generic Forge tools | Never bypass Orchestrator/Store or expose caller identities |
+| Capability | Integration point |
+|:-----------|:------------------|
+| Robot read or calculation | Gateway Query ToolSpec + ToolEndpoint operation |
+| Robot effect | Gateway Action ToolSpec + ToolEndpoint operation |
+| Stateful capability lifecycle | Gateway Session ToolSpec + ToolEndpoint operation |
+| Dora nodes and deployment assets | Manifest-v2 Skill Bundle and locked Node artifacts |
+| Workflow instructions | `SKILL.md` discovered by SkillsLoader |
+| User-task success | Generic `TaskVerificationContract` and AgentTask finalize |
+| New model provider | Existing provider registry/configuration |
+| Non-robot Agent capability | Existing Agent ToolRegistry or dynamic MCP |
 
-## 2. Integrate a Gateway action
+Do not connect Agent code directly to robot SDKs, Dora nodes, simulators, or legacy Gateway
+Session/Policy routes outside the governed Tool API.
 
-### 2.1 Capability declaration
+## 2. Define a ToolSpec
 
-Gateway advertises the action under `/agent/runtime/capabilities`:
+Every ToolSpec has a stable `tool_id`, implementation and endpoint binding, operation,
+`semantics: query|action|session`, description, strict input/output JSON schemas, readiness requirements,
+and a robot frame profile when spatial inputs are involved.
 
-```json
-{
-  "actions": {
-    "place_object": {
-      "description": "Place an object in a target area.",
-      "policy_id": "manipulation_policy",
-      "command": "place_object",
-      "required_parameters": ["object", "target"],
-      "input_mapping": {
-        "object": "object",
-        "target": "target"
-      },
-      "result_semantics": "command_completed",
-      "completion": {
-        "source": "policy_command_status"
-      }
-    }
-  }
-}
+```yaml
+tool_id: motion.resolve_relative_pose
+implementation_id: motion.integration
+endpoint_id: motion.relative_pose
+operation: resolve
+semantics: query
+description: Resolve a relative end-effector delta into an absolute target pose.
+input_schema:
+  type: object
+  additionalProperties: false
+  required: [translation_frame, translation_m]
+  properties:
+    translation_frame: {enum: [tcp, base]}
+    translation_m:
+      type: object
+      additionalProperties: false
+      required: [x, y, z]
+      properties:
+        x: {type: number}
+        y: {type: number}
+        z: {type: number}
+output_schema:
+  type: object
+robot_frame_profile:
+  base_frame: arm_base
+  tool_frame: tcp
 ```
 
-Guidelines:
+Use Query for synchronous reads or deterministic resolution without a robot effect. Use Action for
+bounded physical effects and Session for explicitly owned, stateful lifecycles. Define Endpoint operation `max_concurrency` at
+the execution owner; PAOS does not create a cross-Tool lease.
 
-- `description`, `required_parameters`, and `input_mapping` help Planner create legal inputs.
-- `policy_id` and `command` form execution identity and remain consistent in create/get responses.
-- `result_semantics` and `completion` describe what Gateway completion means.
-- Never add `verify_grasp`, `grasp_verify_enabled`, or verifier prompts to capabilities.
-- Action-specific results may appear in command `outputs`; task success still follows criteria.
+## 3. Implement Query, Action, and Session behavior
 
-### 2.2 Create and get
-
-PAOS POSTs:
-
-```json
-{
-  "session_id": "forge_<paos-generated>",
-  "command_id": "command_<paos-generated>",
-  "action_type": "place_object",
-  "instruction": "Place the red object in the tray.",
-  "source": "paos-agent",
-  "inputs": {
-    "object": "red object",
-    "target": "tray"
-  }
-}
-```
-
-Gateway create/get responses allow PAOS to resolve:
-
-```json
-{
-  "ok": true,
-  "data": {
-    "session": {
-      "session_id": "forge_<same>",
-      "action_type": "place_object",
-      "status": "running"
-    },
-    "command": {
-      "command_id": "command_<same>",
-      "session_id": "forge_<same>",
-      "request_id": "command_<same>",
-      "action_type": "place_object",
-      "policy_id": "manipulation_policy",
-      "command": "place_object",
-      "status": "running"
-    }
-  }
-}
-```
-
-At terminal state, session and command statuses match and use only `succeeded`, `failed`, or `cancelled`. PAOS never infers terminal state from outputs, stability, or fixed waiting.
-
-### 2.3 Cancel
-
-`POST /agent/sessions/{session_id}/cancel` accepts a reason. Gateway should make a best effort to stop unfinished work and return a persistent JSON response. Even if cancellation transport fails, PAOS records the failure and finalizes its own state.
-
-## 3. Integrate image evidence
-
-Each `/ws/images` message is a JSON object:
-
-```json
-{
-  "type": "image",
-  "id": "front",
-  "seq": 42,
-  "timestamp": 1785744000.123,
-  "content_type": "image/jpeg",
-  "data": "<base64>"
-}
-```
-
-Requirements:
-
-- `id` remains stable across reconnects and the deployment.
-- `seq` increases monotonically per source.
-- `timestamp` may be absent; if present, it is finite, real source time.
-- `content_type` is JPEG, PNG, or WebP and matches entity magic bytes.
-- Decoded frame size does not exceed PAOS `maxArtifactBytes`.
-- At least one updated sequence is published after Gateway terminal state for the after boundary.
-
-Maintain independent sequences for multiple cameras. Do not encode camera identity in action type or rely on array ordering.
-
-## 4. Integrate robot state
-
-When task `required_kinds` contains `robot_state`, PAOS requires `/ws/state` messages in both before and after phases. Each message is a JSON object subject to `maxArtifactBytes`.
-
-Gateway 1.0.0 has no uniform source-time contract for state, so PAOS records `received_at` only. A future authoritative timestamp requires a public Gateway/Evidence contract upgrade, not Adapter field guessing.
-
-## 5. Design the Task Verification Contract
-
-Integrators do not create verifier branches per action. Help users and Agent write observable criteria.
-
-Avoid:
+Query calls are resolved from ToolSpec and invoked at:
 
 ```text
-goal: grasp succeeded
-criterion: policy returned succeeded
+POST /tools/{endpoint_id}/{operation}:invoke → HTTP 200
 ```
 
-Prefer:
+Action admission uses:
 
 ```text
-goal: object is held securely above the table
-criteria:
-  - final image shows the object clear of the table surface
-  - gripper and object maintain visible contact
-constraints:
-  - no other object leaves the workspace
+POST /tools/{tool_id}:invoke → HTTP 202 + invocation_id + attempt_id
+GET  /invocations/{invocation_id}
+GET  /invocations/{invocation_id}/result
+POST /invocations/{invocation_id}/cancel
 ```
 
-Gateway command status is useful execution evidence but cannot replace evidence of the environmental result.
+Session admission uses the same `POST /tools/{tool_id}:invoke` contract. Reconcile it through the
+common invocation routes and stop it with `POST /invocations/{invocation_id}/stop`. Declare whether
+the Session is task-owned, shared, or runtime-owned; do not let one owner stop another owner's
+Session.
 
-## 6. Provider and verifier integration
+Action status/result must expose an explicit lifecycle. Result may remain pending with HTTP 202.
+Cancellation acceptance reports control handling only. When execution truth cannot be recovered,
+return an explicit unknown outcome rather than fabricating cancellation or success.
 
-Verifier providers use the existing provider registry. A new provider supports:
+Inputs and outputs must be finite JSON and satisfy ToolSpec. Spatial Tools must state frames,
+units, tolerances, and orientation behavior. Avoid hidden defaults that the Agent cannot inspect
+through `forge_tool_context`.
 
-- `chat_with_retry()`;
-- system plus multimodal user content;
-- `temperature=0`;
-- timeout and cancellation;
-- a pure JSON-object response;
-- reconstruction in the child Verification Service from a serializable provider spec.
+## 4. Build a manifest-v2 Skill Bundle
 
-Public output passes `VerificationVerdict`, covers every criterion exactly once, and cites only valid evidence IDs.
+An installed Skill Bundle contains:
 
-## 7. PAOS extension boundary
+```text
+<skill>/
+├── skill.yaml
+├── SKILL.md
+├── start.sh                    # optional external-resource preparation before Dora
+├── archive-manifest.json       # generated by the packaging script
+├── profiles/<profile>/dataflow.yaml
+├── profiles/<profile>/...
+└── assets/...
+```
 
-### Valid extensions
+Minimal manifest structure:
 
-- generic evidence kinds;
-- new public-contract versions with an explicit compatibility decision;
-- Gateway-neutral observation reliability;
-- Store/event observability;
-- providers;
-- channels and other non-execution entry points.
+```yaml
+manifest_version: 2
+name: example-skill
+version: "1.0.0"
+description: Example robot workflow.
+skill_document: SKILL.md
+gateway_url: http://127.0.0.1:19002
+required_tools: [example.query, example.action]
+profiles:
+  sim:
+    dataflow: profiles/sim/dataflow.yaml
+    required_binaries: [gateway, example_node]
+    required_assets: [assets/scene.xml]
+    required_environment: []
+    environment: {}
+artifacts:
+  resolver: registry
+  nodes:
+    gateway:
+      artifact_id: gateway-1.0.0-linux-x86_64
+      version: "1.0.0"
+      platform: linux
+      arch: x86_64
+      artifact_type: executable_tar_gz
+      entrypoint: gateway
+      sha256: <64-character-sha256>
+```
 
-### Do not introduce
+All paths are relative and contained by the Bundle. Each Node archive has the locked SHA-256 and
+contains exactly one root-level executable with the locked filename; the installer records the
+extracted binary hash in its receipt. The Bundle archive inventory must
+cover every file with SHA-256. Links, path traversal, collisions, oversized expansion, and unlisted
+content are rejected.
 
-- action-specific verifier flags or prompts;
-- robot SDKs or policy clients inside PAOS;
-- another SessionRunner or file queue;
-- terminal inference from fixed sleeps, stability, or outputs;
-- caller-supplied session/command IDs;
-- direct POST/retry outside Store and Orchestrator;
-- verdicts written into Execution Records.
+When startup must download weights or prepare other external resources, the Bundle may provide a
+root-level `start.sh`. PAOS invokes it as `bash <bundle>/start.sh <name> <version>`, preserves the
+caller's working directory, and inherits terminal stdio. The script should resolve Bundle files
+relative to its own location, tolerate repeated execution, and return non-zero on failure. Such a
+Bundle requires Bash on the host `PATH`. `PAOS_SKILL_NAME` and `PAOS_SKILL_VERSION` are available as
+dataflow placeholders and in Dora process environments.
 
-## 8. Fake Gateway test loop
+## 5. Package, publish, and close the local loop
 
-Default integration tests use a local fake HTTP/WebSocket server matching real response shapes:
+### 5.1 Build and validate a Bundle
 
-1. Strict capabilities validation passes.
-2. Collectors receive all before sources.
-3. Test proves before snapshot is durable before create.
-4. Create returns matching identity.
-5. GET progresses through queued/running/terminal.
-6. Higher sequences arrive after terminal.
-7. Assertions cover Execution, Evidence, Verification, and final state.
-8. Timeout/cancel, 404 resume, disconnect, reordering, missing evidence, and invalid identity are covered.
+The repository script regenerates `archive-manifest.json`, builds a deterministic archive with
+fixed metadata, and safely extracts it through `ArchiveValidator` for final verification:
 
-Optional real-Gateway tests read `FORGE_GATEWAY_URL` only and never mutate Gateway source, configuration, or runtime data.
+```bash
+python scripts/package_skill.py /path/to/example-skill --output-dir dist/skills
+```
 
-## 9. Integration acceptance checklist
+The output name comes from `name` and `version` in `skill.yaml`; the script prints the archive
+SHA-256 and byte size. It refuses to replace an existing output unless `--force` is supplied; use
+that option only before publication. The script rejects links and excludes version-control, cache,
+and `node_modules` directories. Do not put credentials, presigned URLs, machine caches, logs, or
+runtime state in the source directory.
 
-- [ ] Gateway API version and four required supports are correct.
-- [ ] Action capability is complete and identity is stable.
-- [ ] Required inputs/input mapping are intelligible to Planner.
-- [ ] Create/get/cancel share a consistent response envelope.
-- [ ] `request_id == command_id`.
-- [ ] Session/command/action/policy/command identities remain consistent.
-- [ ] Terminal enumeration and session/command status agree.
-- [ ] Every image source has stable ID and increasing sequence.
-- [ ] Before is available before POST and after is available after terminal.
-- [ ] Task semantics require no action-specific verifier code.
-- [ ] Fake Gateway happy path and critical refusal paths pass.
+Before upload, run the same public local loop that users depend on:
+
+```bash
+paos skill install dist/skills/example-skill-1.0.0.tar.gz --local
+paos forge-node verify example-skill gateway
+paos skill inspect example-skill
+paos skill start example-skill --profile sim
+paos skill status example-skill
+paos skill stop example-skill
+```
+
+A local Bundle uses the same archive, manifest, and Node-lock validation as a Registry Bundle.
+Missing Nodes still resolve through the configured Registry or static index. Installers stage,
+validate, atomically replace, and roll back on failure. Never require callers to disable digest
+verification.
+
+### 5.2 Immutable publication order
+
+1. Publish and register every Node artifact first. Each `executable_tar_gz` archive contains only
+   one root-level executable named by `entrypoint`; put the final archive SHA-256 in the Skill lock.
+2. Freeze the `skill.yaml` name/version, profiles, and Node locks, package the Bundle, and retain the
+   printed Bundle SHA-256 and `size_bytes`.
+3. Upload the Bundle to a non-overwritable, long-lived HTTPS object key. Read it back from the final
+   URL and verify size and SHA-256. Corrections require a new version instead of overwriting bytes.
+4. Register the current Skill name, URL, SHA-256, and size in the Resource Registry, and ensure every
+   Node `artifact_id` resolves through its Node endpoint. An equivalent schema-v3 static index is
+   also supported.
+5. From a clean PAOS HOME, repeat Registry install, start, status, and stop. Confirm that no source
+   checkout path or development-machine cache is required.
+
+The public Registry returns the current Skill entry by name and has no historical-version subpath.
+The version in `paos skill install <name> --version <version>` is a client constraint: after the
+Bundle download, PAOS verifies its manifest version and rejects a mismatch before Node download or
+installation commit. Preserve old versions through immutable URLs, static indexes, or local
+archives; do not treat `--version` as a Registry history query.
+
+## 6. Design the Dora profile
+
+Develop and validate the currently distributed Forge Skill profiles with Dora CLI v0.4.1 and
+`dora-message` v0.7.0. Keep Node builds on that protocol generation until the Skill locks and host
+baseline are upgraded together.
+
+The dataflow should give each node explicit inputs/outputs and use the Gateway Tool request/response
+ports declared in its profile. Required executables are resolved from the immutable Runtime
+environment. Assets remain in the Skill Bundle and are referenced with relocatable paths.
+
+RuntimeManager creates a deterministic flow name, verifies Dora and required files, starts the
+flow, then waits for Gateway `/tools` and every required Tool context. A Gateway already listening
+at the manifest URL is not silently adopted.
+
+When Tool API is the physical execution plane, disable the Gateway Agent API in the profile:
+
+```yaml
+agent:
+  enabled: false
+tools:
+  enabled: true
+```
+
+## 7. Write workflow guidance
+
+`SKILL.md` should tell the Agent when to activate the Skill, which contexts to inspect, the Query →
+Action/Session ordering, task binding, ownership, terminal reconciliation, verification checkpoints, and safe recovery
+rules. It must not embed secrets, Registry URLs, task-specific coordinates, or instructions to
+bypass Gateway/verification.
+
+For a verified workflow, activate the primary Skill in the current turn, create one AgentTask from
+that activation, bind every contributing Query/Action/Session to the same task, finalize after all
+task-owned executions terminate, and append a PlanRevision only when recovery verdict
+allows it.
+
+## 8. Evidence and verification
+
+Robot capability integration should expose Tool execution facts, not action-specific verifier code.
+PAOS captures configured image/state sources and applies the generic verification contract at
+AgentTask finalize. Tool output schemas should contain useful terminal result semantics, final
+state/error data, and tolerances where relevant.
+
+If authoritative evidence is introduced later, version the evidence contract explicitly. Do not
+upgrade best-effort WebSocket association by convention.
+
+## 9. Fake Gateway and conformance tests
+
+Before real hardware or simulation, use a mock HTTP transport to test:
+
+- Tool list/spec/context and Query binding resolution;
+- activation candidate revalidation and ToolSpec/runtime drift rejection;
+- Action HTTP 202 admission with invocation and attempt identities;
+- Session admission, ownership, status/result, and stop;
+- pending status/result and known terminal results;
+- cancellation requested/accepted without false stop;
+- timeout and unknown without blind retry;
+- endpoint concurrency rejection behavior;
+- diagnostic Query and bound calls through identical routes;
+- AgentTask one-active constraint, revisions, evidence, and aggregate verification;
+- archive traversal/link/collision/digest attacks and transactional rollback;
+- startup with and without `start.sh`, missing Bash, and non-zero hook exit;
+- Skill identity injection into dataflow/Dora environments and rematerialization after profile
+  content or dataflow-path changes;
+- cross-process start/stop/install/remove conflicts for one Skill;
+- Runtime start/status/log/stop and availability propagation.
+
+Then run a complete simulated workflow. Real robot or MuJoCo acceptance must identify the exact
+Bundle, node digests, profile, and environment used.
+
+## 10. Integration acceptance checklist
+
+- [ ] Tool semantics and schemas are explicit and strict.
+- [ ] Frame, unit, tolerance, and readiness conventions are inspectable.
+- [ ] Gateway operation owns `max_concurrency`.
+- [ ] Query, Action, and Session use the documented HTTP contracts.
+- [ ] Skill/Runtime/ToolSpec binding is frozen and revalidated for every governed execution.
+- [ ] Invocation and attempt IDs remain separate from PAOS task IDs.
+- [ ] Cancel, stop, timeout, and unknown do not imply physical stop or trigger a blind POST retry.
+- [ ] Bundle and Node artifacts have immutable size/digest metadata.
+- [ ] The Bundle passes repository packaging and the local install loop, and Registry Skill and Node
+      endpoints all resolve.
+- [ ] Optional startup-hook arguments, failure state, repeated execution, and external-resource
+      digests are verified.
+- [ ] Runtime profile starts from a clean environment and reaches all Tool contexts.
+- [ ] Gateway Agent API is disabled for the Tool-only profile.
+- [ ] General Agent tools, verification, experience, and evolution require no capability-specific fork.
 
 ## Next reading
 
 - [Developer Manual](../en/03-developer-manual.md)
 - [Communication Architecture](COMMUNICATION_en.md)
-- [Forge Integration Contract](../forge/README.md)
-- [Configuration Reference](../en/04-forge-configuration-reference.md)
+- [Forge Tool API Contract](../forge/README.md)
