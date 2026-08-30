@@ -6,8 +6,8 @@ x-common-config: &common-config
     - ~/.PhyAgentOS:/root/.PhyAgentOS
 
 services:
-  PhyAgentOS-gateway:
-    container_name: PhyAgentOS-gateway
+  phyagentos-gateway:
+    container_name: phyagentos-gateway
     <<: *common-config
     command: ["gateway"]
     restart: unless-stopped
@@ -22,7 +22,7 @@ services:
           cpus: '0.25'
           memory: 256M
   
-  PhyAgentOS-cli:
+  phyagentos-cli:
     <<: *common-config
     profiles:
       - cli

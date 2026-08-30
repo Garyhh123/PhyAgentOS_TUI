@@ -2,6 +2,15 @@
 
 All notable changes to PhyAgentOS are documented here. Categories follow Keep a Changelog.
 
+## [v1.0.0] - 2026-08-30
+
+Initial stable release of PhyAgentOS.
+
+### Security
+
+- Upgraded `@whiskeysockets/baileys` to `7.0.0-rc14` to address
+  `CVE-2026-48063` / `GHSA-qvv5-jq5g-4cgg`, and locked the Bridge dependency graph.
+
 ## [v0.2.3] - 2026-08-27
 
 PhyAgentOS can run independently distributed Forge Skills through a task-scoped, immutable

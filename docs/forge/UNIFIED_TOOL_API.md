@@ -1,6 +1,6 @@
 # Unified Forge Tool API Integration
 
-> Applies to PhyAgentOS 0.2.3. See [Forge Tool API Integration Contract](README.md) for the full
+> Applies to PhyAgentOS 1.0.0. See [Forge Tool API Integration Contract](README.md) for the full
 > operational and development contract.
 
 ## One physical execution plane

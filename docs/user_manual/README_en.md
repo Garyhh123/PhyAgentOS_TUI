@@ -2,7 +2,7 @@
 
 [中文](README.md) · [Documentation index](../README.md)
 
-> Version: 0.2.3
+> Version: 1.0.0
 
 ## 1. Runtime model
 
@@ -25,7 +25,7 @@ the explicit lifecycle of installed Bundle profiles; it does not replace Gateway
 
 ### PAOS host
 
-- Python 3.11 or 3.12 and the intended v0.2.3 environment are installed.
+- Python 3.11 or 3.12 and the intended v1.0.0 environment are installed.
 - `paos status` resolves the expected config, workspace, model, and provider.
 - Workspace, PAOS data paths, and artifact paths have sufficient permissions and disk space.
 - Verification provider credentials are available when non-`off` tasks are allowed.
@@ -178,7 +178,7 @@ it must not remove task records, invocation references, or evolution history.
 
 ## 10. Operational acceptance checklist
 
-- [ ] Package and runtime version report 0.2.3.
+- [ ] Package and runtime version report 1.0.0.
 - [ ] General Agent tools and dynamic MCP tools remain registered.
 - [ ] Required Skill Bundle and all node artifacts verify.
 - [ ] Managed Runtime reaches ready and all Tool contexts are healthy.

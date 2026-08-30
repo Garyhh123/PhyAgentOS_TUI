@@ -2,7 +2,7 @@
 
 [English](COMMUNICATION_en.md) · [文档索引](../README.md)
 
-> 版本：0.2.3
+> 版本：1.0.0
 
 ## 1. 通信边界
 

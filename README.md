@@ -13,7 +13,7 @@
   </p>
   <p>
     <img src="https://img.shields.io/badge/Python-≥3.11-3776AB?logo=python&logoColor=white" alt="Python">
-    <img src="https://img.shields.io/badge/Version-v0.2.3-47A882" alt="Version">
+    <img src="https://img.shields.io/badge/Version-v1.0.0-47A882" alt="Version">
     <img src="https://img.shields.io/badge/License-MIT-3DA639" alt="License">
     <a href="https://arxiv.org/pdf/2607.16636">
       <img src="https://img.shields.io/badge/Tech_Report-arXiv-b31b1b?logo=arxiv&logoColor=white" alt="Tech Report">
@@ -38,6 +38,7 @@ PhyAgentOS is an agent framework for embodied tasks. The Agent plans high-level 
 
 | Version | Date | Update |
 |:--------|:-----|:-------|
+| ![v1.0.0](https://img.shields.io/badge/v1.0.0-47A882) | 2026-08-30 | Initial stable release of PhyAgentOS. |
 | ![v0.2.3](https://img.shields.io/badge/v0.2.3-47A882) | 2026-08-27 | Forge Skills can be installed and managed independently, activated into immutable AgentTask bindings, and used through governed Query, Action, and Session Tool API lifecycles with recovery and version-scoped experience. |
 | ![v0.2.2](https://img.shields.io/badge/v0.2.2-47A882) | 2026-08-21 | Unified Forge execution on the Query/Action Tool API and added AgentTask aggregation, a verifiable Skill Runtime, Resource Registry integration, and the move-arm-by-ee Skill while retaining Agent verification and evolution. |
 | ![v0.2.1](https://img.shields.io/badge/v0.2.1-47A882) | 2026-08-14 | Added verified task experience, explicit workflow Skill activation, guarded Skill evolution, clustered scope-aware Lessons, and Skill-scoped advisory context for semantic verification. |
@@ -124,7 +125,7 @@ Python 3.11 or 3.12 is recommended. Concrete Forge Skills and their Runtime arti
 distributed separately.
 
 Dora is not required for the general Agent or for `paos skill install`. It is required on `PATH`
-when `paos skill start` launches a managed Forge Skill profile. PhyAgentOS 0.2.3 uses Dora CLI
+when `paos skill start` launches a managed Forge Skill profile. PhyAgentOS 1.0.0 uses Dora CLI
 v0.4.1 with `dora-message` v0.7.0 as its Forge Skill compatibility baseline. On Linux or macOS,
 install that exact release:
 

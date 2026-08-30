@@ -2,7 +2,7 @@
 
 [English](README.md) · [文档索引](../README.md)
 
-> 适用于 PhyAgentOS 0.2.3。
+> 适用于 PhyAgentOS 1.0.0。
 
 ## 1. 执行边界
 

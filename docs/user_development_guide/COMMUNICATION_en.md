@@ -2,7 +2,7 @@
 
 [中文](COMMUNICATION.md) · [Documentation index](../README.md)
 
-> Version: 0.2.3
+> Version: 1.0.0
 
 ## 1. Communication boundaries
 

@@ -1,5 +1,9 @@
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
+LABEL org.opencontainers.image.title="PhyAgentOS" \
+      org.opencontainers.image.version="1.0.0" \
+      org.opencontainers.image.source="https://github.com/PhyAgentOS/PhyAgentOS-core"
+
 # Install Node.js 20 for the WhatsApp bridge
 RUN apt-get update && \
     apt-get install -y --no-install-recommends curl ca-certificates gnupg git && \
@@ -25,14 +29,14 @@ COPY PhyAgentOS/ PhyAgentOS/
 COPY bridge/ bridge/
 RUN uv pip install --system --no-cache .
 
-# Build the WhatsApp bridge. Best-effort: it is only needed for the WhatsApp
-# channel (paos channels login), and a transitive Baileys dependency fetches
-# libsignal-node over git+ssh, which can fail in restricted build
-# environments. Skipping it does not affect the CLI or gateway defaults.
+# Build the WhatsApp bridge from the committed lock file. A failed dependency
+# install or TypeScript compilation must fail the image build.
 WORKDIR /app/bridge
-RUN npm install && npm run build \
-    || echo "WARN: WhatsApp bridge build skipped (channel unavailable in this image)"
+RUN npm ci && npm run build
 WORKDIR /app
+
+# Release smoke check: verifies the installed console entry point and runtime version.
+RUN paos --version
 
 # Create config directory
 RUN mkdir -p /root/.PhyAgentOS

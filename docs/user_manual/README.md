@@ -2,7 +2,7 @@
 
 [English](README_en.md) · [文档索引](../README.md)
 
-> 版本：0.2.3
+> 版本：1.0.0
 
 ## 1. 运行模型
 
@@ -25,7 +25,7 @@ Gateway 负责执行，PAOS 负责用户任务聚合与语义判定。Skill Runt
 
 ### PAOS 主机
 
-- 已安装 Python 3.11/3.12 和目标 v0.2.3 环境；
+- 已安装 Python 3.11/3.12 和目标 v1.0.0 环境；
 - `paos status` 指向预期 config、workspace、model 和 provider；
 - Workspace、PAOS data paths 和 artifact paths 具备权限与磁盘空间；
 - 允许非 `off` 任务时，Verification provider 凭据可用。
@@ -173,7 +173,7 @@ references 或 evolution 历史。
 
 ## 10. 运行验收清单
 
-- [ ] Package 与 runtime version 均为 0.2.3；
+- [ ] Package 与 runtime version 均为 1.0.0；
 - [ ] 通用 Agent tools 与动态 MCP tools 仍注册；
 - [ ] 所需 Skill Bundle 与全部 Node artifact 校验通过；
 - [ ] 托管 Runtime ready，所有 Tool contexts 健康；

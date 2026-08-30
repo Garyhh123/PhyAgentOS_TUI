@@ -13,7 +13,7 @@
   </p>
   <p>
     <img src="https://img.shields.io/badge/Python-≥3.11-3776AB?logo=python&logoColor=white" alt="Python">
-    <img src="https://img.shields.io/badge/Version-v0.2.3-47A882" alt="Version">
+    <img src="https://img.shields.io/badge/Version-v1.0.0-47A882" alt="Version">
     <img src="https://img.shields.io/badge/License-MIT-3DA639" alt="License">
     <a href="https://arxiv.org/pdf/2607.16636">
       <img src="https://img.shields.io/badge/技术报告-arXiv-b31b1b?logo=arxiv&logoColor=white" alt="技术报告">
@@ -38,6 +38,7 @@ PhyAgentOS 是一个面向具身任务的 Agent 框架。Agent 规划高层动�
 
 | 版本 | 日期 | 更新内容 |
 |:-----|:-----|:---------|
+| ![v1.0.0](https://img.shields.io/badge/v1.0.0-47A882) | 2026-08-30 | Initial stable release of PhyAgentOS. |
 | ![v0.2.3](https://img.shields.io/badge/v0.2.3-47A882) | 2026-08-27 | Forge Skill 可独立安装和管理，经显式激活冻结到 AgentTask，并通过受治理的 Query、Action、Session Tool API 生命周期执行，支持恢复和按版本限定的经验。 |
 | ![v0.2.2](https://img.shields.io/badge/v0.2.2-47A882) | 2026-08-21 | 将 Forge 执行统一到 Query/Action Tool API，并增加 AgentTask 聚合、可校验 Skill Runtime、Resource Registry 接入和 move-arm-by-ee Skill，同时保留 Agent 验证与演化能力。 |
 | ![v0.2.1](https://img.shields.io/badge/v0.2.1-47A882) | 2026-08-14 | 增加经验证的任务经验、显式工作流 Skill 激活、受控 Skill 自进化、聚类式作用域 Lesson，以及用于语义验证的 Skill 作用域建议上下文。 |
@@ -123,7 +124,7 @@ python -m pip install -e ".[dev]"
 推荐 Python 3.11 或 3.12。具体 Forge Skill 及其 Runtime 制品独立分发。
 
 通用 Agent 与 `paos skill install` 不需要 Dora；`paos skill start` 启动托管 Forge Skill
-profile 时，`PATH` 中必须存在 Dora CLI。PhyAgentOS 0.2.3 以 Dora CLI v0.4.1 及
+profile 时，`PATH` 中必须存在 Dora CLI。PhyAgentOS 1.0.0 以 Dora CLI v0.4.1 及
 `dora-message` v0.7.0 作为 Forge Skill 兼容基线。Linux 或 macOS 应安装该精确版本：
 
 ```bash

@@ -1,7 +1,7 @@
 # PhyAgentOS Documentation
 
-版本 / Version: **0.2.3**<br>
-实现基线 / Implementation baseline: **Forge Skill binding, Query/Action/Session Tool API, AgentTask recovery, and version-scoped experience, 2026-08-27**
+版本 / Version: **1.0.0**<br>
+实现基线 / Implementation baseline: **Forge Skill binding, Query/Action/Session Tool API, AgentTask recovery, and version-scoped experience, 2026-08-30**
 
 本目录由 PhyAgentOS 开发团队面向用户、运维人员和生态开发者维护。文档只把仓库源码、配置 Schema 与测试实际覆盖的行为称为“当前能力”。`plan/` 中的设计报告是历史背景，不替代这里的运行契约。
 

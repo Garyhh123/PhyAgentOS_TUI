@@ -1,6 +1,6 @@
 # Docker Deployment Guide
 
-> Version: 0.2.3 · [中文](DOCKER.md)
+> Version: 1.0.0 · [中文](DOCKER.md)
 
 PhyAgentOS ships with a Docker-based quick deployment that requires no manual Python / Node.js setup. Together with the [`scripts/install.sh`](../../scripts/install.sh) one-click script, you can build, initialize, and run in under a minute.
 
@@ -14,7 +14,7 @@ PhyAgentOS ships with a Docker-based quick deployment that requires no manual Py
 |:-----|:-----|
 | Python 3.12 runtime | All `pyproject.toml` deps installed via `uv` |
 | `paos` CLI | Registered as the entrypoint (`ENTRYPOINT`) |
-| Node.js 20 | Used to build the WhatsApp bridge (best-effort; see [Known limitations](#-known-limitations)) |
+| Node.js 20 | Strictly builds the WhatsApp bridge from locked npm dependencies |
 | Config directory | `/root/.PhyAgentOS` (persisted to the host via a volume mount) |
 | Default service | Interactive CLI (`paos agent`); switchable to a long-running gateway |
 
@@ -168,20 +168,11 @@ is not supported in this image without an explicitly extended image containing D
 `dora-message` v0.7.0, and the selected Skill's platform dependencies. Agent-only and
 message-channel use does not require Dora.
 
-### 2. WhatsApp channel unavailable
-
-Building the WhatsApp bridge is **best-effort**: a transitive dependency of `@whiskeysockets/baileys` fetches `libsignal-node` over `git+ssh`, which fails in isolated build environments. Therefore:
-
-- The WhatsApp channel (`paos channels login`) is **unavailable**
-- CLI, gateway, and other channels (Telegram / DingTalk / Feishu, etc.) are **unaffected**
-
-To restore WhatsApp, the dependency must be handled separately (pin a version reachable over HTTPS, or configure SSH credentials inside the image).
-
-### 3. Container runs as root
+### 2. Container runs as root
 
 To stay consistent with the `~/.PhyAgentOS:/root/.PhyAgentOS` volume-mount convention, the image runs as root by default. For production hardening, consider adding a non-root user and a healthcheck later.
 
-### 4. No GPU support
+### 3. No GPU support
 
 This is a CPU image and does not support Isaac Sim / BEHAVIOR-1K or other CUDA-based simulation. For GPU, switch the base image to `nvidia/cuda` and run with `--gpus all`.
 

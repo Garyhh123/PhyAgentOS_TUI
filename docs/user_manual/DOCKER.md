@@ -1,6 +1,6 @@
 # Docker 部署指南
 
-> 版本：0.2.3 · [English](DOCKER_en.md)
+> 版本：1.0.0 · [English](DOCKER_en.md)
 
 PhyAgentOS 提供基于 Docker 的快速部署方案，无需手动配置 Python / Node.js 环境。配合 [`scripts/install.sh`](../../scripts/install.sh) 一键脚本，可在一分钟内完成构建、初始化与运行。
 
@@ -14,7 +14,7 @@ PhyAgentOS 提供基于 Docker 的快速部署方案，无需手动配置 Python
 |:-----|:-----|
 | Python 3.12 运行时 | 由 `uv` 安装 `pyproject.toml` 中的全部依赖 |
 | `paos` CLI | 已注册为入口命令（`ENTRYPOINT`） |
-| Node.js 20 | 用于编译 WhatsApp bridge（best-effort，见 [已知限制](#-已知限制)） |
+| Node.js 20 | 从锁定的 npm 依赖严格编译 WhatsApp bridge |
 | 配置目录 | `/root/.PhyAgentOS`（通过卷挂载到宿主机持久化） |
 | 默认服务 | 交互式 CLI（`paos agent`），可切换为长驻网关 |
 
@@ -165,20 +165,11 @@ docker run -d --name phyagentos-gateway \
 v0.4.1、`dora-message` v0.7.0 与所选 Skill 的平台依赖，否则该镜像不支持
 `paos skill start`。仅使用 Agent 和消息渠道时不需要 Dora。
 
-### 2. WhatsApp 渠道不可用
-
-镜像构建 WhatsApp bridge 时采用 **best-effort** 策略：`@whiskeysockets/baileys` 的传递依赖 `libsignal-node` 通过 `git+ssh` 拉取，在隔离构建环境中会失败。因此：
-
-- WhatsApp 渠道（`paos channels login`）**不可用**
-- CLI、网关、其它渠道（Telegram / 钉钉 / 飞书等）**不受影响**
-
-如需恢复 WhatsApp，需单独处理该依赖（锁定可走 HTTPS 的版本或镜像内配置 SSH 凭据）。
-
-### 3. 容器以 root 运行
+### 2. 容器以 root 运行
 
 为保持与 `~/.PhyAgentOS:/root/.PhyAgentOS` 的卷挂载约定一致，镜像默认以 root 用户运行。如需生产硬化，建议后续添加非 root 用户与 healthcheck。
 
-### 4. 不含 GPU 支持
+### 3. 不含 GPU 支持
 
 本镜像为 CPU 版，不支持 Isaac Sim / BEHAVIOR-1K 等需要 CUDA 的仿真。如需 GPU，需改用 `nvidia/cuda` 基础镜像并以 `--gpus all` 运行。
 

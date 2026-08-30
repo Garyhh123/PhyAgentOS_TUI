@@ -2,7 +2,7 @@
 
 [中文](README_zh.md) · [Documentation index](../README.md)
 
-> Applies to PhyAgentOS 0.2.3.
+> Applies to PhyAgentOS 1.0.0.
 
 ## 1. Execution boundary
 

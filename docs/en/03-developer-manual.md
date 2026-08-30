@@ -2,7 +2,7 @@
 
 [中文](../zh/03-developer-manual.md) · [Documentation index](../README.md)
 
-> Documentation version: 0.2.3.
+> Documentation version: 1.0.0.
 
 ## 1. Development invariants
 

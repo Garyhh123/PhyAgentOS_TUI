@@ -2,7 +2,7 @@
 
 [中文](README.md) · [Documentation index](../README.md)
 
-> Version: 0.2.3
+> Version: 1.0.0
 
 ## 1. Choose the integration point
 

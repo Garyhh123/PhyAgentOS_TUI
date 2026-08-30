@@ -2,7 +2,7 @@
 
 [English](../en/03-developer-manual.md) · [文档索引](../README.md)
 
-> 文档版本：0.2.3。
+> 文档版本：1.0.0。
 
 ## 1. 开发不变量
 
