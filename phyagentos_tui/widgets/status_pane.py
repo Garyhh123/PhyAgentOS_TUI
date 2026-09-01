@@ -6,16 +6,10 @@ from textual.widgets import Static
 class StatusPane(Static):
     """Shows model, gateway and channel status in the side column."""
 
-    def __init__(self) -> None:
-        super().__init__()
-        self._demo_mode = False
-
     def on_mount(self) -> None:
         self.refresh_status()
 
     def refresh_status(self) -> None:
-        if self._demo_mode:
-            return
         config = self.app.config
         gateway = getattr(self.app, "_gateway_service", None)
 
@@ -47,16 +41,4 @@ class StatusPane(Static):
             f"Gateway: {gw_status}\n"
             f"Channels: {enabled} enabled"
         )
-
-    def show_demo_status(self, title: str, rows: dict[str, str]) -> None:
-        """Replace the side pane with a compact live demo dashboard."""
-        self._demo_mode = True
-        lines = [title, ""]
-        for key, value in rows.items():
-            lines.append(f"{key:<12} {value}")
-        self.update("\n".join(lines))
-
-    def clear_demo_status(self) -> None:
-        self._demo_mode = False
-        self.refresh_status()
 
