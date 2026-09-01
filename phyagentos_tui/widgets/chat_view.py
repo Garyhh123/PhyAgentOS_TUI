@@ -4,8 +4,8 @@ from rich import box
 from rich.align import Align
 from rich.console import Group, RenderableType
 from rich.markdown import Markdown
-from rich.panel import Panel
 from rich.padding import Padding
+from rich.panel import Panel
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import ScrollableContainer

@@ -1,12 +1,12 @@
 """Channels management screen."""
 
+from PhyAgentOS.channels.registry import discover_channel_names, load_channel_class
+from PhyAgentOS.config.loader import save_config
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.screen import Screen
 from textual.widgets import DataTable, Label
 
-from PhyAgentOS.channels.registry import discover_channel_names, load_channel_class
-from PhyAgentOS.config.loader import save_config
 from phyagentos_tui.widgets.app_footer import AppFooter
 from phyagentos_tui.widgets.app_header import AppHeader
 from phyagentos_tui.widgets.command_palette import CommandPalette

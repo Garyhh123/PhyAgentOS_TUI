@@ -3,11 +3,10 @@
 import subprocess
 from pathlib import Path
 
+from PhyAgentOS import __logo__, __version__
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Static
-
-from PhyAgentOS import __logo__, __version__
 
 
 def _repo_version() -> str:

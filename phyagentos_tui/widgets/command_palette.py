@@ -6,7 +6,6 @@ from textual.containers import Center, Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Input, Label, ListItem, ListView, Static
 
-
 COMMANDS = (
     ("chat", "Open Chat", "Ctrl+1"),
     ("providers", "Open Providers", "Ctrl+2"),

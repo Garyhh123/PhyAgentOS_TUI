@@ -3,13 +3,13 @@
 import time
 from pathlib import Path
 
+from PhyAgentOS import __logo__, __version__
+from PhyAgentOS.config.loader import load_config
+from PhyAgentOS.config.schema import Config
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.screen import Screen
 
-from PhyAgentOS import __logo__, __version__
-from PhyAgentOS.config.loader import load_config
-from PhyAgentOS.config.schema import Config
 from phyagentos_tui.themes import THEMES, get_theme_name
 from phyagentos_tui.widgets.app_header import AppHeader
 from phyagentos_tui.widgets.command_palette import CommandPalette

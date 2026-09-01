@@ -1,11 +1,11 @@
 """Settings screen for PhyAgentOS TUI."""
 
+from PhyAgentOS.config.loader import save_config
 from textual.app import ComposeResult
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.screen import Screen
 from textual.widgets import Button, Input, Label, Select
 
-from PhyAgentOS.config.loader import save_config
 from phyagentos_tui.themes import THEME_LABELS, get_theme_name
 from phyagentos_tui.widgets.app_footer import AppFooter
 from phyagentos_tui.widgets.app_header import AppHeader

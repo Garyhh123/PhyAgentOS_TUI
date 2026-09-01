@@ -2,6 +2,8 @@
 
 from typing import Any
 
+from PhyAgentOS.config.loader import save_config
+from PhyAgentOS.providers.registry import PROVIDERS, ProviderSpec
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
@@ -13,8 +15,6 @@ from textual.widgets import (
     Label,
 )
 
-from PhyAgentOS.config.loader import save_config
-from PhyAgentOS.providers.registry import PROVIDERS, ProviderSpec
 from phyagentos_tui.widgets.app_footer import AppFooter
 from phyagentos_tui.widgets.app_header import AppHeader
 from phyagentos_tui.widgets.command_palette import CommandPalette

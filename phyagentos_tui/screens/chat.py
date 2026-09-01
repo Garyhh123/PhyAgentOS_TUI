@@ -2,11 +2,11 @@
 
 import asyncio
 
+from PhyAgentOS.bus.events import InboundMessage
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 
-from PhyAgentOS.bus.events import InboundMessage
 from phyagentos_tui.widgets.app_footer import AppFooter
 from phyagentos_tui.widgets.app_header import AppHeader
 from phyagentos_tui.widgets.chat_input import ChatInput

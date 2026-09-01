@@ -6,7 +6,6 @@ from textual.containers import Horizontal
 from textual.message import Message
 from textual.widgets import Static
 
-
 NAV_ITEMS = (
     ("chat", "Chat"),
     ("providers", "Providers"),

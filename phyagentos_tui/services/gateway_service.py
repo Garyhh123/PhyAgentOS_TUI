@@ -64,6 +64,7 @@ class GatewayService:
         """Create and start provider, agent, cron, heartbeat and channels."""
         from PhyAgentOS.agent.loop import AgentLoop
         from PhyAgentOS.channels.manager import ChannelManager
+        from PhyAgentOS.cli.commands import _make_forge_components, _make_provider
         from PhyAgentOS.config.paths import get_cron_dir
         from PhyAgentOS.cron.service import CronService
         from PhyAgentOS.cron.types import CronJob
@@ -71,8 +72,6 @@ class GatewayService:
         from PhyAgentOS.heartbeat.service import HeartbeatService
         from PhyAgentOS.session.manager import SessionManager
         from PhyAgentOS.utils.helpers import sync_workspace_templates
-
-        from PhyAgentOS.cli.commands import _make_forge_components, _make_provider
 
         config = self.config
         registry = EmbodimentRegistry(config)
