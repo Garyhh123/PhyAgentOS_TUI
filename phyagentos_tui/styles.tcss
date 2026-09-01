@@ -1,0 +1,486 @@
+/* PhyAgentOS TUI — Morandi palette, refined minimal style
+   高级感 = 克制：细圆角边框、发丝分割线、留白、扁平按钮、柔和选中 */
+
+Screen {
+    background: $background;
+    layers: base overlay;
+}
+
+AppHeader {
+    height: 1;
+    padding: 0 1;
+    background: $panel;
+}
+
+.header-title {
+    width: 1fr;
+    color: $accent;
+    text-style: bold;
+}
+
+.header-right {
+    width: auto;
+    color: $text-muted;
+    content-align: right middle;
+}
+
+ChatScreen, ProvidersScreen, ChannelsScreen, SettingsScreen, RuntimeDashboardScreen {
+    layout: vertical;
+}
+
+/* ---------- Global navigation ---------- */
+NavBar {
+    height: 2;
+    padding: 0 1;
+    background: $panel;
+    border-bottom: solid $boost;
+}
+
+.nav-item {
+    height: 1;
+    width: auto;
+    margin: 0 2 0 0;
+    padding: 0 1;
+    background: $panel;
+    color: $text-muted;
+    text-style: none;
+}
+
+.nav-item:hover,
+.nav-item:focus {
+    background: $panel;
+    color: $text;
+}
+
+.nav-item.active {
+    background: $panel;
+    color: $primary;
+    text-style: bold;
+}
+
+.nav-command-hint {
+    width: 1fr;
+    height: 1;
+    padding: 0 1;
+    content-align: right middle;
+    color: $text-muted;
+}
+
+.app-footer {
+    height: 1;
+    padding: 0 1;
+    background: $panel;
+    color: $text-muted;
+}
+
+/* ---------- Tiling chat screen ---------- */
+#tile-main {
+    width: 100%;
+    height: 1fr;
+    layout: horizontal;
+}
+
+#tile-left {
+    width: 2fr;
+    height: 100%;
+    layout: vertical;
+    padding: 0 2;
+}
+
+#tile-right {
+    width: 1fr;
+    height: 100%;
+    layout: vertical;
+    border-left: solid $boost;
+}
+
+/* Section titles: accent bar + bold caps + hairline */
+.section-title {
+    height: 2;
+    layout: horizontal;
+    margin-top: 1;
+    border-bottom: solid $boost;
+}
+
+.section-title .title-bar {
+    width: 1;
+    height: 1;
+    background: $primary;
+}
+
+.section-title .title-text {
+    height: 1;
+    padding: 0 1;
+    color: $primary;
+    text-style: bold;
+}
+
+ChatView {
+    height: 1fr;
+    border: none;
+    padding: 1 0 0 0;
+    margin: 1 0 0 0;
+    background: $background;
+}
+
+ChatInput {
+    height: auto;
+    max-height: 10;
+    border: round $boost;
+    padding: 1 1 0 1;
+    margin: 1 0 1 0;
+    background: $surface;
+}
+
+ChatInput:focus-within {
+    border: round $primary;
+}
+
+#chat-content {
+    width: 100%;
+}
+
+#chat-input-toolbar {
+    height: 1;
+    layout: horizontal;
+    margin-bottom: 1;
+}
+
+.chat-input-title {
+    width: 1fr;
+    color: $primary;
+    text-style: bold;
+}
+
+.chat-input-badge {
+    width: auto;
+    margin-right: 1;
+    color: $text-muted;
+}
+
+#chat-input-row {
+    height: auto;
+    layout: horizontal;
+}
+
+#chat-input-field {
+    width: 1fr;
+    margin: 0 1 0 0;
+}
+
+#chat-send-btn {
+    margin: 0;
+}
+
+#chat-cmd-btn,
+#chat-clear-btn {
+    margin: 0 1 0 0;
+}
+
+.chat-input-hint {
+    margin-top: 1;
+    color: $text-muted;
+}
+
+StatusPane {
+    height: auto;
+    padding: 1 2;
+    color: $text;
+    border-bottom: solid $boost;
+}
+
+LogView {
+    height: 1fr;
+    border: none;
+    padding: 0 1;
+    background: $surface;
+    color: $text-muted;
+}
+
+/* ---------- Command palette ---------- */
+CommandPalette {
+    width: 100%;
+    height: 100%;
+    layer: overlay;
+    align: center middle;
+    background: $background 55%;
+}
+
+#command-palette-box {
+    width: 72;
+    min-width: 42;
+    max-width: 82%;
+    height: auto;
+    background: $surface;
+    border: solid $boost;
+    padding: 1 2;
+}
+
+.command-palette-title {
+    color: $primary;
+    text-style: bold;
+    padding-bottom: 1;
+}
+
+#command-palette-input {
+    margin-bottom: 1;
+}
+
+#command-palette-list {
+    height: auto;
+    max-height: 12;
+    background: $surface;
+    border: none;
+}
+
+#command-palette-list:focus {
+    border: none;
+}
+
+#command-palette-list ListItem {
+    padding: 0 1;
+    height: 1;
+}
+
+#command-palette-list ListItem.--highlight {
+    background: $boost;
+    color: $text;
+    text-style: bold;
+}
+
+.command-label {
+    width: 1fr;
+}
+
+.command-shortcut {
+    width: 14;
+    content-align: right middle;
+    color: $text-muted;
+}
+
+/* ---------- Sub screens ---------- */
+#providers-main, #channels-main, #settings-wrap {
+    width: 100%;
+    height: 1fr;
+    layout: vertical;
+    padding: 0 1;
+}
+
+/* Runtime Dashboard */
+#runtime-main {
+    width: 100%;
+    height: 1fr;
+    layout: vertical;
+    padding: 0 1;
+}
+
+#runtime-toolbar {
+    height: auto;
+    layout: horizontal;
+    padding: 0 1;
+}
+
+#runtime-toolbar .hint {
+    width: 1fr;
+}
+
+#runtime-body {
+    width: 100%;
+    height: 1fr;
+    layout: horizontal;
+    margin-top: 1;
+}
+
+#runtime-left {
+    width: 1fr;
+    height: 100%;
+    layout: vertical;
+    padding-right: 1;
+}
+
+#runtime-middle {
+    width: 2fr;
+    height: 100%;
+    layout: vertical;
+    border-left: solid $boost;
+    border-right: solid $boost;
+    padding: 0 1;
+}
+
+#runtime-detail-wrap {
+    width: 2fr;
+    height: 100%;
+    padding: 0 1;
+}
+
+#runtime-overview {
+    height: auto;
+    border: round $boost;
+    padding: 1 2;
+    margin: 1 0;
+}
+
+#runtime-health {
+    height: auto;
+    border: round $boost;
+    padding: 1 2;
+    margin: 1 0;
+    color: $text;
+    background: $surface;
+}
+
+#runtime-targets, #runtime-sessions {
+    height: 1fr;
+}
+
+#runtime-detail {
+    border: round $boost;
+    padding: 1 2;
+    margin-top: 1;
+}
+
+#providers-body {
+    layout: horizontal;
+    height: 1fr;
+    margin-top: 1;
+}
+
+.hint {
+    color: $text-muted;
+    padding: 0 1;
+}
+
+/* Providers Screen */
+#provider-list-container {
+    width: 58;
+    border-right: solid $boost;
+}
+
+#provider-form-container {
+    width: 1fr;
+    padding: 0 1;
+}
+
+#provider-form {
+    height: auto;
+}
+
+/* Settings Screen */
+#settings-main {
+    height: 1fr;
+    margin-top: 1;
+}
+
+#settings-footer {
+    height: auto;
+    padding: 1 0 1 0;
+}
+
+.settings-group {
+    height: auto;
+    border: round $boost;
+    padding: 1 2;
+    margin-bottom: 1;
+}
+
+.settings-group-title {
+    text-style: bold;
+    color: $accent;
+    padding-bottom: 1;
+}
+
+/* ---------- Common widgets ---------- */
+DataTable {
+    height: auto;
+}
+
+DataTable .datatable--header {
+    background: $surface;
+    color: $text-muted;
+    text-style: bold;
+}
+
+DataTable .datatable--cursor {
+    background: $boost;
+    color: $text;
+}
+
+Input {
+    border: none;
+    border-bottom: solid $boost;
+    background: $surface;
+}
+
+Input:focus {
+    border: none;
+    border-bottom: solid $primary;
+}
+
+Select {
+    border: none;
+    background: $surface;
+    width: 1fr;
+}
+
+Select:focus {
+    border: none;
+}
+
+Select > SelectCurrent {
+    border: none;
+    border-bottom: solid $boost;
+    background: $surface;
+}
+
+Select:focus > SelectCurrent {
+    border-bottom: solid $primary;
+}
+
+Select > SelectOverlay {
+    background: $surface;
+    border: round $boost;
+}
+
+Select > SelectOverlay > .select--option-highlighted,
+Select > SelectOverlay > *:hover {
+    background: $boost;
+    color: $text;
+}
+
+.form-row {
+    layout: horizontal;
+    height: auto;
+    margin-bottom: 1;
+}
+
+.form-label {
+    width: 20;
+    content-align: right middle;
+    padding-right: 1;
+    color: $text-muted;
+}
+
+.form-input {
+    width: 1fr;
+}
+
+Button {
+    margin: 0 1;
+    border: none;
+    background: $boost;
+    color: $text;
+    text-style: bold;
+}
+
+Button:hover, Button:focus {
+    border: none;
+    background: $primary;
+    color: $background;
+}
+
+Button.-primary {
+    border: none;
+    background: $primary;
+    color: $background;
+    text-style: bold;
+}
